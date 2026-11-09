@@ -8,13 +8,13 @@
 [![npm downloads](https://img.shields.io/npm/dt/aunubaileys?style=for-the-badge&logo=npm&logoColor=white)](https://www.npmjs.com/package/aunubaileys)
 [![Fork of WhiskeySockets/Baileys](https://img.shields.io/badge/fork%20of-WhiskeySockets%2FBaileys-25D366?style=for-the-badge&logo=whatsapp&logoColor=white)](https://github.com/WhiskeySockets/Baileys)
 [![License: MIT](https://img.shields.io/badge/license-MIT-yellow?style=for-the-badge)](./LICENSE)
-[![GitHub stars](https://img.shields.io/github/stars/AunuHost/AunuBaileys?style=for-the-badge&logo=github)](https://github.com/AunuHost/AunuBaileys/stargazers)
-[![GitHub forks](https://img.shields.io/github/forks/AunuHost/AunuBaileys?style=for-the-badge&logo=github)](https://github.com/AunuHost/AunuBaileys/forks)
+[![GitHub stars](https://img.shields.io/github/stars/AunuHost/AunuBaileys-lib?style=for-the-badge&logo=github)](https://github.com/AunuHost/AunuBaileys-lib/stargazers)
+[![GitHub forks](https://img.shields.io/github/forks/AunuHost/AunuBaileys-lib?style=for-the-badge&logo=github)](https://github.com/AunuHost/AunuBaileys-lib/forks)
 
 **Full upstream power — with the soul that community forks used to have.**
 The in-memory store is back, legacy exports are back, and every upstream update flows straight in.
 
-[English](#-english) · [Bahasa Indonesia](#-bahasa-indonesia)
+📚 **[Full documentation — docsjs.aunucore.eu.cc](https://docsjs.aunucore.eu.cc)** · [English](#-english) · [Bahasa Indonesia](#-bahasa-indonesia)
 
 </div>
 
@@ -23,6 +23,8 @@ The in-memory store is back, legacy exports are back, and every upstream update 
 ## 🌍 English
 
 **AunuBaileys** is a fork of the legendary [WhiskeySockets/Baileys](https://github.com/WhiskeySockets/Baileys) WhatsApp Web API, maintained by **AunuCore Creative Network**. Upstream removed pieces that thousands of long-running bot scripts were built on — so we brought them back, cleanly, and keep this fork permanently in sync with upstream.
+
+📚 **Documentation:** the complete guide lives at **[docsjs.aunucore.eu.cc](https://docsjs.aunucore.eu.cc)** — getting started, connection & pairing, builders, AunuAntiBan, the full event map, socket configuration, recipes, and a disconnect-code troubleshooting table.
 
 ### ✨ What makes it different
 
@@ -61,6 +63,17 @@ Everything else is pure upstream. When upstream moves, we rebase the patch layer
 
 
 
+
+### 🆕 What's new in 1.0.6 / Baru di 1.0.6
+
+- 📚 **Documentation site launched** — full docs (guides, complete API reference, recipes, troubleshooting) now live at **[docsjs.aunucore.eu.cc](https://docsjs.aunucore.eu.cc)**; it is also this package's npm homepage.
+- 🚀 **Automated releases** — npm publishing now runs through GitHub Actions: every GitHub Release of this repo is published to npm automatically.
+- 🧭 **One canonical home** — package `repository`/`bugs` and this README's badges now point at `AunuHost/AunuBaileys-lib`, the single source for the stable package.
+
+### 🆕 What's new in 1.0.5 / Baru di 1.0.5
+
+- 🛡️ **AunuAntiBan built in** — account-protection layer inspired by [baileys-antiban](https://github.com/kobie3717/baileys-antiban), reimplemented cleanly in-package: per-chat & global rate limiting with Gaussian jitter, 7-day warmup ramp for new accounts, group add/create guards, typing simulation, and `classifyDisconnect()` recovery advice. No telemetry, no extra network calls. Usage: `wrapAntiBan(sock)` or `new AunuAntiBan(opts).wrap(sock)`.
+
 ### 🆕 What's new in 1.0.4 / Baru di 1.0.4
 
 - 🎨 **Rich builders** — `AIRich`, `Button`, `ButtonV2`, `Carousel`, `Toolkit` (+ aliases) for Meta AI-style rich responses, native-flow buttons and carousels; `aunuHandler.sendInteractive()` with automatic plain-text fallback on iOS-paired devices.
@@ -89,6 +102,8 @@ Everything else is pure upstream. When upstream moves, we rebase the patch layer
 ## 🇮🇩 Bahasa Indonesia
 
 **AunuBaileys** adalah fork dari library WhatsApp Web legendaris [WhiskeySockets/Baileys](https://github.com/WhiskeySockets/Baileys), dirawat oleh **AunuCore Creative Network**. Upstream menghapus beberapa bagian yang menjadi fondasi ribuan script bot yang sudah berjalan lama — kami mengembalikannya dengan bersih, dan menjaga fork ini selalu sinkron dengan upstream.
+
+📚 **Dokumentasi:** panduan lengkapnya ada di **[docsjs.aunucore.eu.cc](https://docsjs.aunucore.eu.cc)** — mulai cepat, koneksi & pairing, builders, AunuAntiBan, peta event lengkap, konfigurasi socket, resep, dan tabel troubleshooting kode disconnect.
 
 ### ✨ Yang membuatnya berbeda
 
