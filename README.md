@@ -59,6 +59,13 @@ sock.ev.on('creds.update', saveCreds)
 Everything else is pure upstream. When upstream moves, we rebase the patch layer — that discipline is the whole point of this fork.
 
 
+
+### 🆕 What's new in 1.0.3 / Baru di 1.0.3
+
+- ⚡ **Modern core** — latest WA version `2.3000.1035194821`, 812 pre-keys, tuned WebSocket (no per-message deflate, 100 MB payload).
+- 🧩 **More message types** — quiz polls (newsletter), poll result snapshots, poll updates, payment invites, order messages.
+- 🛠️ **Developer API** — `sock.aunuHandler` (send/reply/react helpers), `fetchAccountReachoutTimelock()`, `fetchNewChatMessageCap()`, `registerSocketEndHandler()`, `newsletterId()` helper.
+
 ### 🆕 What's new in 1.0.2 / Baru di 1.0.2
 
 - 📦 **Sticker packs** — send full sticker packs with `stickerPack` (cover + up to 60 stickers).
