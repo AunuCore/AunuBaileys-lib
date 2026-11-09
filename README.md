@@ -64,6 +64,10 @@ Everything else is pure upstream. When upstream moves, we rebase the patch layer
 
 
 
+### 🆕 What's new in 1.0.8 / Baru di 1.0.8
+
+- 🩹 **TypeScript declaration fix** — `NEWSLETTER_MEDIA_PATH_MAP` and `BIZ_BOT_SUPPORT_PAYLOAD` were exported from the runtime but missing from `lib/Defaults/index.d.ts`, so TypeScript consumers got compile errors importing them. Both are now properly declared. Found by the RafaelPivots automation, verified against source, no runtime changes.
+
 ### 🆕 What's new in 1.0.7 / Baru di 1.0.7
 
 - 🧭 **One canonical repository** — the separate upstream-fork repo was retired (archived by the maintainers); `AunuHost/AunuBaileys-lib` is now the single public home of AunuBaileys, and this README — with badges pointing at the right repo — is the one npm ships.
