@@ -60,6 +60,14 @@ Everything else is pure upstream. When upstream moves, we rebase the patch layer
 
 
 
+
+### 🆕 What's new in 1.0.4 / Baru di 1.0.4
+
+- 🎨 **Rich builders** — `AIRich`, `Button`, `ButtonV2`, `Carousel`, `Toolkit` (+ aliases) for Meta AI-style rich responses, native-flow buttons and carousels; `aunuHandler.sendInteractive()` with automatic plain-text fallback on iOS-paired devices.
+- 🖼️ **Profile pictures fixed** — center crop (was top-left) and jimp v1 compatibility restored.
+- 🛡️ **Hardening** — undecodable app-state patches are skipped with a warning instead of killing sync, media downloads honour the message's own host, `getChatId` fails loudly, real `ev.destroy()` cleanup, group presence carries `groupOnlineCount`, `Browsers.android` added.
+- ✅ Already verified in this codebase: PBKDF2 pairing derivation and the anti-spoof protocol-message guard (GHSA-qvv5-jq5g-4cgg class) match the reference implementations.
+
 ### 🆕 What's new in 1.0.3 / Baru di 1.0.3
 
 - ⚡ **Modern core** — latest WA version `2.3000.1035194821`, 812 pre-keys, tuned WebSocket (no per-message deflate, 100 MB payload).
