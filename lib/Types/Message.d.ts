@@ -172,7 +172,22 @@ export type AnyRegularMessageContent = (({
     body?: string;
     footer?: string;
 } | SharePhoneNumber | RequestPhoneNumber) & ViewOnce;
-export type AnyMessageContent = AnyRegularMessageContent | {
+export type StickerPackStickerInfo = {
+    data: WAMediaUpload;
+    emojis?: string[];
+    isAnimated?: boolean;
+    accessibilityLabel?: string;
+    isLottie?: boolean;
+};
+export type StickerPackInfo = {
+    stickers: StickerPackStickerInfo[];
+    cover: WAMediaUpload;
+    name?: string;
+    publisher?: string;
+    packId?: string;
+    description?: string;
+};
+export type AnyMessageContent = (AnyRegularMessageContent | {
     forward: WAMessage;
     force?: boolean;
 } | {
@@ -180,6 +195,22 @@ export type AnyMessageContent = AnyRegularMessageContent | {
     delete: WAMessageKey;
 } | {
     disappearingMessagesInChat: boolean | number;
+} | {
+    /** AunuBaileys: send a sticker pack (cover + stickers) */
+    stickerPack: StickerPackInfo;
+} | {
+    /** AunuBaileys: send a sticker pack, flat form (cover + stickers) */
+    stickers: StickerPackStickerInfo[];
+    cover: WAMediaUpload;
+    name?: string;
+    publisher?: string;
+    description?: string;
+} | {
+    /** AunuBaileys: send an album of images/videos */
+    album: AnyRegularMessageContent[];
+}) & {
+    /** AunuBaileys: mark the message with the AI label (private chats only) */
+    ai?: boolean;
 };
 export type GroupMetadataParticipants = Pick<GroupMetadata, 'participants'>;
 type MinimalRelayOptions = {

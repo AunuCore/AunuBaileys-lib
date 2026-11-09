@@ -58,6 +58,17 @@ sock.ev.on('creds.update', saveCreds)
 
 Everything else is pure upstream. When upstream moves, we rebase the patch layer — that discipline is the whole point of this fork.
 
+
+### 🆕 What's new in 1.0.2 / Baru di 1.0.2
+
+- 📦 **Sticker packs** — send full sticker packs with `stickerPack` (cover + up to 60 stickers).
+- 🖼️ **Album messages** — send grouped photos/videos with `album`.
+- 📣 **Newsletter media fixed** — media uploads to channels use the proper newsletter paths.
+- 🤖 **AI label** — mark bot replies with `ai: true` in private chats.
+- 🔐 **Sturdier connections & sessions** — pre-key upload timeout + atomic session file writes.
+
+**Credits:** features adapted from the community — [@itsliaaa/baileys](https://www.npmjs.com/package/@itsliaaa/baileys) (sticker pack, album, newsletter media, AI label, atomic auth writes), [MichelleBot/baileys](https://github.com/MichelleBot/baileys) (connection fix), [neoxr/baileys](https://github.com/neoxr/baileys) (sticker pack) — merged into AunuBaileys with gratitude. 🙏
+
 ---
 
 ## 🇮🇩 Bahasa Indonesia

@@ -110,3 +110,4 @@ export declare const decryptMediaRetryData: ({ ciphertext, iv }: {
 export declare const getStatusCodeForMediaRetry: (code: number) => 200 | 412 | 404 | 418;
 export {};
 //# sourceMappingURL=messages-media.d.ts.map
+export declare const getImageProcessingLibrary: () => Promise<Record<string, any>>;
