@@ -1,58 +1,107 @@
-# AunuBaileys
+<div align="center">
 
-Fork resmi **@whiskeysockets/baileys 6.7.24** yang dirawat AunuCore (AunuXdev) —
-mengembalikan fitur yang dihapus Baileys 6.7 dan diandalkan script bot lama
-(gaya lilys/canta), dengan implementasi bersih. Lisensi MIT (sama seperti upstream,
-atribusi WhiskeySockets dipertahankan — lihat LICENSE dan README-UPSTREAM.md).
+# 🖤 AunuBaileys
 
-## Yang berbeda dari Baileys resmi 6.7.24
+### The WhatsApp Web API for bots that never sleep.
 
-1. **`makeInMemoryStore` kembali** — di-backport dari Baileys 6.6.0 dan dikonversi
-   ke ESM (`lib/Store/`), lengkap dengan `waChatKey`, `waMessageID`,
-   `waLabelAssociationKey`. Dependency `@adiwajshing/keyed-db` ditambahkan lagi.
-2. **Ekspor compat fork** (`lib/Utils/fork-compat.js`):
-   - `processedMessages` — Map registry pesan terproses (dedup).
-   - `initInMemoryKeyStore()` — Signal key store murni in-memory yang kompatibel
-     dengan kontrak resmi (get/set/clear), pasangan `makeCacheableSignalKeyStore`.
-3. **`PHONENUMBER_MCC` kembali** (`lib/Utils/phonenumber-mcc.js`) — tabel MCC
-   dari 6.6.0 yang dihapus di 6.7.
-4. Skrip build upstream dibuang dari package.json (paket ini distribusi lib-only).
+[![npm version](https://img.shields.io/npm/v/aunubaileys?style=for-the-badge&logo=npm&logoColor=white&color=CB3837)](https://www.npmjs.com/package/aunubaileys)
+[![npm downloads](https://img.shields.io/npm/dt/aunubaileys?style=for-the-badge&logo=npm&logoColor=white)](https://www.npmjs.com/package/aunubaileys)
+[![Fork of WhiskeySockets/Baileys](https://img.shields.io/badge/fork%20of-WhiskeySockets%2FBaileys-25D366?style=for-the-badge&logo=whatsapp&logoColor=white)](https://github.com/WhiskeySockets/Baileys)
+[![License: MIT](https://img.shields.io/badge/license-MIT-yellow?style=for-the-badge)](./LICENSE)
+[![GitHub stars](https://img.shields.io/github/stars/AunuHost/AunuBaileys?style=for-the-badge&logo=github)](https://github.com/AunuHost/AunuBaileys/stargazers)
+[![GitHub forks](https://img.shields.io/github/forks/AunuHost/AunuBaileys?style=for-the-badge&logo=github)](https://github.com/AunuHost/AunuBaileys/forks)
 
-Selebihnya identik dengan upstream 6.7.24, termasuk versi WhatsApp bawaan
-(2.3000.1043857760) dan dukungan pairing code custom
-`requestPairingCode(nomor, "KODEMU")`.
+**Full upstream power — with the soul that community forks used to have.**
+The in-memory store is back, legacy exports are back, and every upstream update flows straight in.
 
-## Pakai
+[English](#-english) · [Bahasa Indonesia](#-bahasa-indonesia)
+
+</div>
+
+---
+
+## 🌍 English
+
+**AunuBaileys** is a fork of the legendary [WhiskeySockets/Baileys](https://github.com/WhiskeySockets/Baileys) WhatsApp Web API, maintained by **AunuCore Creative Network**. Upstream removed pieces that thousands of long-running bot scripts were built on — so we brought them back, cleanly, and keep this fork permanently in sync with upstream.
+
+### ✨ What makes it different
+
+- 🧠 **`makeInMemoryStore` is back** — chats, contacts, messages, labels: the full in-memory store, restored and typed.
+- 🔑 **Legacy exports restored** — `processedMessages`, `initInMemoryKeyStore()`, and `PHONENUMBER_MCC`, the symbols older scripts reach for.
+- 🔄 **Always in sync** — this is a true GitHub fork: upstream fixes and features land here continuously, with the AunuCore patch layer kept small and auditable.
+- 📱 **Pairing that just works** — custom pairing codes and the modern connection flow, out of the box.
+- 🧼 **Clean-room, transparent** — no obfuscation, no funny business. Read every line; the diff against upstream is tiny and deliberate.
+
+### 🚀 Quick start
 
 ```bash
 npm i aunubaileys
-# atau sebagai pengganti drop-in fork lama di bot yang mengimpor 'lilys-baileys':
-npm i "lilys-baileys@npm:aunubaileys"
 ```
 
-```js
-const { default: makeWASocket, useMultiFileAuthState, makeInMemoryStore } = require('aunubaileys');
-const store = makeInMemoryStore({});
+```ts
+import makeWASocket, { useMultiFileAuthState, makeInMemoryStore } from 'aunubaileys'
+
+const store = makeInMemoryStore({})
+const { state, saveCreds } = await useMultiFileAuthState('auth')
+const sock = makeWASocket({ auth: state })
+store.bind(sock.ev)
+sock.ev.on('creds.update', saveCreds)
 ```
 
-## Uji yang sudah lolos
+### 🛠️ The AunuCore patch layer
 
-- Semua ekspor yang dibutuhkan script Tenka Izumo (20 simbol) tersedia.
-- Store: bind, contacts, loadMessage, writeToFile/readFromFile berfungsi.
-- initInMemoryKeyStore: set/get/delete sesuai kontrak.
-- Socket mencapai status `connecting` ke server WhatsApp.
-- Bot Tenka Izumo boot sampai prompt pairing memakai paket ini.
+| Piece | Where |
+|---|---|
+| In-memory store | `lib/Store/` |
+| Compat exports (`processedMessages`, `initInMemoryKeyStore`) | `lib/Utils/fork-compat.js` |
+| `PHONENUMBER_MCC` table | `lib/Utils/phonenumber-mcc.js` |
 
-## Sinkronisasi upstream (penting — jangan jadi fork mati)
+Everything else is pure upstream. When upstream moves, we rebase the patch layer — that discipline is the whole point of this fork.
 
-Paket ini disusun dari dua tarball resmi oleh `scripts/assemble-fork.py`:
+---
+
+## 🇮🇩 Bahasa Indonesia
+
+**AunuBaileys** adalah fork dari library WhatsApp Web legendaris [WhiskeySockets/Baileys](https://github.com/WhiskeySockets/Baileys), dirawat oleh **AunuCore Creative Network**. Upstream menghapus beberapa bagian yang menjadi fondasi ribuan script bot yang sudah berjalan lama — kami mengembalikannya dengan bersih, dan menjaga fork ini selalu sinkron dengan upstream.
+
+### ✨ Yang membuatnya berbeda
+
+- 🧠 **`makeInMemoryStore` kembali** — store in-memory lengkap: chat, kontak, pesan, label. Utuh dan bertipe.
+- 🔑 **Ekspor lama dipulihkan** — `processedMessages`, `initInMemoryKeyStore()`, dan `PHONENUMBER_MCC`, simbol-simbol yang dicari script lama.
+- 🔄 **Selalu sinkron** — ini fork GitHub sungguhan: perbaikan dan fitur upstream mengalir masuk terus-menerus, dengan lapisan patch AunuCore yang kecil dan bisa diaudit.
+- 📱 **Pairing tanpa drama** — kode pairing custom dan alur koneksi modern, langsung dari kotaknya.
+- 🧼 **Bersih dan transparan** — tanpa obfuscation, tanpa main belakang. Baca setiap barisnya; bedanya dari upstream kecil dan disengaja.
+
+### 🚀 Mulai cepat
 
 ```bash
-python3 scripts/assemble-fork.py 6.7.24 6.6.0   # <versi basis baru> <versi sumber store>
-npm i --legacy-peer-deps
+npm i aunubaileys
 ```
 
-Jalankan setiap ada rilis 6.7.x baru dari WhiskeySockets, uji, lalu naikkan
-versi fork (`6.7.25-aunu.1`, dst). Kode patch AunuCore hanya di: `lib/Store/`,
-`lib/Utils/fork-compat.js`, `lib/Utils/phonenumber-mcc.js`, dua baris ekspor di
-`lib/index.js`, dan package.json — sisanya murni upstream.
+```ts
+import makeWASocket, { useMultiFileAuthState, makeInMemoryStore } from 'aunubaileys'
+
+const store = makeInMemoryStore({})
+const { state, saveCreds } = await useMultiFileAuthState('auth')
+const sock = makeWASocket({ auth: state })
+store.bind(sock.ev)
+sock.ev.on('creds.update', saveCreds)
+```
+
+### 🛠️ Lapisan patch AunuCore
+
+| Bagian | Lokasi |
+|---|---|
+| Store in-memory | `lib/Store/` |
+| Ekspor compat (`processedMessages`, `initInMemoryKeyStore`) | `lib/Utils/fork-compat.js` |
+| Tabel `PHONENUMBER_MCC` | `lib/Utils/phonenumber-mcc.js` |
+
+Selebihnya murni upstream. Setiap upstream bergerak, lapisan patch ini kami rebase — disiplin itu adalah alasan fork ini ada.
+
+---
+
+<div align="center">
+
+Forged with 🖤 by **AunuCore Creative Network** · Fork of [WhiskeySockets/Baileys](https://github.com/WhiskeySockets/Baileys) · MIT License
+
+</div>

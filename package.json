@@ -2,10 +2,22 @@
   "name": "aunubaileys",
   "type": "module",
   "version": "1.0.0",
-  "description": "AunuBaileys \u2014 AunuCore fork of @whiskeysockets/baileys (6.7.24): makeInMemoryStore restored, fork-compat exports (processedMessages, initInMemoryKeyStore, PHONENUMBER_MCC). Clean-room stability backports, MIT.",
+  "description": "AunuBaileys \u2014 a WhatsApp Web API for bots that never sleep. Full upstream power with the beloved in-memory store restored and pairing that just works. Forged by AunuCore.",
   "keywords": [
     "whatsapp",
-    "automation"
+    "whatsapp-web",
+    "whatsapp-bot",
+    "baileys",
+    "aunubaileys",
+    "aunucore",
+    "bot",
+    "chatbot",
+    "websocket",
+    "multi-device",
+    "pairing-code",
+    "api",
+    "automation",
+    "nodejs"
   ],
   "homepage": "https://github.com/AunuHost/AunuBaileys#readme",
   "repository": {
@@ -13,7 +25,7 @@
     "url": "git+https://github.com/AunuHost/AunuBaileys.git"
   },
   "license": "MIT",
-  "author": "Rajeh Taher",
+  "author": "AunuCore Creative Network",
   "main": "lib/index.js",
   "types": "lib/index.d.ts",
   "files": [
@@ -89,5 +101,8 @@
   },
   "bugs": {
     "url": "https://github.com/AunuHost/AunuBaileys/issues"
+  },
+  "publishConfig": {
+    "access": "public"
   }
 }
