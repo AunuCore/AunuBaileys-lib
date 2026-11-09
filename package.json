@@ -1,0 +1,93 @@
+{
+  "name": "aunubaileys",
+  "type": "module",
+  "version": "1.0.0",
+  "description": "AunuBaileys \u2014 AunuCore fork of @whiskeysockets/baileys (6.7.24): makeInMemoryStore restored, fork-compat exports (processedMessages, initInMemoryKeyStore, PHONENUMBER_MCC). Clean-room stability backports, MIT.",
+  "keywords": [
+    "whatsapp",
+    "automation"
+  ],
+  "homepage": "https://github.com/AunuHost/AunuBaileys#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/AunuHost/AunuBaileys.git"
+  },
+  "license": "MIT",
+  "author": "Rajeh Taher",
+  "main": "lib/index.js",
+  "types": "lib/index.d.ts",
+  "files": [
+    "lib/**/*",
+    "WAProto/**/*",
+    "engine-requirements.js"
+  ],
+  "scripts": {
+    "preinstall": "node ./engine-requirements.js"
+  },
+  "dependencies": {
+    "@cacheable/node-cache": "^1.4.0",
+    "@hapi/boom": "^9.1.3",
+    "async-mutex": "^0.5.0",
+    "axios": "^1.6.0",
+    "libsignal": "git+https://github.com/whiskeysockets/libsignal-node",
+    "music-metadata": "^11.7.0",
+    "pino": "^9.6",
+    "protobufjs": "^7.2.4",
+    "ws": "^8.13.0",
+    "@adiwajshing/keyed-db": "^0.2.4"
+  },
+  "devDependencies": {
+    "@eslint/eslintrc": "^3.3.1",
+    "@eslint/js": "^9.31.0",
+    "@types/jest": "^30.0.0",
+    "@types/node": "^16.0.0",
+    "@types/ws": "^8.0.0",
+    "@typescript-eslint/eslint-plugin": "^8.32.0",
+    "@typescript-eslint/parser": "^8.32.0",
+    "@whiskeysockets/eslint-config": "github:whiskeysockets/eslint-config",
+    "conventional-changelog-cli": "^2.2.2",
+    "esbuild-register": "^3.6.0",
+    "eslint": "^9.31.0",
+    "eslint-config-prettier": "^10.1.2",
+    "eslint-plugin-prettier": "^5.4.0",
+    "jest": "^30.0.5",
+    "jimp": "^1.6.0",
+    "jiti": "^2.4.2",
+    "json": "^11.0.0",
+    "link-preview-js": "^3.0.0",
+    "open": "^8.4.2",
+    "prettier": "^3.5.3",
+    "protobufjs-cli": "^1.1.3",
+    "release-it": "^15.10.3",
+    "ts-jest": "^29.4.0",
+    "tsc-esm-fix": "^3.1.2",
+    "tsx": "^4.20.3",
+    "typedoc": "^0.27.9",
+    "typedoc-plugin-markdown": "4.4.2",
+    "typescript": "^5.8.2"
+  },
+  "peerDependencies": {
+    "audio-decode": "^2.1.3",
+    "jimp": "^1.6.0",
+    "link-preview-js": "^3.0.0",
+    "sharp": "*"
+  },
+  "peerDependenciesMeta": {
+    "audio-decode": {
+      "optional": true
+    },
+    "jimp": {
+      "optional": true
+    },
+    "link-preview-js": {
+      "optional": true
+    }
+  },
+  "packageManager": "yarn@4.9.2",
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "bugs": {
+    "url": "https://github.com/AunuHost/AunuBaileys/issues"
+  }
+}
