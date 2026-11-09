@@ -75,6 +75,8 @@ export type SocketConfig = {
      * map to store the retry counts for failed messages;
      * used to determine whether to retry a message or not */
     msgRetryCounterCache?: CacheStore;
+    /** AunuBaileys: capacity of the built-in sent-message cache used to answer retry receipts when `getMessage` has no copy. Default 256; set 0 to disable. */
+    sentMessagesCacheSize?: number;
     /** provide a cache to store a user's device list */
     userDevicesCache?: CacheStore;
     /** cache to store call offers */

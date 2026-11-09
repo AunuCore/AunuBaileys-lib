@@ -64,6 +64,10 @@ Everything else is pure upstream. When upstream moves, we rebase the patch layer
 
 
 
+### 🆕 What's new in 1.0.10 / Baru di 1.0.10
+
+- 🛠️ **Reliability hardening against classic upstream weaknesses** — (1) **Retry receipts now get answered even without a custom `getMessage` store:** a built-in per-socket sent-message cache (last 256 relayed messages, whatsmeow-style) backs up your store, ending the silent "message not available" failures behind stuck unreadable/undelivered messages. Disable with `sentMessagesCacheSize: 0`. (2) **Pairing is now single-flight:** `requestPairingCode` refuses to double-fire (double requests invalidate the first code) and refuses outright on already-registered sessions, with clear errors instead of silent corruption. (3) **Handshake timeout raised:** default `connectTimeoutMs` goes 20s → 60s so pairing no longer times out on slow networks.
+
 ### 🆕 What's new in 1.0.9 / Baru di 1.0.9
 
 - 🪪 **LID identity layer** — WhatsApp is migrating identities from phone numbers to LIDs, and incoming stanzas already carry both forms. AunuBaileys now learns the mapping from live traffic: every socket exposes `sock.aunuLid`, a bidirectional PN <-> LID store with local `getLIDForPN()` / `getPNForLID()` lookups (no extra server queries), LRU capping, and optional JSON persistence. Prefer a standalone store? `makeLIDStore()` is exported from the package root, fully typed.

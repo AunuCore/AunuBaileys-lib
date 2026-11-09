@@ -17,3 +17,4 @@ export * from './Utils/aunu-handler';
 export * from './Utils/builders';
 export * from './Utils/antiban';
 export * from './Utils/lid-store.js';
+export * from './Utils/sent-message-cache.js';
