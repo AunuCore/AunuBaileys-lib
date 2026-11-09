@@ -64,6 +64,11 @@ Everything else is pure upstream. When upstream moves, we rebase the patch layer
 
 
 
+### 🆕 What's new in 1.0.7 / Baru di 1.0.7
+
+- 🧭 **One canonical repository** — the separate upstream-fork repo was retired (archived by the maintainers); `AunuHost/AunuBaileys-lib` is now the single public home of AunuBaileys, and this README — with badges pointing at the right repo — is the one npm ships.
+- 📦 Metadata-only release: no code changes.
+
 ### 🆕 What's new in 1.0.6 / Baru di 1.0.6
 
 - 📚 **Documentation site launched** — full docs (guides, complete API reference, recipes, troubleshooting) now live at **[docsjs.aunucore.eu.cc](https://docsjs.aunucore.eu.cc)**; it is also this package's npm homepage.
