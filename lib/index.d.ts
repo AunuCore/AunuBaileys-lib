@@ -15,3 +15,5 @@ export { processedMessages, initInMemoryKeyStore } from './Utils/fork-compat.js'
 export { PHONENUMBER_MCC } from './Utils/phonenumber-mcc.js';
 export * from './Utils/aunu-handler';
 export * from './Utils/builders';
+export * from './Utils/antiban';
+export * from './Utils/lid-store.js';

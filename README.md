@@ -64,6 +64,10 @@ Everything else is pure upstream. When upstream moves, we rebase the patch layer
 
 
 
+### 🆕 What's new in 1.0.9 / Baru di 1.0.9
+
+- 🪪 **LID identity layer** — WhatsApp is migrating identities from phone numbers to LIDs, and incoming stanzas already carry both forms. AunuBaileys now learns the mapping from live traffic: every socket exposes `sock.aunuLid`, a bidirectional PN <-> LID store with local `getLIDForPN()` / `getPNForLID()` lookups (no extra server queries), LRU capping, and optional JSON persistence. Prefer a standalone store? `makeLIDStore()` is exported from the package root, fully typed.
+
 ### 🆕 What's new in 1.0.8 / Baru di 1.0.8
 
 - 🩹 **TypeScript declaration fix** — `NEWSLETTER_MEDIA_PATH_MAP` and `BIZ_BOT_SUPPORT_PAYLOAD` were exported from the runtime but missing from `lib/Defaults/index.d.ts`, so TypeScript consumers got compile errors importing them. Both are now properly declared. Found by the RafaelPivots automation, verified against source, no runtime changes.
