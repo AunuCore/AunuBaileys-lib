@@ -49,4 +49,22 @@ export declare const DEFAULT_CACHE_TTLS: {
     CALL_OFFER: number;
     USER_DEVICES: number;
 };
+/** AunuBaileys: peta path upload khusus newsletter */
+export declare const NEWSLETTER_MEDIA_PATH_MAP: {
+    image: string;
+    video: string;
+    audio: string;
+    document: string;
+    sticker: string;
+    gif: string;
+    ptt: string;
+    ptv: string;
+    'music-artwork': string;
+    'sticker-pack': string;
+    'thumbnail-link': string;
+    'waffle-image': string;
+    'waffle-video': string;
+};
+/** AunuBaileys: payload label AI */
+export declare const BIZ_BOT_SUPPORT_PAYLOAD: string;
 //# sourceMappingURL=index.d.ts.map
