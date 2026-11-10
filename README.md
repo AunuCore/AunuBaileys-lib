@@ -64,6 +64,10 @@ Everything else is pure upstream. When upstream moves, we rebase the patch layer
 
 
 
+### 🆕 What's new in 1.0.29 / Baru di 1.0.29
+
+- 🧹 **Resend counters are now cleared when the retry limit is reached** — every message a peer asked us to resend left a permanent counter entry in the retry cache, removed only by the cache TTL (1h on the default cache — nothing at all on a consumer store without TTL), so entries accumulated without bound in a long-lived bot. The entry is now deleted when its count hits the limit, exactly like `sendRetryRequest` already does on the decrypt-retry path.
+
 ### 🆕 What's new in 1.0.28 / Baru di 1.0.28
 
 - 📱 **Device lists no longer go stale after a device is linked or unlinked** — the server pushes a `devices` notification on such changes, but upstream only logged its own list and ignored everyone else's, so sends kept encrypting for the cached device set until the 5-minute TTL expired: a newly linked device received nothing and a removed device kept getting ciphertext. The notification now invalidates that user's cached entry, so the next send re-queries USync for the fresh list. The cache is also exposed as `sock.userDevicesCache` for explicit invalidation.

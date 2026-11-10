@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.0.29 — 2026-11-11 — Penghitung kirim-ulang dibersihkan saat batas tercapai, bukan dibiarkan menumpuk. Setiap pesan yang diminta peer untuk dikirim ulang meninggalkan satu entri penghitung di cache retry — jalur ini tidak pernah menghapus entri, hanya TTL cache (1 jam pada cache bawaan; tidak ada sama sekali pada cache kustom konsumen tanpa TTL) yang membersihkannya. Pada bot yang hidup berminggu-minggu, entri menumpuk tanpa batas. Sekarang entri dihapus begitu hitungan mencapai batas, persis seperti yang sudah dilakukan `sendRetryRequest` pada jalur retry dekripsi.
+
+- `lib/Socket/messages-recv.js`
+
 ## 1.0.28 — 2026-11-11 — Daftar perangkat tidak lagi basi setelah perangkat ditaut/dilepas. Saat daftar perangkat seorang pengguna berubah (WhatsApp Web ditautkan atau dilepas), server mengirim notifikasi `devices` — upstream hanya mencatat daftar perangkatnya sendiri dan mengabaikan semua pengguna lain, sehingga jalur kirim terus mengenkripsi untuk set perangkat lama sampai TTL cache 5 menit habis: perangkat baru tidak menerima apa-apa, perangkat yang dilepas terus menerima ciphertext sia-sia. Sekarang notifikasi itu menginvalidasi entri cache perangkat pengguna tersebut, jadi pengiriman berikutnya mengambil daftar segar lewat USync. Cache-nya sendiri kini diekspos sebagai `sock.userDevicesCache` agar lapisan lain (dan konsumen) bisa menginvalidasi secara eksplisit.
 
 - `lib/Socket/messages-recv.js`, `lib/Socket/messages-send.js`
