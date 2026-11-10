@@ -7,6 +7,9 @@ export declare class RateLimiter {
 }
 export interface DisconnectClassification { category: string; action: 'stop' | 'restart' | 'reconnect' | 'backoff'; detail: string; }
 export declare const classifyDisconnect: (error: unknown) => DisconnectClassification;
+export interface ReconnectDelayOptions { baseDelayMs?: number; maxDelayMs?: number; }
+/** Suggested reconnect delay in ms for a disconnect reason (error, status code, or a classifyDisconnect result); null when the connection must NOT be re-established automatically. */
+export declare const getReconnectDelay: (attempt: number, reason: unknown, options?: ReconnectDelayOptions) => number | null;
 export interface AunuAntiBanOptions {
     perChatPerMinute?: number; globalPerMinute?: number; minDelayMs?: number; jitterMs?: number;
     warmupDays?: number; warmupStart?: number; typingSimulation?: boolean;

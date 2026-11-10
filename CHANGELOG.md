@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.0.27 — 2026-11-11 — Helper `getReconnectDelay` untuk kebijakan reconnect. `classifyDisconnect` dari AunuAntiBan selama ini hanya mengembalikan kategori + tindakan (`stop`/`restart`/`reconnect`/`backoff`); setiap konsumen harus meracik sendiri berapa lama menunggu sebelum menyambung ulang — dan yang paling sering salah adalah reconnect terlalu cepat setelah 429 atau reconnect sama sekali setelah logout. Helper baru `getReconnectDelay(attempt, reason, options?)` menerima error Boom, kode status, atau hasil classifyDisconnect, lalu mengembalikan milidetik yang disarankan: `null` bila koneksi TIDAK boleh disambung ulang (logout, digantikan, sesi rusak, 403), `0` untuk restart yang diminta server, backoff eksponensial + jitter Gaussian untuk gangguan sementara (basis 1 dtk, plafon 60 dtk), dan backoff jauh lebih panjang untuk 429 (basis 30 dtk, plafon 15 mnt). Opsi `baseDelayMs`/`maxDelayMs` tersedia.
+
+- `lib/Utils/antiban.js` (+ `.d.ts`)
+
 ## 1.0.26 — 2026-11-11 — fetchLatestBaileysVersion: ingat versi terakhir yang berhasil diambil. Fungsi ini dipanggil di setiap koneksi ulang dan sebelumnya selalu menembak jaringan; bila fetch gagal di tengah sesi (GitHub tidak terjangkau / rate limit), ia langsung mundur ke versi bundled — padahal nilai endpoint adalah satu-satunya kebenaran yang diterima server (lihat 1.0.13: bundled bisa berupa build beta yang ditolak). Sekarang: hasil fetch yang sukses di-cache 10 menit (panggilan berikutnya tidak menembak jaringan) dan bila fetch gagal setelah pernah sukses, dikembalikan versi terakhir yang berhasil diambil, bukan bundled. Bila belum pernah sukses, tetap bundled seperti sebelumnya. Opsi baru `forceRefresh: true` dan `cacheTtlMs` untuk melewati/mengatur cache.
 
 - `lib/Utils/generics.js`

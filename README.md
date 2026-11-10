@@ -64,6 +64,10 @@ Everything else is pure upstream. When upstream moves, we rebase the patch layer
 
 
 
+### 🆕 What's new in 1.0.27 / Baru di 1.0.27
+
+- ⏱️ **New `getReconnectDelay(attempt, reason)` helper** — the companion to AunuAntiBan's `classifyDisconnect`: it turns a disconnect reason (Boom error, status code, or a classification result) into a suggested wait in milliseconds, or `null` when the connection must NOT be re-established automatically (logged out, replaced, bad session, 403). Server-requested restarts return 0; transient failures back off exponentially with Gaussian jitter (1s base, 60s cap); rate limits back off much longer (30s base, 15 min cap). `baseDelayMs` / `maxDelayMs` overrides available.
+
 ### 🆕 What's new in 1.0.26 / Baru di 1.0.26
 
 - 📡 **`fetchLatestBaileysVersion` now remembers the last-good fetched version** — it is called on every reconnect and used to hit the network every time; a mid-session fetch failure silently downgraded to the bundled version, even though the endpoint value is the only server-accepted truth (see 1.0.13). Successful fetches are now cached for 10 minutes, and a later failure returns the last fetched version instead of the bundled one. New `forceRefresh` / `cacheTtlMs` options.
