@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.0.35 — 2026-11-11 — Kegagalan dekripsi kini memberi sinyal terstruktur, bukan banjir log. Satu sesi yang rusak bisa menggagalkan ratusan pesan dalam hitungan menit (B-01), dan setiap kegagalan dicatat di level ERROR — log tenggelam, sementara bot tidak punya cara terprogram untuk tahu sedang terjadi banjir Bad MAC. Sekarang: (1) log error dekripsi di-throttle per alamat pengirim — baris pertama langsung, lalu paling banyak satu baris per menit per pengirim dengan hitungan kegagalan yang disembunyikan; (2) event baru `messages.decrypt-failure` membawa remoteJid, pengirim, alamat sinyal, jumlah kegagalan beruntun, dan apakah kegagalan ini memicu reset sesi/sender-key — konsumen bisa memberi peringatan dan mengagregasi tanpa membaca log. Penanganan kegagalannya sendiri tidak berubah. Versi penutup rangkaian perbaikan 1.0.14–1.0.35.
+
+- `lib/Utils/decode-wa-message.js`, `lib/Socket/messages-recv.js`, `lib/Types/Events.d.ts`
+
 ## 1.0.34 — 2026-11-11 — Satu orang tidak lagi dihitung dua pemilih karena beda bentuk LID/PN. Agregasi suara polling memakai identitas mentah dari kunci pesan — seseorang yang memilih dulu sebagai nomor telepon lalu sebagai LID (atau sebaliknya) tercatat sebagai dua pemilih berbeda, dan update polling dari bentuk identitas yang lain menumpuk sebagai entri kedua, bukan menggantikan yang lama. `getAggregateVotesInPollMessage` dan `updateMessageWithPollUpdate` kini menerima opsi `{ lidStore }` opsional: pemilih dikanonisasi ke nomor teleponnya dan didedup per opsi. Tanpa store, perilaku lama tidak berubah.
 
 - `lib/Utils/messages.js`, `lib/Utils/messages.d.ts`

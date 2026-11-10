@@ -43,6 +43,21 @@ export type BaileysEventMap = {
     };
     'contacts.upsert': Contact[];
     'contacts.update': Partial<Contact>[];
+    'messages.decrypt-failure': {
+        /** the chat the failed message arrived in */
+        remoteJid: string;
+        /** sender JID (participant in groups) */
+        author: string;
+        /** signal-protocol address the failure was counted against */
+        address: string;
+        isGroup: boolean;
+        /** consecutive failures for this address, including this one */
+        failures: number;
+        /** true when this failure tripped the session/sender-key reset */
+        healed: boolean;
+        messageId: string;
+        timestamp: number;
+    };
     'messages.delete': {
         keys: WAMessageKey[];
     } | {

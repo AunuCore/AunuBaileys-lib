@@ -64,6 +64,10 @@ Everything else is pure upstream. When upstream moves, we rebase the patch layer
 
 
 
+### 🆕 What's new in 1.0.35 / Baru di 1.0.35
+
+- 📡 **Decrypt failures now emit a structured signal instead of a log flood** — one rotten session can fail hundreds of messages in minutes (B-01), and every failure was logged at ERROR level, drowning the logs while the bot had no programmatic way to know a Bad MAC flood was happening. Now: (1) the decrypt error log is throttled per sender address — first line immediately, then at most one line per minute per sender carrying the suppressed-failure count; (2) a new `messages.decrypt-failure` event carries the chat, sender, signal address, consecutive failure count, and whether this failure tripped the session/sender-key reset — consumers can alert and aggregate without parsing logs. The failure handling itself is unchanged. Closing release of the 1.0.14–1.0.35 fix train.
+
 ### 🆕 What's new in 1.0.34 / Baru di 1.0.34
 
 - 🗳️ **One person no longer counts as two poll voters across the LID/PN split** — poll aggregation keyed voters by their raw message-key identity, so someone voting first as a phone number and later as a LID (or the reverse) counted as two different voters, and a poll update arriving in the other identity form piled up as a second entry instead of replacing the old one. `getAggregateVotesInPollMessage` and `updateMessageWithPollUpdate` now accept an optional `{ lidStore }` option: voters are canonicalized to their phone-number JID and deduped per option. Without a store, legacy behaviour is unchanged.
