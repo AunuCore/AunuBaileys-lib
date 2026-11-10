@@ -64,6 +64,10 @@ Everything else is pure upstream. When upstream moves, we rebase the patch layer
 
 
 
+### 🆕 What's new in 1.0.23 / Baru di 1.0.23
+
+- 🖼️ **Old-media downloads recover from 403** — the phone re-upload recovery path for failed media downloads only triggered on HTTP 404/410, but WhatsApp's media CDN answers **403** when a message's directPath/url auth has expired — the common case for older media. Downloads of old media therefore failed permanently even though the sender's phone could heal them. 403 now triggers the re-upload request; if the media is truly gone, the re-upload fails as well and the original error propagates unchanged.
+
 ### 🆕 What's new in 1.0.22 / Baru di 1.0.22
 
 - 🗑️ **Cacheable key store honours deletions** — `makeCacheableSignalKeyStore` cached `null` values verbatim, but null means *deleted*: later gets returned a phantom present-but-null entry, and a value re-created in the store stayed hidden behind the cached null until the 5-minute TTL expired. Deletions now evict the cache entry, so the next get reads the store's authoritative state — which is exactly what makes `deleteSession`/`deleteSenderKey` (1.0.14/1.0.17) behave correctly through the recommended cacheable wiring. Both defects were reproduced before the fix and pass after it.

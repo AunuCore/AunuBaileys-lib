@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.0.23 — 2026-11-11 — Unduhan media lama: 403 kini memicu re-upload dari HP. Jalur pemulihan unduhan media (minta HP pengirim mengunggah ulang salinan segar) hanya terpicu pada HTTP 404/410, padahal CDN media WhatsApp menjawab **403** ketika otorisasi directPath/URL sebuah pesan sudah kedaluwarsa — kasus media lama yang paling umum. Akibatnya unduhan media lama gagal permanen walau HP pengirim bisa menyembuhkannya. 403 kini masuk daftar status pemicu re-upload (`REUPLOAD_REQUIRED_STATUS`); bila media memang sudah musnah, permintaan re-upload ikut gagal dan error asli diteruskan apa adanya — tidak ada perilaku menyembunyikan error. Cakupan verifikasi dicatat jujur: perubahan ini pada konstanta keputusan retry di jalur yang sudah ada (jalur re-upload-nya sendiri bawaan upstream dan tidak diubah); tidak ada uji CDN live yang diklaim.
+
+- `lib/Utils/messages.js`
+
 ## 1.0.22 — 2026-11-11 — Cacheable key store: penghapusan tidak lagi di-cache sebagai null hantu. `makeCacheableSignalKeyStore.set()` menyimpan nilai apa adanya ke cache — termasuk `null`, padahal null berarti PENGHAPUSAN. Akibatnya terbukti empiris: (1) get berikutnya mengembalikan key yang HADIR tapi null (bentuk data yang salah), dan (2) nilai yang dibuat ulang di store di balik wrapper tetap tertutup null cache sampai TTL 5 menit habis. Sekarang nilai null/undefined MENGHAPUS entri cache (cache.del), sehingga get berikutnya membaca keadaan otoritatif store: key yang dihapus benar-benar absen, nilai baru langsung terlihat. Inilah yang membuat deleteSession (1.0.14) dan deleteSenderKey (1.0.17) berperilaku benar lewat wiring cacheable yang direkomendasikan — jalur yang dipakai Tenka. Kedua cacat direproduksi sebelum perbaikan dan lolos sesudahnya lewat uji terhadap store sungguhan.
 
 - `lib/Utils/auth-utils.js`
