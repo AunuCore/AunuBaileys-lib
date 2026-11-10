@@ -64,6 +64,10 @@ Everything else is pure upstream. When upstream moves, we rebase the patch layer
 
 
 
+### 🆕 What's new in 1.0.22 / Baru di 1.0.22
+
+- 🗑️ **Cacheable key store honours deletions** — `makeCacheableSignalKeyStore` cached `null` values verbatim, but null means *deleted*: later gets returned a phantom present-but-null entry, and a value re-created in the store stayed hidden behind the cached null until the 5-minute TTL expired. Deletions now evict the cache entry, so the next get reads the store's authoritative state — which is exactly what makes `deleteSession`/`deleteSenderKey` (1.0.14/1.0.17) behave correctly through the recommended cacheable wiring. Both defects were reproduced before the fix and pass after it.
+
 ### 🆕 What's new in 1.0.21 / Baru di 1.0.21
 
 - 💾 **saveCreds writes are coalesced** — during pairing, `creds.update` fires many times per second and every event used to queue a full atomic creds.json write. Concurrent `saveCreds()` calls now share one in-flight write, and a call landing mid-write schedules exactly one follow-up, so the file always ends with the latest creds — verified: a 30-call burst produced only ~2–3 real writes instead of 30.

@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.0.22 — 2026-11-11 — Cacheable key store: penghapusan tidak lagi di-cache sebagai null hantu. `makeCacheableSignalKeyStore.set()` menyimpan nilai apa adanya ke cache — termasuk `null`, padahal null berarti PENGHAPUSAN. Akibatnya terbukti empiris: (1) get berikutnya mengembalikan key yang HADIR tapi null (bentuk data yang salah), dan (2) nilai yang dibuat ulang di store di balik wrapper tetap tertutup null cache sampai TTL 5 menit habis. Sekarang nilai null/undefined MENGHAPUS entri cache (cache.del), sehingga get berikutnya membaca keadaan otoritatif store: key yang dihapus benar-benar absen, nilai baru langsung terlihat. Inilah yang membuat deleteSession (1.0.14) dan deleteSenderKey (1.0.17) berperilaku benar lewat wiring cacheable yang direkomendasikan — jalur yang dipakai Tenka. Kedua cacat direproduksi sebelum perbaikan dan lolos sesudahnya lewat uji terhadap store sungguhan.
+
+- `lib/Utils/auth-utils.js`
+
 ## 1.0.21 — 2026-11-11 — saveCreds tidak lagi menulis disk puluhan kali per burst. Selama pairing, `creds.update` menyala berkali-kali per detik (registrasi, unggah pre-key, dorongan identitas) dan setiap event memicu satu penulisan atomik penuh creds.json yang mengantre di mutex file — pairing yang sibuk berarti puluhan penulisan file identik. Sekarang panggilan saveCreds yang bersamaan berbagi SATU penulisan yang sedang berjalan, dan panggilan yang tiba di tengah penulisan menjadwalkan tepat satu penulisan lanjutan, sehingga file selalu berakhir berisi creds TERBARU tanpa pekerjaan redundan. Terverifikasi: burst 30 panggilan serentak menghasilkan hanya ~2-3 penulisan nyata (dihitung dari event file tmp) dan isi akhir persis creds terakhir; penulisan sekuensial normal tidak berubah.
 
 - `lib/Utils/use-multi-file-auth-state.js`
