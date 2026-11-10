@@ -64,6 +64,10 @@ Everything else is pure upstream. When upstream moves, we rebase the patch layer
 
 
 
+### 🆕 What's new in 1.0.31 / Baru di 1.0.31
+
+- 📜 **History-sync record list no longer grows without bound in creds** — every history-sync notification appended an entry to `creds.processedHistoryMessages`, yet nothing anywhere reads those entries (the single read is an emptiness check for `isLatest`). The list lives in creds, so each entry bloated creds.json and was spread-copied and re-serialized on every save for the life of the account. Only the most recent 50 entries are now kept; `isLatest` semantics are unchanged.
+
 ### 🆕 What's new in 1.0.30 / Baru di 1.0.30
 
 - 🟢 **Presence no longer vanishes across the LID/PN identity split** — presence stanzas increasingly arrive LID-addressed while consumers keyed the participant by phone-number JID (or the reverse), so their lookup missed and the contact looked permanently offline / never typing. When the LID store knows the pair, `presence.update` now also carries the presence under the alternate participant form; the original entry is unchanged.

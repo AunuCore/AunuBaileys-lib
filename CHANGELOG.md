@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.0.31 — 2026-11-11 — Daftar riwayat history sync tidak lagi menumpuk tanpa batas di creds. Setiap notifikasi history sync menambahkan satu entri ke `creds.processedHistoryMessages` — dan tidak ada satu pun kode yang membaca entri-entri itu; satu-satunya pembacaan adalah pengecekan kosong untuk `isLatest`. Daftar ini tinggal di creds, jadi setiap entri menggelembungkan creds.json dan disalin-ulang (spread) plus diserialisasi ulang di setiap penyimpanan selama umur akun. Sekarang hanya 50 entri terakhir yang dipertahankan; semantik `isLatest` tidak berubah.
+
+- `lib/Utils/process-message.js`
+
 ## 1.0.30 — 2026-11-11 — Presence tidak lagi hilang karena perbedaan bentuk LID/PN. Stanza presence makin sering datang dialamatkan ke LID, sementara konsumen mencatat partisipan dengan JID nomor telepon (atau sebaliknya) — lookup mereka meleset dan kontak terlihat selamanya offline / tidak pernah mengetik. Sekarang, bila store LID mengenal pasangan identitasnya, event `presence.update` juga memuat presence di bawah bentuk partisipan alternatifnya; entri asli tidak berubah.
 
 - `lib/Socket/chats.js`
