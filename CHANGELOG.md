@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.0.11 — 2026-11-10 — HOTFIX: tarball 1.0.9 dan 1.0.10 rusak saat diterbitkan — `lib/index.js` mengekspor `./Utils/antiban.js`, tetapi file `lib/Utils/antiban.js` (dan `.d.ts`-nya) tidak pernah ter-commit ke repo sejak 1.0.5, sehingga paket yang terbit tidak konsisten internal dan semua installer kena `ERR_MODULE_NOT_FOUND` saat import. Kedua file kini ter-commit, dan tarball hasil publish diverifikasi dengan install bersih + uji import sebelum rilis ini dinyatakan selesai. Rilis ini juga membawa perbaikan tipe dari RafaelPivots (10 Nov): `INITIAL_PREKEY_COUNT` di `lib/Defaults/index.d.ts` dikoreksi 30 -> 812 agar sesuai nilai runtime, serta URL repository di package.json diperbarui ke rumah baru repo: `AunuCore/AunuBaileys-lib`.
+
+- `lib/Utils/antiban.js`
+- `lib/Utils/antiban.d.ts`
+- `lib/Defaults/index.d.ts`
+- `package.json`
+
 ## 2026-11-10 — Ditemukan inkonsistensi nyata: `INITIAL_PREKEY_COUNT` dideklarasikan sebagai literal `30` di `lib/Defaults/index.d.ts` tetapi runtime JS mengekspor `812`. TypeScript consumers yang bergantung pada literal type akan mendapat nilai yang salah. Perbaikan: update deklarasi `.d.ts` agar sesuai dengan nilai runtime `812`.
 
 - `lib/Defaults/index.d.ts`

@@ -64,6 +64,10 @@ Everything else is pure upstream. When upstream moves, we rebase the patch layer
 
 
 
+### 🆕 What's new in 1.0.11 / Baru di 1.0.11
+
+- 🚑 **Hotfix for broken 1.0.9 / 1.0.10 tarballs** — the published packages exported `./Utils/antiban.js` from `lib/index.js` but the file itself was never committed to the repository, so every install crashed on import with `ERR_MODULE_NOT_FOUND`. The AntiBan module (and its types) is now in the repo, and this release's tarball was verified with a clean install + import test. Also in: RafaelPivots' `INITIAL_PREKEY_COUNT` type correction (30 → 812, matching the runtime) and repository URLs updated to the repo's new home, **AunuCore/AunuBaileys-lib**. If you are on 1.0.9 or 1.0.10, upgrade to 1.0.11.
+
 ### 🆕 What's new in 1.0.10 / Baru di 1.0.10
 
 - 🛠️ **Reliability hardening against classic upstream weaknesses** — (1) **Retry receipts now get answered even without a custom `getMessage` store:** a built-in per-socket sent-message cache (last 256 relayed messages, whatsmeow-style) backs up your store, ending the silent "message not available" failures behind stuck unreadable/undelivered messages. Disable with `sentMessagesCacheSize: 0`. (2) **Pairing is now single-flight:** `requestPairingCode` refuses to double-fire (double requests invalidate the first code) and refuses outright on already-registered sessions, with clear errors instead of silent corruption. (3) **Handshake timeout raised:** default `connectTimeoutMs` goes 20s → 60s so pairing no longer times out on slow networks.

@@ -1,7 +1,7 @@
 {
   "name": "aunubaileys",
   "type": "module",
-  "version": "1.0.10",
+  "version": "1.0.11",
   "description": "AunuBaileys \u2014 a WhatsApp Web API for bots that never sleep. Full upstream power with the beloved in-memory store restored and pairing that just works. Forged by AunuCore.",
   "keywords": [
     "whatsapp",
@@ -22,7 +22,7 @@
   "homepage": "https://docsjs.aunucore.eu.cc",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/AunuHost/AunuBaileys-lib.git"
+    "url": "git+https://github.com/AunuCore/AunuBaileys-lib.git"
   },
   "license": "MIT",
   "author": "AunuCore Creative Network",
@@ -101,7 +101,7 @@
     "node": ">=20.0.0"
   },
   "bugs": {
-    "url": "https://github.com/AunuHost/AunuBaileys-lib/issues"
+    "url": "https://github.com/AunuCore/AunuBaileys-lib/issues"
   },
   "publishConfig": {
     "access": "public"
