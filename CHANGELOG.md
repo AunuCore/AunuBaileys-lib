@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.0.16 — 2026-11-10 — Identity change tidak lagi diabaikan. Notifikasi `encrypt` dari server membawa kabar "identitas kontak ini berubah" (HP baru / install ulang / nomor didaur ulang) — upstream Baileys hanya menulis log 'identity changed' lalu TIDAK melakukan apa-apa ("not handling right now"), sehingga sesi tersimpan tetap terikat ke identitas lama dan pesan-pesan berikutnya dari kontak itu gagal melawan sesi arsip (kelas Bad MAC) sampai lawan kebetulan mengirim pesan pre-key. Sekarang sesi tersimpan untuk JID itu langsung dihapus saat notifikasi diterima (mesin deleteSession dari 1.0.14), sehingga pertukaran berikutnya membangun sesi segar terhadap identitas baru. Pemeriksaan pre-key saat koneksi terbuka diaudit dan ternyata sudah benar di upstream (query jumlah di server pada CB:success + upload bila <= ambang), jadi tidak diubah.
+
+- `lib/Socket/messages-recv.js`
+
 ## 1.0.15 — 2026-11-10 — Send-side session heal: pesan tidak terkirim karena sesi busuk di sisi kirim. Sisi terima sudah disembuhkan di 1.0.14; sisi kirim punya penyakit kembarnya: bila record sesi tersimpan untuk satu JID rusak/basi, `encryptMessage` melempar error sesi dan SETIAP pengiriman ke JID itu gagal permanen sampai restart / hapus auth manual. Sekarang kegagalan enkripsi yang berbau sesi (pesan error mengandung "session", mis. "No session found to encrypt") memicu penyembuhan otomatis: sesi dihapus, bundle segar diambil dari server (`assertSessions(jid, true)`), enkripsi dicoba tepat satu kali lagi. Error non-sesi diteruskan apa adanya; kegagalan pada percobaan kedua juga diteruskan — tidak ada loop.
 
 - `lib/Socket/messages-send.js`

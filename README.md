@@ -64,6 +64,10 @@ Everything else is pure upstream. When upstream moves, we rebase the patch layer
 
 
 
+### 🆕 What's new in 1.0.16 / Baru di 1.0.16
+
+- 🪪 **Identity changes are handled, not just logged** — when WhatsApp notifies that a contact's identity changed (new phone / reinstall / recycled number), upstream Baileys logs “identity changed” and does nothing, leaving your stored session bound to the old identity so that contact's messages keep failing. AunuBaileys now deletes the stored session for that JID on the spot, so the next exchange re-initiates cleanly against the new identity.
+
 ### 🆕 What's new in 1.0.15 / Baru di 1.0.15
 
 - 📤 **Send-side session heal** — the twin of 1.0.14 for outgoing messages: when the stored session for a JID is corrupt, `encryptMessage` throws and every send to that contact fails permanently. Now a session-flavoured encrypt error triggers an automatic heal — drop the session, fetch a fresh bundle from the server, encrypt once more. Non-session errors pass through untouched, and a second failure propagates (no retry loop).
