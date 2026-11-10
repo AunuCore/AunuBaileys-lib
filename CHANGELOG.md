@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.0.34 — 2026-11-11 — Satu orang tidak lagi dihitung dua pemilih karena beda bentuk LID/PN. Agregasi suara polling memakai identitas mentah dari kunci pesan — seseorang yang memilih dulu sebagai nomor telepon lalu sebagai LID (atau sebaliknya) tercatat sebagai dua pemilih berbeda, dan update polling dari bentuk identitas yang lain menumpuk sebagai entri kedua, bukan menggantikan yang lama. `getAggregateVotesInPollMessage` dan `updateMessageWithPollUpdate` kini menerima opsi `{ lidStore }` opsional: pemilih dikanonisasi ke nomor teleponnya dan didedup per opsi. Tanpa store, perilaku lama tidak berubah.
+
+- `lib/Utils/messages.js`, `lib/Utils/messages.d.ts`
+
 ## 1.0.33 — 2026-11-11 — Koneksi tidak lagi diputus oleh satu pong yang hilang. Keep-alive upstream mematikan koneksi begitu selisih sejak trafik terakhir melewati satu interval + 5 detik — di koneksi sepi, balasan ping adalah satu-satunya trafik masuk, jadi satu pong yang hilang karena gangguan sesaat membunuh koneksi sehat dan memaksa reconnect penuh. Sekarang koneksi baru diputus setelah dua interval berturut-turut tanpa balasan; koneksi yang benar-benar mati tetap terdeteksi, hanya satu interval lebih lambat.
 
 - `lib/Socket/socket.js`

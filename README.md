@@ -64,6 +64,10 @@ Everything else is pure upstream. When upstream moves, we rebase the patch layer
 
 
 
+### 🆕 What's new in 1.0.34 / Baru di 1.0.34
+
+- 🗳️ **One person no longer counts as two poll voters across the LID/PN split** — poll aggregation keyed voters by their raw message-key identity, so someone voting first as a phone number and later as a LID (or the reverse) counted as two different voters, and a poll update arriving in the other identity form piled up as a second entry instead of replacing the old one. `getAggregateVotesInPollMessage` and `updateMessageWithPollUpdate` now accept an optional `{ lidStore }` option: voters are canonicalized to their phone-number JID and deduped per option. Without a store, legacy behaviour is unchanged.
+
 ### 🆕 What's new in 1.0.33 / Baru di 1.0.33
 
 - 💓 **One lost keep-alive pong no longer kills the connection** — upstream ended the connection as soon as the gap since last inbound traffic exceeded one interval + 5s; on a quiet connection the ping response is the only inbound traffic, so a single lost pong killed a healthy connection and forced a full reconnect. The connection is now ended only after two consecutive intervals without a reply; genuinely dead connections are still detected, one interval later.
