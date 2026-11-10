@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.0.19 — 2026-11-10 — Retry request tidak bisa lagi mematikan proses. Jalur pengiriman retry receipt setelah kegagalan dekripsi berjalan fire-and-forget lewat retryMutex (sengaja, agar tidak memblokir pemrosesan pesan) — tetapi panggilannya tidak memiliki penangkap error sama sekali, tidak seperti pola-pola tetangganya yang semuanya mengarah ke onUnexpectedError. Satu kegagalan di dalamnya (socket mati di tengah jalan, pengambilan pre-key gagal) menjadi unhandled rejection, dan kebijakan default Node mematikan SELURUH proses bot karenanya. Sekarang penolakan itu dirutekan ke onUnexpectedError standar: tercatat rapi, proses tetap hidup, pesan berikutnya tetap diproses.
+
+- `lib/Socket/messages-recv.js`
+
+## 2026-11-10 — (RafaelPivots auto-fix, dibawa ulang setelah tertimpa rilis 1.0.18) Pemindaian otomatis menemukan satu masalah minor: file WAProto/fix-imports.js mengimpor `argv` dari modul `process` tetapi tidak pernah menggunakannya — dead import dibersihkan.
+
+- `WAProto/fix-imports.js`
+
+
 ## 1.0.18 — 2026-11-10 — Retry receipt: bundle sesi dari peer kini dipakai. Saat perangkat penerima gagal mendekripsi pesan kita dan meminta kirim ulang, receipt retry-nya sering membawa key bundle MILIK perangkat itu sendiri (`<keys>` + `<registration>`) — pernyataan otoritatif "bangun sesimu ke aku dari sini". Upstream mengabaikannya dan selalu mengambil bundle dari server lewat IQ paksa: satu round-trip ekstra, dan untuk partisipan LID pemetaan JID->bundle di server rapuh. Sekarang bundle dari receipt diparsing (`parseRetryReceiptSession`, diekspor — terverifikasi unit-test round-trip dengan key asli: registration id, identity key, pre-key, signed pre-key) dan diinjeksikan sebagai sesi baru (`injectE2ESession`); pengambilan dari server dilewati tepat untuk pengiriman ulang itu. Receipt tanpa bundle berperilaku persis seperti sebelumnya. Komentar TODO basi di sendMessagesAgain (cache pesan terkirim, sudah ada sejak 1.0.10) dibersihkan.
 
 - `lib/Utils/signal.js`, `lib/Utils/signal.d.ts`, `lib/Socket/messages-recv.js`

@@ -64,6 +64,10 @@ Everything else is pure upstream. When upstream moves, we rebase the patch layer
 
 
 
+### 🆕 What's new in 1.0.19 / Baru di 1.0.19
+
+- 🛟 **A failed retry request can no longer kill your bot** — the retry-receipt path after a decrypt failure runs fire-and-forget (by design), but its promise had no error handler at all: one failure inside it became an unhandled rejection, and Node's default policy terminates the whole process. It now routes to the standard error handler — logged, contained, and the bot keeps processing messages.
+
 ### 🆕 What's new in 1.0.18 / Baru di 1.0.18
 
 - 🔁 **Retry receipts: the peer's own key bundle is finally used** — when a recipient device asks for a resend, its retry receipt often embeds that device's own current key bundle. Upstream ignored it and always re-fetched a bundle from the server (extra round trip, and JID→bundle mapping is fragile for LID participants). AunuBaileys now parses the bundle (new exported `parseRetryReceiptSession`, unit-verified) and injects it as the fresh session for the resend, skipping the server fetch for that resend. Receipts without a bundle behave exactly as before.
