@@ -64,6 +64,10 @@ Everything else is pure upstream. When upstream moves, we rebase the patch layer
 
 
 
+### 🆕 What's new in 1.0.20 / Baru di 1.0.20
+
+- ⏳ **Sends survive reconnect blips** — calling `sendMessage` while the connection is re-establishing used to fail instantly with a 428 from the first internal query, and the message was simply lost. `relayMessage` now waits for the transport to reopen (bounded by `connectTimeoutMs`; a permanently closed connection still fails fast, and a wait that expires raises a clear 408). When the connection is open, behaviour is unchanged.
+
 ### 🆕 What's new in 1.0.19 / Baru di 1.0.19
 
 - 🛟 **A failed retry request can no longer kill your bot** — the retry-receipt path after a decrypt failure runs fire-and-forget (by design), but its promise had no error handler at all: one failure inside it became an unhandled rejection, and Node's default policy terminates the whole process. It now routes to the standard error handler — logged, contained, and the bot keeps processing messages.
