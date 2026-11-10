@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.0.21 — 2026-11-11 — saveCreds tidak lagi menulis disk puluhan kali per burst. Selama pairing, `creds.update` menyala berkali-kali per detik (registrasi, unggah pre-key, dorongan identitas) dan setiap event memicu satu penulisan atomik penuh creds.json yang mengantre di mutex file — pairing yang sibuk berarti puluhan penulisan file identik. Sekarang panggilan saveCreds yang bersamaan berbagi SATU penulisan yang sedang berjalan, dan panggilan yang tiba di tengah penulisan menjadwalkan tepat satu penulisan lanjutan, sehingga file selalu berakhir berisi creds TERBARU tanpa pekerjaan redundan. Terverifikasi: burst 30 panggilan serentak menghasilkan hanya ~2-3 penulisan nyata (dihitung dari event file tmp) dan isi akhir persis creds terakhir; penulisan sekuensial normal tidak berubah.
+
+- `lib/Utils/use-multi-file-auth-state.js`
+
 ## 1.0.20 — 2026-11-11 — Kirim pesan saat reconnect tidak lagi langsung gagal. `relayMessage` yang dipanggil tepat ketika koneksi sedang menyambung ulang dulu langsung mati dengan Boom 428 dari query internal pertamanya — pesan hilang kecuali konsumen mengulang sendiri; inilah salah satu wajah "pesan tidak terkirim" yang paling sering dilaporkan bot di VPS yang koneksinya berkedip. Sekarang, bila transport belum terbuka, pengiriman MENUNGGU transport terbuka kembali, dibatasi `connectTimeoutMs` (default 60 detik, timeout menghasilkan Boom 408 yang jelas); koneksi yang tertutup permanen tetap gagal cepat lewat waitForSocketOpen itu sendiri. Saat koneksi terbuka normal, perilaku tidak berubah sama sekali (tanpa overhead).
 
 - `lib/Socket/messages-send.js`

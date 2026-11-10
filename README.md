@@ -64,6 +64,10 @@ Everything else is pure upstream. When upstream moves, we rebase the patch layer
 
 
 
+### 🆕 What's new in 1.0.21 / Baru di 1.0.21
+
+- 💾 **saveCreds writes are coalesced** — during pairing, `creds.update` fires many times per second and every event used to queue a full atomic creds.json write. Concurrent `saveCreds()` calls now share one in-flight write, and a call landing mid-write schedules exactly one follow-up, so the file always ends with the latest creds — verified: a 30-call burst produced only ~2–3 real writes instead of 30.
+
 ### 🆕 What's new in 1.0.20 / Baru di 1.0.20
 
 - ⏳ **Sends survive reconnect blips** — calling `sendMessage` while the connection is re-establishing used to fail instantly with a 428 from the first internal query, and the message was simply lost. `relayMessage` now waits for the transport to reopen (bounded by `connectTimeoutMs`; a permanently closed connection still fails fast, and a wait that expires raises a clear 408). When the connection is open, behaviour is unchanged.
