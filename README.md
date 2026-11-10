@@ -64,6 +64,10 @@ Everything else is pure upstream. When upstream moves, we rebase the patch layer
 
 
 
+### 🆕 What's new in 1.0.26 / Baru di 1.0.26
+
+- 📡 **`fetchLatestBaileysVersion` now remembers the last-good fetched version** — it is called on every reconnect and used to hit the network every time; a mid-session fetch failure silently downgraded to the bundled version, even though the endpoint value is the only server-accepted truth (see 1.0.13). Successful fetches are now cached for 10 minutes, and a later failure returns the last fetched version instead of the bundled one. New `forceRefresh` / `cacheTtlMs` options.
+
 ### 🆕 What's new in 1.0.25 / Baru di 1.0.25
 
 - 🪪 **DM receipt status no longer gets stuck on LID addressing** — receipts increasingly arrive addressed to the peer's LID while consumers keyed the sent message by its phone-number JID (or the reverse), so the status update never matched and the message looked forever "sent". When the LID store knows the pair, DM `messages.update` events now carry the alternate form as `key.remoteJidAlt` (purely additive; `remoteJid` unchanged). Under the hood the LID store is now created once in the base socket layer, so the single instance the public `sock.aunuLid` learns into is the same one inner layers read — and the store gains a `getAltJid(jid)` helper.
