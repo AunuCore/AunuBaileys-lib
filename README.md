@@ -64,6 +64,10 @@ Everything else is pure upstream. When upstream moves, we rebase the patch layer
 
 
 
+### 🆕 What's new in 1.0.13 / Baru di 1.0.13
+
+- 📵 **Bundled WhatsApp version corrected** — the previously bundled version `2.3000.1035194821` is now **rejected by WhatsApp's servers** (connection closed with code 405 at login; proven by a field probe on a real VPS deploy — handshake completes, the login node is sent, the server closes 405). The bundled default is now `2.3000.1043857760`, the version the official version endpoint currently reports as accepted — and the same deploy paired successfully with it. If your pairing suddenly fails with a 405 while your network is fine, this was it. Consumers who override `version` in their socket config are unaffected.
+
 ### 🆕 What's new in 1.0.12 / Baru di 1.0.12
 
 - 🔑 **Pairing waits for the socket — and explains itself when it can't.** Field report from a real VPS deploy: `requestPairingCode` threw a bare Boom 428 "Connection Closed" every time, leaving consumers unable to tell an unready socket from a server rejection. Now `requestPairingCode` **waits internally (up to 30s) for the transport to open** before sending the pairing IQ, fails fast if the connection dies while waiting, and **every pairing failure carries the last disconnect reason** (status code + message) instead of the generic text. The 1.0.10 single-flight guard is kept and covers the wait.

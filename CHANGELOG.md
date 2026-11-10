@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.0.13 — 2026-11-10 — Koreksi versi WhatsApp bawaan: `[2, 3000, 1035194821]` DITOLAK server WhatsApp (koneksi ditutup dengan kode 405 saat login — terbukti lewat probe lapangan pada deploy Tenka di VPS: handshake selesai, node login terkirim, server langsung menutup 405; dengan versi endpoint resmi koneksi diterima dan pairing berhasil). Versi bawaan diganti ke `[2, 3000, 1043857760]`, versi yang saat ini diterima server menurut endpoint resmi yang sama dengan yang dipakai `fetchLatestBaileysVersion()`. Pelajaran yang tercatat: nomor versi lebih tinggi tidak berarti diterima server — build 1035194821 rupanya jalur beta yang sudah tidak diakui; nilai endpoint resmi adalah patokan kebenaran. Konsumen yang meng-override `version` di config socket tidak terpengaruh.
+
+- `lib/Defaults/baileys-version.json`
+
 ## 1.0.12 — 2026-11-10 — Pairing tidak lagi menembak IQ ke socket yang belum terbuka. Laporan lapangan (deploy Tenka di VPS): `requestPairingCode` selalu melempar Boom 428 "Connection Closed" generik dari sendRawMessage — konsumen tidak bisa membedakan socket yang belum siap, koneksi yang ditolak server, atau handshake yang mati. Sekarang: (1) `requestPairingCode` menunggu kesiapan transport secara internal hingga 30 detik sebelum mengirim IQ pairing (fast-fail begitu koneksi mati, bukan menunggu timeout penuh); (2) setiap kegagalan pairing menyertakan alasan disconnect terakhir (status code + pesan, dilacak dari jalur `end()` socket) — bukan lagi "Connection Closed" polos; (3) single-flight 1.0.10 dipertahankan dan mencakup masa tunggu. Patch ini memperbaiki perilaku & diagnosabilitas library; penyebab socket tidak terbuka di host tertentu (reachability vs penolakan handshake) tetap urusan diagnostik host dan kini terlihat dari pesan errornya.
 
 - `lib/Socket/socket.js`
