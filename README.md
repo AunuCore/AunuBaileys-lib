@@ -64,6 +64,10 @@ Everything else is pure upstream. When upstream moves, we rebase the patch layer
 
 
 
+### 🆕 What's new in 1.0.28 / Baru di 1.0.28
+
+- 📱 **Device lists no longer go stale after a device is linked or unlinked** — the server pushes a `devices` notification on such changes, but upstream only logged its own list and ignored everyone else's, so sends kept encrypting for the cached device set until the 5-minute TTL expired: a newly linked device received nothing and a removed device kept getting ciphertext. The notification now invalidates that user's cached entry, so the next send re-queries USync for the fresh list. The cache is also exposed as `sock.userDevicesCache` for explicit invalidation.
+
 ### 🆕 What's new in 1.0.27 / Baru di 1.0.27
 
 - ⏱️ **New `getReconnectDelay(attempt, reason)` helper** — the companion to AunuAntiBan's `classifyDisconnect`: it turns a disconnect reason (Boom error, status code, or a classification result) into a suggested wait in milliseconds, or `null` when the connection must NOT be re-established automatically (logged out, replaced, bad session, 403). Server-requested restarts return 0; transient failures back off exponentially with Gaussian jitter (1s base, 60s cap); rate limits back off much longer (30s base, 15 min cap). `baseDelayMs` / `maxDelayMs` overrides available.

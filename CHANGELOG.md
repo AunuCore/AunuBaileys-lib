@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.0.28 — 2026-11-11 — Daftar perangkat tidak lagi basi setelah perangkat ditaut/dilepas. Saat daftar perangkat seorang pengguna berubah (WhatsApp Web ditautkan atau dilepas), server mengirim notifikasi `devices` — upstream hanya mencatat daftar perangkatnya sendiri dan mengabaikan semua pengguna lain, sehingga jalur kirim terus mengenkripsi untuk set perangkat lama sampai TTL cache 5 menit habis: perangkat baru tidak menerima apa-apa, perangkat yang dilepas terus menerima ciphertext sia-sia. Sekarang notifikasi itu menginvalidasi entri cache perangkat pengguna tersebut, jadi pengiriman berikutnya mengambil daftar segar lewat USync. Cache-nya sendiri kini diekspos sebagai `sock.userDevicesCache` agar lapisan lain (dan konsumen) bisa menginvalidasi secara eksplisit.
+
+- `lib/Socket/messages-recv.js`, `lib/Socket/messages-send.js`
+
 ## 1.0.27 — 2026-11-11 — Helper `getReconnectDelay` untuk kebijakan reconnect. `classifyDisconnect` dari AunuAntiBan selama ini hanya mengembalikan kategori + tindakan (`stop`/`restart`/`reconnect`/`backoff`); setiap konsumen harus meracik sendiri berapa lama menunggu sebelum menyambung ulang — dan yang paling sering salah adalah reconnect terlalu cepat setelah 429 atau reconnect sama sekali setelah logout. Helper baru `getReconnectDelay(attempt, reason, options?)` menerima error Boom, kode status, atau hasil classifyDisconnect, lalu mengembalikan milidetik yang disarankan: `null` bila koneksi TIDAK boleh disambung ulang (logout, digantikan, sesi rusak, 403), `0` untuk restart yang diminta server, backoff eksponensial + jitter Gaussian untuk gangguan sementara (basis 1 dtk, plafon 60 dtk), dan backoff jauh lebih panjang untuk 429 (basis 30 dtk, plafon 15 mnt). Opsi `baseDelayMs`/`maxDelayMs` tersedia.
 
 - `lib/Utils/antiban.js` (+ `.d.ts`)

@@ -1,7 +1,7 @@
 {
   "name": "aunubaileys",
   "type": "module",
-  "version": "1.0.27",
+  "version": "1.0.28",
   "description": "AunuBaileys \u2014 a WhatsApp Web API for bots that never sleep. Full upstream power with the beloved in-memory store restored and pairing that just works. Forged by AunuCore.",
   "keywords": [
     "whatsapp",
