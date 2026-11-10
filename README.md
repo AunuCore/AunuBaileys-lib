@@ -64,6 +64,10 @@ Everything else is pure upstream. When upstream moves, we rebase the patch layer
 
 
 
+### 🆕 What's new in 1.0.33 / Baru di 1.0.33
+
+- 💓 **One lost keep-alive pong no longer kills the connection** — upstream ended the connection as soon as the gap since last inbound traffic exceeded one interval + 5s; on a quiet connection the ping response is the only inbound traffic, so a single lost pong killed a healthy connection and forced a full reconnect. The connection is now ended only after two consecutive intervals without a reply; genuinely dead connections are still detected, one interval later.
+
 ### 🆕 What's new in 1.0.32 / Baru di 1.0.32
 
 - 👥 **Group senders that arrive LID-only are now identifiable by phone number** — in groups, `key.participant` is increasingly a LID while `participantPn` is only sometimes included by the server, leaving phone-number-based sender identification blind. When the LID store knows the pair, the missing `participantPn` / `participantLid` is now filled in on the upsert path before the event reaches consumers. `key.participant` itself is NEVER rewritten — it is the E2E addressing identity the session/sender-key state is keyed by.

@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.0.33 — 2026-11-11 — Koneksi tidak lagi diputus oleh satu pong yang hilang. Keep-alive upstream mematikan koneksi begitu selisih sejak trafik terakhir melewati satu interval + 5 detik — di koneksi sepi, balasan ping adalah satu-satunya trafik masuk, jadi satu pong yang hilang karena gangguan sesaat membunuh koneksi sehat dan memaksa reconnect penuh. Sekarang koneksi baru diputus setelah dua interval berturut-turut tanpa balasan; koneksi yang benar-benar mati tetap terdeteksi, hanya satu interval lebih lambat.
+
+- `lib/Socket/socket.js`
+
 ## 1.0.32 — 2026-11-11 — Pengirim grup yang hanya ber-LID kini tetap teridentifikasi nomornya. Di grup, `key.participant` makin sering berupa LID, sementara `participantPn` (nomor telepon pengirim) hanya kadang disertakan server — tanpa itu, bot yang mengidentifikasi pengirim grup lewat nomor telepon tidak bisa mengenali siapa yang bicara. Sekarang, bila pasangan identitasnya dikenal LID store, `participantPn`/`participantLid` yang hilang dilengkapi di jalur upsert sebelum event diteruskan ke konsumen. `key.participant` sendiri TIDAK PERNAH ditulis ulang — ia adalah identitas addressing E2E yang dipakai state sesi/sender-key.
 
 - `lib/Socket/chats.js`
