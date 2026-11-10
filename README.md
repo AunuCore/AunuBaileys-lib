@@ -64,6 +64,10 @@ Everything else is pure upstream. When upstream moves, we rebase the patch layer
 
 
 
+### 🆕 What's new in 1.0.15 / Baru di 1.0.15
+
+- 📤 **Send-side session heal** — the twin of 1.0.14 for outgoing messages: when the stored session for a JID is corrupt, `encryptMessage` throws and every send to that contact fails permanently. Now a session-flavoured encrypt error triggers an automatic heal — drop the session, fetch a fresh bundle from the server, encrypt once more. Non-session errors pass through untouched, and a second failure propagates (no retry loop).
+
 ### 🆕 What's new in 1.0.14 / Baru di 1.0.14
 
 - 💊 **Bad MAC self-heal** — when a contact's E2E session rots (classic after re-pairing: every message from that one contact fails with “Bad MAC” forever), upstream Baileys just retries against the same stale session endlessly. AunuBaileys now counts consecutive decrypt failures per identity; at the 3rd, it **deletes the stale session** (new `signalRepository.deleteSession`) and forces the next retry receipt to carry fresh keys, so the peer re-initiates a clean session — the same reset dance official clients use. A successful decrypt zeroes the counter. Groups are excluded (sender-key class, handled separately).

@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.0.15 — 2026-11-10 — Send-side session heal: pesan tidak terkirim karena sesi busuk di sisi kirim. Sisi terima sudah disembuhkan di 1.0.14; sisi kirim punya penyakit kembarnya: bila record sesi tersimpan untuk satu JID rusak/basi, `encryptMessage` melempar error sesi dan SETIAP pengiriman ke JID itu gagal permanen sampai restart / hapus auth manual. Sekarang kegagalan enkripsi yang berbau sesi (pesan error mengandung "session", mis. "No session found to encrypt") memicu penyembuhan otomatis: sesi dihapus, bundle segar diambil dari server (`assertSessions(jid, true)`), enkripsi dicoba tepat satu kali lagi. Error non-sesi diteruskan apa adanya; kegagalan pada percobaan kedua juga diteruskan — tidak ada loop.
+
+- `lib/Socket/messages-send.js`
+
 ## 1.0.14 — 2026-11-10 — Bad MAC self-heal: sesi basi di-reset otomatis. Gejala lapangan: setelah rangkaian pairing ulang, sesi E2E dengan satu kontak membusuk — setiap pesan masuk dari kontak itu gagal dekripsi "Bad MAC" selamanya, karena upstream Baileys hanya mengirim retry receipt lalu mencoba dekripsi lagi melawan sesi basi yang sama, tanpa batas kesembuhan. Sekarang: kegagalan dekripsi per alamat sinyal dihitung; pada kegagalan ke-3 berturut-turut dari identitas yang sama, sesi basi itu DIHAPUS (`signalRepository.deleteSession`, metode baru) dan retry receipt berikutnya dipaksa membawa key bundle segar — persis tarian session-reset yang dipakai klien resmi agar lawan bicara membangun sesi baru (pkmsg) yang bisa didekripsi. Keberhasilan dekripsi meng-nol-kan penghitung. Grup dikecualikan (kelas sender-key ditangani terpisah). Penghapusan sesi terverifikasi unit-test menarget alamat yang tepat, termasuk alamat LID persis kasus lapangan (39772202483737.0).
 
 - `lib/Socket/messages-recv.js`, `lib/Signal/libsignal.js`, `lib/Types/Signal.d.ts`
