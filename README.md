@@ -64,6 +64,10 @@ Everything else is pure upstream. When upstream moves, we rebase the patch layer
 
 
 
+### 🆕 What's new in 1.0.18 / Baru di 1.0.18
+
+- 🔁 **Retry receipts: the peer's own key bundle is finally used** — when a recipient device asks for a resend, its retry receipt often embeds that device's own current key bundle. Upstream ignored it and always re-fetched a bundle from the server (extra round trip, and JID→bundle mapping is fragile for LID participants). AunuBaileys now parses the bundle (new exported `parseRetryReceiptSession`, unit-verified) and injects it as the fresh session for the resend, skipping the server fetch for that resend. Receipts without a bundle behave exactly as before.
+
 ### 🆕 What's new in 1.0.17 / Baru di 1.0.17
 
 - 👥 **Group sender-key heal** — the 1.0.14 failure counter now covers group messages too: after 3 consecutive group decrypt failures from the same author in the same group, the stale sender-key record is deleted (new `signalRepository.deleteSenderKey`), so the next retry makes the author resend with a fresh distribution message and the group cipher rebuilds from scratch. One rotten sender-key record can no longer mute a group member forever.

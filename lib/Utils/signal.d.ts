@@ -16,6 +16,8 @@ export declare const generateOrGetPreKeys: (creds: AuthenticationCreds, range: n
 export declare const xmppSignedPreKey: (key: SignedKeyPair) => BinaryNode;
 export declare const xmppPreKey: (pair: KeyPair, id: number) => BinaryNode;
 export declare const parseAndInjectE2ESessions: (node: BinaryNode, repository: SignalRepository) => Promise<void>;
+/** AunuBaileys: session parsed from a retry receipt's embedded key bundle, or undefined when absent. */
+export declare const parseRetryReceiptSession: (node: BinaryNode) => { registrationId: number; identityKey: Buffer; signedPreKey?: { keyId: number; publicKey: Buffer; signature?: Buffer }; preKey?: { keyId: number; publicKey: Buffer } } | undefined;
 export declare const extractDeviceJids: (result: USyncQueryResultList[], myJid: string, excludeZeroDevices: boolean) => JidWithDevice[];
 /**
  * get the next N keys for upload or processing
