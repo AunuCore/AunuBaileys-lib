@@ -14,6 +14,8 @@ export interface LIDStore {
     learnFromUpsert(upsert: { messages?: WAMessage[] }): number;
     getLIDForPN(pnJid: string): string | undefined;
     getPNForLID(lidJid: string): string | undefined;
+    /** The alternate identity form of a known JID (PN for a known LID, LID for a known PN); undefined when unknown or not a user JID. */
+    getAltJid(jid: string): string | undefined;
     hasPN(pnJid: string): boolean;
     hasLID(lidJid: string): boolean;
     deletePair(jid: string): boolean;

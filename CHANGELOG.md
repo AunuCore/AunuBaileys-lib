@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.0.25 — 2026-11-11 — Receipt DM: status pesan tidak lagi nyangkut gara-gara LID. Receipt DM makin sering datang dialamatkan ke LID penerima, sementara aplikasi konsumen menyimpan pesan terkirim dengan kunci JID nomor telepon (atau sebaliknya) — update status tidak pernah cocok dengan store mereka dan pesan terlihat selamanya "terkirim" padahal sudah dibaca. Sekarang, bila store LID mengenal pasangan identitasnya, event `messages.update` dari receipt DM membawa `key.remoteJidAlt` berisi bentuk identitas alternatifnya; `remoteJid` tidak berubah dan field ini murni tambahan. Prasyarat internalnya: store LID sekarang dibuat SEKALI di lapisan socket paling dasar (`lib/Socket/socket.js`) sehingga instance yang sama mengalir lewat semua lapisan — sebelumnya store dibuat di lapisan terluar, jadi lapisan dalam (receipt, presence, poll) tidak bisa membacanya sama sekali. Store publik `sock.aunuLid` berperilaku persis seperti sebelumnya. Helper baru `aunuLid.getAltJid(jid)` mengembalikan bentuk alternatif dari JID yang dikenal (PN untuk LID, LID untuk PN).
+
+- `lib/Socket/messages-recv.js`, `lib/Socket/socket.js`, `lib/Socket/index.js`, `lib/Utils/lid-store.js` (+ `.d.ts`)
+
 ## 1.0.24 — 2026-11-11 — profilePictureUrl: "tidak ada foto" bukan lagi exception. Mengambil foto profil kontak yang tidak memasang foto / membatasi privasi membuat server menjawab error 401/404, dan upstream membiarkan Boom-nya meledak ke pemanggil — setiap fitur yang menampilkan avatar (menu, sambutan grup, perintah profil) wajib membungkus try/catch sendiri atau crash. Sekarang status 401/404 diselesaikan menjadi `undefined`, konsisten dengan kasus node picture kosong yang sudah ada; error sungguhan (timeout, 5xx, koneksi) tetap dilempar. Kode status dibaca mengikuti konvensi codebase (`err.data` numerik dari assertNodeErrorFree) dengan fallback bentuk lain.
 
 - `lib/Socket/chats.js`

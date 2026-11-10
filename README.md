@@ -64,6 +64,10 @@ Everything else is pure upstream. When upstream moves, we rebase the patch layer
 
 
 
+### 🆕 What's new in 1.0.25 / Baru di 1.0.25
+
+- 🪪 **DM receipt status no longer gets stuck on LID addressing** — receipts increasingly arrive addressed to the peer's LID while consumers keyed the sent message by its phone-number JID (or the reverse), so the status update never matched and the message looked forever "sent". When the LID store knows the pair, DM `messages.update` events now carry the alternate form as `key.remoteJidAlt` (purely additive; `remoteJid` unchanged). Under the hood the LID store is now created once in the base socket layer, so the single instance the public `sock.aunuLid` learns into is the same one inner layers read — and the store gains a `getAltJid(jid)` helper.
+
 ### 🆕 What's new in 1.0.24 / Baru di 1.0.24
 
 - 🖼️ **`profilePictureUrl` no longer throws for “no picture”** — a contact with no photo (or one hidden by privacy settings) made the server answer 401/404 and upstream let the Boom crash every caller that forgot a try/catch. Those statuses now resolve to `undefined`, consistent with the existing empty-picture-node case; real failures (timeouts, 5xx) still throw.
