@@ -64,6 +64,10 @@ Everything else is pure upstream. When upstream moves, we rebase the patch layer
 
 
 
+### 🆕 What's new in 1.0.12 / Baru di 1.0.12
+
+- 🔑 **Pairing waits for the socket — and explains itself when it can't.** Field report from a real VPS deploy: `requestPairingCode` threw a bare Boom 428 "Connection Closed" every time, leaving consumers unable to tell an unready socket from a server rejection. Now `requestPairingCode` **waits internally (up to 30s) for the transport to open** before sending the pairing IQ, fails fast if the connection dies while waiting, and **every pairing failure carries the last disconnect reason** (status code + message) instead of the generic text. The 1.0.10 single-flight guard is kept and covers the wait.
+
 ### 🆕 What's new in 1.0.11 / Baru di 1.0.11
 
 - 🚑 **Hotfix for broken 1.0.9 / 1.0.10 tarballs** — the published packages exported `./Utils/antiban.js` from `lib/index.js` but the file itself was never committed to the repository, so every install crashed on import with `ERR_MODULE_NOT_FOUND`. The AntiBan module (and its types) is now in the repo, and this release's tarball was verified with a clean install + import test. Also in: RafaelPivots' `INITIAL_PREKEY_COUNT` type correction (30 → 812, matching the runtime) and repository URLs updated to the repo's new home, **AunuCore/AunuBaileys-lib**. If you are on 1.0.9 or 1.0.10, upgrade to 1.0.11.
