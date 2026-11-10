@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.0.30 — 2026-11-11 — Presence tidak lagi hilang karena perbedaan bentuk LID/PN. Stanza presence makin sering datang dialamatkan ke LID, sementara konsumen mencatat partisipan dengan JID nomor telepon (atau sebaliknya) — lookup mereka meleset dan kontak terlihat selamanya offline / tidak pernah mengetik. Sekarang, bila store LID mengenal pasangan identitasnya, event `presence.update` juga memuat presence di bawah bentuk partisipan alternatifnya; entri asli tidak berubah.
+
+- `lib/Socket/chats.js`
+
 ## 1.0.29 — 2026-11-11 — Penghitung kirim-ulang dibersihkan saat batas tercapai, bukan dibiarkan menumpuk. Setiap pesan yang diminta peer untuk dikirim ulang meninggalkan satu entri penghitung di cache retry — jalur ini tidak pernah menghapus entri, hanya TTL cache (1 jam pada cache bawaan; tidak ada sama sekali pada cache kustom konsumen tanpa TTL) yang membersihkannya. Pada bot yang hidup berminggu-minggu, entri menumpuk tanpa batas. Sekarang entri dihapus begitu hitungan mencapai batas, persis seperti yang sudah dilakukan `sendRetryRequest` pada jalur retry dekripsi.
 
 - `lib/Socket/messages-recv.js`

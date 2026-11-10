@@ -64,6 +64,10 @@ Everything else is pure upstream. When upstream moves, we rebase the patch layer
 
 
 
+### 🆕 What's new in 1.0.30 / Baru di 1.0.30
+
+- 🟢 **Presence no longer vanishes across the LID/PN identity split** — presence stanzas increasingly arrive LID-addressed while consumers keyed the participant by phone-number JID (or the reverse), so their lookup missed and the contact looked permanently offline / never typing. When the LID store knows the pair, `presence.update` now also carries the presence under the alternate participant form; the original entry is unchanged.
+
 ### 🆕 What's new in 1.0.29 / Baru di 1.0.29
 
 - 🧹 **Resend counters are now cleared when the retry limit is reached** — every message a peer asked us to resend left a permanent counter entry in the retry cache, removed only by the cache TTL (1h on the default cache — nothing at all on a consumer store without TTL), so entries accumulated without bound in a long-lived bot. The entry is now deleted when its count hits the limit, exactly like `sendRetryRequest` already does on the decrypt-retry path.
