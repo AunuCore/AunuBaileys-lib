@@ -64,6 +64,10 @@ Everything else is pure upstream. When upstream moves, we rebase the patch layer
 
 
 
+### 🆕 What's new in 1.0.14 / Baru di 1.0.14
+
+- 💊 **Bad MAC self-heal** — when a contact's E2E session rots (classic after re-pairing: every message from that one contact fails with “Bad MAC” forever), upstream Baileys just retries against the same stale session endlessly. AunuBaileys now counts consecutive decrypt failures per identity; at the 3rd, it **deletes the stale session** (new `signalRepository.deleteSession`) and forces the next retry receipt to carry fresh keys, so the peer re-initiates a clean session — the same reset dance official clients use. A successful decrypt zeroes the counter. Groups are excluded (sender-key class, handled separately).
+
 ### 🆕 What's new in 1.0.13 / Baru di 1.0.13
 
 - 📵 **Bundled WhatsApp version corrected** — the previously bundled version `2.3000.1035194821` is now **rejected by WhatsApp's servers** (connection closed with code 405 at login; proven by a field probe on a real VPS deploy — handshake completes, the login node is sent, the server closes 405). The bundled default is now `2.3000.1043857760`, the version the official version endpoint currently reports as accepted — and the same deploy paired successfully with it. If your pairing suddenly fails with a 405 while your network is fine, this was it. Consumers who override `version` in their socket config are unaffected.

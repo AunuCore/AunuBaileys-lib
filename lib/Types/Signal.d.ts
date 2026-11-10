@@ -52,6 +52,8 @@ export type SignalRepository = {
         ciphertext: Uint8Array;
     }>;
     injectE2ESession(opts: E2ESessionOpts): Promise<void>;
+    /** AunuBaileys: delete the stored E2E session for a JID (used by the Bad MAC self-heal). */
+    deleteSession(jid: string): Promise<void>;
     jidToSignalProtocolAddress(jid: string): string;
 };
 export {};

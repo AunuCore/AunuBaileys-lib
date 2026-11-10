@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.0.14 — 2026-11-10 — Bad MAC self-heal: sesi basi di-reset otomatis. Gejala lapangan: setelah rangkaian pairing ulang, sesi E2E dengan satu kontak membusuk — setiap pesan masuk dari kontak itu gagal dekripsi "Bad MAC" selamanya, karena upstream Baileys hanya mengirim retry receipt lalu mencoba dekripsi lagi melawan sesi basi yang sama, tanpa batas kesembuhan. Sekarang: kegagalan dekripsi per alamat sinyal dihitung; pada kegagalan ke-3 berturut-turut dari identitas yang sama, sesi basi itu DIHAPUS (`signalRepository.deleteSession`, metode baru) dan retry receipt berikutnya dipaksa membawa key bundle segar — persis tarian session-reset yang dipakai klien resmi agar lawan bicara membangun sesi baru (pkmsg) yang bisa didekripsi. Keberhasilan dekripsi meng-nol-kan penghitung. Grup dikecualikan (kelas sender-key ditangani terpisah). Penghapusan sesi terverifikasi unit-test menarget alamat yang tepat, termasuk alamat LID persis kasus lapangan (39772202483737.0).
+
+- `lib/Socket/messages-recv.js`, `lib/Signal/libsignal.js`, `lib/Types/Signal.d.ts`
+
 ## 1.0.13 — 2026-11-10 — Koreksi versi WhatsApp bawaan: `[2, 3000, 1035194821]` DITOLAK server WhatsApp (koneksi ditutup dengan kode 405 saat login — terbukti lewat probe lapangan pada deploy Tenka di VPS: handshake selesai, node login terkirim, server langsung menutup 405; dengan versi endpoint resmi koneksi diterima dan pairing berhasil). Versi bawaan diganti ke `[2, 3000, 1043857760]`, versi yang saat ini diterima server menurut endpoint resmi yang sama dengan yang dipakai `fetchLatestBaileysVersion()`. Pelajaran yang tercatat: nomor versi lebih tinggi tidak berarti diterima server — build 1035194821 rupanya jalur beta yang sudah tidak diakui; nilai endpoint resmi adalah patokan kebenaran. Konsumen yang meng-override `version` di config socket tidak terpengaruh.
 
 - `lib/Defaults/baileys-version.json`
