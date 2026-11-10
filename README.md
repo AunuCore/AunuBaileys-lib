@@ -64,6 +64,10 @@ Everything else is pure upstream. When upstream moves, we rebase the patch layer
 
 
 
+### 🆕 What's new in 1.0.17 / Baru di 1.0.17
+
+- 👥 **Group sender-key heal** — the 1.0.14 failure counter now covers group messages too: after 3 consecutive group decrypt failures from the same author in the same group, the stale sender-key record is deleted (new `signalRepository.deleteSenderKey`), so the next retry makes the author resend with a fresh distribution message and the group cipher rebuilds from scratch. One rotten sender-key record can no longer mute a group member forever.
+
 ### 🆕 What's new in 1.0.16 / Baru di 1.0.16
 
 - 🪪 **Identity changes are handled, not just logged** — when WhatsApp notifies that a contact's identity changed (new phone / reinstall / recycled number), upstream Baileys logs “identity changed” and does nothing, leaving your stored session bound to the old identity so that contact's messages keep failing. AunuBaileys now deletes the stored session for that JID on the spot, so the next exchange re-initiates cleanly against the new identity.

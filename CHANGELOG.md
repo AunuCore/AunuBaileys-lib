@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.0.17 — 2026-11-10 — Grup: sender-key basi ikut disembuhkan. Mesin penghitung kegagalan dekripsi dari 1.0.14 kini mencakup pesan grup (sebelumnya dikecualikan): kegagalan dekripsi grup dihitung per (grup, penulis); pada kegagalan ke-3 berturut-turut, record sender-key basi milik penulis itu di grup tersebut dihapus (`signalRepository.deleteSenderKey`, metode baru — terverifikasi unit-test menarget string record yang tepat), sehingga retry request berikutnya meminta pengiriman ulang yang membawa distribution message segar dan cipher grup dibangun ulang dari nol. Tanpa ini, satu record sender-key busuk membuat semua pesan grup dari penulis itu tidak terbaca permanen. Keberhasilan dekripsi meng-nol-kan kedua penghitung (sesi 1:1 dan sender-key).
+
+- `lib/Socket/messages-recv.js`, `lib/Signal/libsignal.js`, `lib/Types/Signal.d.ts`
+
 ## 1.0.16 — 2026-11-10 — Identity change tidak lagi diabaikan. Notifikasi `encrypt` dari server membawa kabar "identitas kontak ini berubah" (HP baru / install ulang / nomor didaur ulang) — upstream Baileys hanya menulis log 'identity changed' lalu TIDAK melakukan apa-apa ("not handling right now"), sehingga sesi tersimpan tetap terikat ke identitas lama dan pesan-pesan berikutnya dari kontak itu gagal melawan sesi arsip (kelas Bad MAC) sampai lawan kebetulan mengirim pesan pre-key. Sekarang sesi tersimpan untuk JID itu langsung dihapus saat notifikasi diterima (mesin deleteSession dari 1.0.14), sehingga pertukaran berikutnya membangun sesi segar terhadap identitas baru. Pemeriksaan pre-key saat koneksi terbuka diaudit dan ternyata sudah benar di upstream (query jumlah di server pada CB:success + upload bila <= ambang), jadi tidak diubah.
 
 - `lib/Socket/messages-recv.js`
