@@ -64,6 +64,10 @@ Everything else is pure upstream. When upstream moves, we rebase the patch layer
 
 
 
+### 🆕 What's new in 1.0.24 / Baru di 1.0.24
+
+- 🖼️ **`profilePictureUrl` no longer throws for “no picture”** — a contact with no photo (or one hidden by privacy settings) made the server answer 401/404 and upstream let the Boom crash every caller that forgot a try/catch. Those statuses now resolve to `undefined`, consistent with the existing empty-picture-node case; real failures (timeouts, 5xx) still throw.
+
 ### 🆕 What's new in 1.0.23 / Baru di 1.0.23
 
 - 🖼️ **Old-media downloads recover from 403** — the phone re-upload recovery path for failed media downloads only triggered on HTTP 404/410, but WhatsApp's media CDN answers **403** when a message's directPath/url auth has expired — the common case for older media. Downloads of old media therefore failed permanently even though the sender's phone could heal them. 403 now triggers the re-upload request; if the media is truly gone, the re-upload fails as well and the original error propagates unchanged.

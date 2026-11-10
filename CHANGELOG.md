@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.0.24 — 2026-11-11 — profilePictureUrl: "tidak ada foto" bukan lagi exception. Mengambil foto profil kontak yang tidak memasang foto / membatasi privasi membuat server menjawab error 401/404, dan upstream membiarkan Boom-nya meledak ke pemanggil — setiap fitur yang menampilkan avatar (menu, sambutan grup, perintah profil) wajib membungkus try/catch sendiri atau crash. Sekarang status 401/404 diselesaikan menjadi `undefined`, konsisten dengan kasus node picture kosong yang sudah ada; error sungguhan (timeout, 5xx, koneksi) tetap dilempar. Kode status dibaca mengikuti konvensi codebase (`err.data` numerik dari assertNodeErrorFree) dengan fallback bentuk lain.
+
+- `lib/Socket/chats.js`
+
 ## 1.0.23 — 2026-11-11 — Unduhan media lama: 403 kini memicu re-upload dari HP. Jalur pemulihan unduhan media (minta HP pengirim mengunggah ulang salinan segar) hanya terpicu pada HTTP 404/410, padahal CDN media WhatsApp menjawab **403** ketika otorisasi directPath/URL sebuah pesan sudah kedaluwarsa — kasus media lama yang paling umum. Akibatnya unduhan media lama gagal permanen walau HP pengirim bisa menyembuhkannya. 403 kini masuk daftar status pemicu re-upload (`REUPLOAD_REQUIRED_STATUS`); bila media memang sudah musnah, permintaan re-upload ikut gagal dan error asli diteruskan apa adanya — tidak ada perilaku menyembunyikan error. Cakupan verifikasi dicatat jujur: perubahan ini pada konstanta keputusan retry di jalur yang sudah ada (jalur re-upload-nya sendiri bawaan upstream dan tidak diubah); tidak ada uji CDN live yang diklaim.
 
 - `lib/Utils/messages.js`
