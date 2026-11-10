@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026-11-10 — Pemindaian otomatis menemukan satu masalah minor: file WAProto/fix-imports.js mengimpor `argv` dari modul `process` tetapi tidak pernah menggunakannya. Ini adalah dead import yang tidak menyebabkan crash tetapi menambah noise dan bisa membingungkan pembaca kode. Selain itu, tidak ditemukan bug nyata, inkonsistensi kritis, atau optimasi bermakna lainnya — kode sudah dalam kondisi baik.
+
+- `WAProto/fix-imports.js`
+
 ## 1.0.17 — 2026-11-10 — Grup: sender-key basi ikut disembuhkan. Mesin penghitung kegagalan dekripsi dari 1.0.14 kini mencakup pesan grup (sebelumnya dikecualikan): kegagalan dekripsi grup dihitung per (grup, penulis); pada kegagalan ke-3 berturut-turut, record sender-key basi milik penulis itu di grup tersebut dihapus (`signalRepository.deleteSenderKey`, metode baru — terverifikasi unit-test menarget string record yang tepat), sehingga retry request berikutnya meminta pengiriman ulang yang membawa distribution message segar dan cipher grup dibangun ulang dari nol. Tanpa ini, satu record sender-key busuk membuat semua pesan grup dari penulis itu tidak terbaca permanen. Keberhasilan dekripsi meng-nol-kan kedua penghitung (sesi 1:1 dan sender-key).
 
 - `lib/Socket/messages-recv.js`, `lib/Signal/libsignal.js`, `lib/Types/Signal.d.ts`
