@@ -64,6 +64,10 @@ Everything else is pure upstream. When upstream moves, we rebase the patch layer
 
 
 
+### 🆕 What's new in 1.0.32 / Baru di 1.0.32
+
+- 👥 **Group senders that arrive LID-only are now identifiable by phone number** — in groups, `key.participant` is increasingly a LID while `participantPn` is only sometimes included by the server, leaving phone-number-based sender identification blind. When the LID store knows the pair, the missing `participantPn` / `participantLid` is now filled in on the upsert path before the event reaches consumers. `key.participant` itself is NEVER rewritten — it is the E2E addressing identity the session/sender-key state is keyed by.
+
 ### 🆕 What's new in 1.0.31 / Baru di 1.0.31
 
 - 📜 **History-sync record list no longer grows without bound in creds** — every history-sync notification appended an entry to `creds.processedHistoryMessages`, yet nothing anywhere reads those entries (the single read is an emptiness check for `isLatest`). The list lives in creds, so each entry bloated creds.json and was spread-copied and re-serialized on every save for the life of the account. Only the most recent 50 entries are now kept; `isLatest` semantics are unchanged.

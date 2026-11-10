@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.0.32 — 2026-11-11 — Pengirim grup yang hanya ber-LID kini tetap teridentifikasi nomornya. Di grup, `key.participant` makin sering berupa LID, sementara `participantPn` (nomor telepon pengirim) hanya kadang disertakan server — tanpa itu, bot yang mengidentifikasi pengirim grup lewat nomor telepon tidak bisa mengenali siapa yang bicara. Sekarang, bila pasangan identitasnya dikenal LID store, `participantPn`/`participantLid` yang hilang dilengkapi di jalur upsert sebelum event diteruskan ke konsumen. `key.participant` sendiri TIDAK PERNAH ditulis ulang — ia adalah identitas addressing E2E yang dipakai state sesi/sender-key.
+
+- `lib/Socket/chats.js`
+
 ## 1.0.31 — 2026-11-11 — Daftar riwayat history sync tidak lagi menumpuk tanpa batas di creds. Setiap notifikasi history sync menambahkan satu entri ke `creds.processedHistoryMessages` — dan tidak ada satu pun kode yang membaca entri-entri itu; satu-satunya pembacaan adalah pengecekan kosong untuk `isLatest`. Daftar ini tinggal di creds, jadi setiap entri menggelembungkan creds.json dan disalin-ulang (spread) plus diserialisasi ulang di setiap penyimpanan selama umur akun. Sekarang hanya 50 entri terakhir yang dipertahankan; semantik `isLatest` tidak berubah.
 
 - `lib/Utils/process-message.js`
