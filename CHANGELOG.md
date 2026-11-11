@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.0.52 — 2026-11-11 — **EKSPERIMENTAL: tombol like/dislike untuk `aunuCard`.** Opsi baru `likeDislike: true` menambahkan dua tombol quick-reply di bawah kartu — **👍 Suka** (id `aunu_like`) dan **👎 Tidak Suka** (id `aunu_dislike`) — sesudah tombol kustom apa pun. Id bisa diganti lewat `likeId`/`dislikeId`; ketukan tombol kembali ke bot sebagai balasan tombol berisi id tersebut, jadi suara bisa dihitung. Tanpa opsi ini, perilaku kartu sama persis seperti 1.0.50.
+
+- `lib/Socket/aunu-experimental.js`, `lib/Socket/aunu-experimental.d.ts`
+
 ## 1.0.51 — 2026-11-11 — **Tiga celah dari audit fork lain, resmi ditutup.** (1) **Commit key-store tidak lagi ditelan** (`lib/Utils/auth-utils.js`): commit transaksi tetap di-retry seperti sebelumnya, tetapi bila semua retry gagal, error-nya kini **dilempar** — sebelumnya mutasi dibuang diam-diam padahal ratchet di memori sudah maju dan state di disk belum, sehingga setiap pesan berikutnya gagal melawan record usang tanpa jejak. (2) **Guard device hosted :99** (`lib/Utils/signal.js`): `extractDeviceJids` kini melewati device 99 — perangkat pendamping hosted/Cloud-API bukan target E2E dan libsignal menolaknya ("Unexpected non-hosted device JID with device 99") saat daftar perangkat disusun. (3) **Migrasi sesi PN → LID** (`lib/Signal/libsignal.js`, `lib/Socket/index.js`): metode repository baru `migrateSession(fromJid, toJid)` memindahkan record sesi mentah ke alamat LID bila target belum punya record (tidak pernah menimpa). Terpicu otomatis dan best-effort saat trafik langsung mengajarkan pasangan PN↔LID baru, dan untuk sesi akun sendiri saat koneksi terbuka dengan `me.id` + `me.lid` dikenal. Heal dekripsi 1.0.14–1.0.48 tetap menjadi jaring pengaman.
 
 - `lib/Utils/auth-utils.js`, `lib/Utils/signal.js`, `lib/Signal/libsignal.js`, `lib/Socket/index.js`, `lib/Types/Signal.d.ts`

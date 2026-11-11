@@ -61,6 +61,10 @@ export interface AunuCardOptions {
     /** Prebuilt imageMessage object, used as-is when provided. */
     imageMessage?: Record<string, unknown>;
     buttons?: AunuCardButton[];
+    /** Append 👍 Suka / 👎 Tidak Suka quick-reply buttons under the card. Taps return as button replies with the like/dislike ids. */
+    likeDislike?: boolean;
+    likeId?: string;
+    dislikeId?: string;
     messageOptions?: MiscMessageGenerationOptions;
 }
 export interface AunuFakeQuoteOptions {

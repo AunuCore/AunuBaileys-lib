@@ -64,6 +64,10 @@ Everything else is pure upstream. When upstream moves, we rebase the patch layer
 
 
 
+### 🧪 What's new in 1.0.52 / Baru di 1.0.52 — EXPERIMENTAL
+
+- 👍 **`aunuCard` gains like/dislike buttons.** The new `likeDislike: true` option appends two quick-reply buttons under the card — **👍 Suka** (id `aunu_like`) and **👎 Tidak Suka** (id `aunu_dislike`) — after any custom buttons. The ids are overridable via `likeId`/`dislikeId`; taps return to the bot as button replies carrying those ids, so votes can be counted. Without the option, card behaviour is exactly as in 1.0.50.
+
 ### 🩹 What's new in 1.0.51 / Baru di 1.0.51
 
 - 🔐 **Three audited gaps, closed.** (1) **Key-store commit failures are no longer swallowed** (`auth-utils.js`): transaction commits still retry as before, but when every retry fails the error is now **thrown** — previously the mutations were silently discarded while the in-memory ratchet had already advanced, so every later message failed against the stale on-disk record. (2) **Hosted device :99 guard** (`signal.js`): `extractDeviceJids` now skips device 99 — hosted / Cloud-API companion devices are not E2E targets and libsignal rejects them when the device list is built. (3) **PN → LID session migration** (`libsignal.js`, `Socket/index.js`): the new repository method `migrateSession(fromJid, toJid)` moves the raw session record onto the LID address when the target has none (never overwrites). It fires automatically and best-effort when live traffic teaches a new PN↔LID pair, and for the account's own session when the connection opens with both `me.id` and `me.lid` known. The 1.0.14–1.0.48 decrypt heals remain the safety net.
