@@ -64,6 +64,12 @@ Everything else is pure upstream. When upstream moves, we rebase the patch layer
 
 
 
+### 🩺 What's new in 1.0.66 / Baru di 1.0.66 — the auditor batch (every finding verified against our tree first)
+
+- 🩺 **Crash-class fixes:** floated `upsertMessage` promises are caught (call notifications + own-message echo); the `CB:success` and pair-device login handlers are guarded; a `ws.off`→`ws.on` typo that left every query hanging until timeout on socket errors is fixed.
+- 🔐 **Session-state integrity:** key-store `transaction()` no longer shares one mutation cache across concurrent flows (independent transactions serialize; nested ones join) — a real route to permanent Bad MAC/MISSING_KEYS, closed. Pre-keys are **committed locally before the server is told** (initial upload + retry receipts). Retry counters stay pinned at their cap instead of resetting the resend budget. A failed pairing request rolls back its optimistic `creds.me`. Partial creds now fail loudly with the real reason instead of cryptic per-message TypeErrors.
+- 🧩 **Malformed-input resilience:** notification handlers guard missing children; a delivered message is no longer poisoned by a sibling `<enc>` node's CIPHERTEXT stub; `migrateSession` runs inside a transaction; a corrupt store file no longer crashes boot. *(Two report items were already fixed before it landed: the offline-queue deadlock in 1.0.65 and loud corrupt-creds reporting in 1.0.63.)*
+
 ### 🛡️ What's new in 1.0.65 / Baru di 1.0.65 — ignoreKey + three global-sweep bug fixes (one consolidated release)
 
 - 🛡️ **`sock.ignoreKey(rule)`** drops matching inbound stanzas **before any handler** — no decryption, no persistence — across message/call/receipt/notification (live + offline) and presence/chatstate, while still acking messages so the server stops redelivering. Rules match any of `{category, remoteJid, participant, id, fromMe}` (participant matches **all** PN/LID alt forms) or a predicate; `'peer'` traffic is never dropped.
