@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.0.39 — 2026-11-11 — Method baru `sock.newsletterSubscribed()`: mengambil daftar **semua newsletter yang diikuti** akun ini dalam satu panggilan — padanan `groupFetchAllParticipating()` untuk newsletter, yang selama ini belum ada (yang tersedia hanya `newsletterSubscribers(jid)` untuk menghitung pengikut satu newsletter). Diimplementasikan lewat jalur MEX yang sama dengan method newsletter lain: query id `6388546374527196` dan path `xwa2_newsletter_subscribed` (konstanta skema MEX WhatsApp sendiri), ditambahkan ke enum `QueryIds`/`XWAPaths`. Diadaptasi dari @itsliaaa/baileys.
+
+- `lib/Socket/newsletter.js`, `lib/Socket/newsletter.d.ts`, `lib/Types/Newsletter.js`, `lib/Types/Newsletter.d.ts`
+
 ## 1.0.38 — 2026-11-11 — Kartu ad-reply / pratinjau link kini bisa ditulis sebagai opsi langsung. Sebelumnya, memasang `externalAdReply` (kartu judul + thumbnail yang menumpang di atas pesan) berarti merakit `contextInfo` utuh dengan tangan. Sekarang cukup `externalAdReply: { title, body, url, thumbnail, largeThumbnail }` pada konten pesan: `url` dipetakan ke `mediaUrl` sekaligus `sourceUrl`, `mediaType` bawaan 1 (gambar), dan hasilnya digabung rapi dengan `contextInfo` eksplisit maupun `mentions`/`mentionAll` bila sama-sama dipakai. Satu perbedaan sadar dari sumber adaptasinya (@itsliaaa/baileys): di sana `url` yang kosong diam-diam diganti link donasi mereka — di sini url kosong **tetap kosong**; library ini tidak pernah menyisipkan tautan pihak ketiga ke pesan pengguna. Thumbnail non-Buffer ditolak dengan error 400 yang jelas.
 
 - `lib/Utils/messages.js`, `lib/Types/Message.d.ts`

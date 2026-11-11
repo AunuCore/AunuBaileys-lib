@@ -7,6 +7,7 @@ export declare const makeNewsletterSocket: (sock: GroupsSocket) => {
     newsletterSubscribers: (jid: string) => Promise<{
         subscribers: number;
     }>;
+    newsletterSubscribed: () => Promise<unknown>;
     newsletterMetadata: (type: "invite" | "jid", key: string) => Promise<NewsletterMetadata | null>;
     newsletterFollow: (jid: string) => Promise<unknown>;
     newsletterUnfollow: (jid: string) => Promise<unknown>;

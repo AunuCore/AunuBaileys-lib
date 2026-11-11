@@ -1,6 +1,7 @@
 export declare enum XWAPaths {
     xwa2_newsletter_create = "xwa2_newsletter_create",
     xwa2_newsletter_subscribers = "xwa2_newsletter_subscribers",
+    xwa2_newsletter_subscribed = "xwa2_newsletter_subscribed",
     xwa2_newsletter_view = "xwa2_newsletter_view",
     xwa2_newsletter_metadata = "xwa2_newsletter",
     xwa2_newsletter_admin_count = "xwa2_newsletter_admin",
@@ -17,6 +18,7 @@ export declare enum QueryIds {
     UPDATE_METADATA = "24250201037901610",
     METADATA = "6563316087068696",
     SUBSCRIBERS = "9783111038412085",
+    SUBSCRIBED = "6388546374527196",
     FOLLOW = "7871414976211147",
     UNFOLLOW = "7238632346214362",
     MUTE = "29766401636284406",

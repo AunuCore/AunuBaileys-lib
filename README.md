@@ -64,6 +64,10 @@ Everything else is pure upstream. When upstream moves, we rebase the patch layer
 
 
 
+### 🆕 What's new in 1.0.39 / Baru di 1.0.39
+
+- 📰 **New `sock.newsletterSubscribed()`** — fetch **every newsletter this account follows** in one call, the newsletter analogue of `groupFetchAllParticipating()` that was missing until now (only `newsletterSubscribers(jid)`, the follower count of one newsletter, existed). Implemented over the same MEX path as the other newsletter methods: query id `6388546374527196`, path `xwa2_newsletter_subscribed` (WhatsApp's own MEX schema constants), added to the `QueryIds`/`XWAPaths` enums. Adapted from @itsliaaa/baileys.
+
 ### 🆕 What's new in 1.0.38 / Baru di 1.0.38
 
 - 📰 **Ad-reply / link-preview cards as a direct message option** — attaching an `externalAdReply` card (title + thumbnail riding on top of a message) used to mean hand-assembling a full `contextInfo`. Now just pass `externalAdReply: { title, body, url, thumbnail, largeThumbnail }` in the message content: `url` maps to both `mediaUrl` and `sourceUrl`, `mediaType` defaults to 1 (image), and the result merges cleanly with an explicit `contextInfo` and with `mentions`/`mentionAll` when combined. One deliberate difference from the adaptation source (@itsliaaa/baileys): there, a missing `url` is silently replaced with the maintainer's donation link — here a missing url **stays empty**; this library never injects a third-party link into your messages. A non-Buffer thumbnail is rejected with a clear 400 error.
