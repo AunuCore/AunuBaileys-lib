@@ -64,6 +64,10 @@ Everything else is pure upstream. When upstream moves, we rebase the patch layer
 
 
 
+### 🧪 What's new in 1.0.49 / Baru di 1.0.49 — EXPERIMENTAL
+
+- 🪪 **Personalised tag-all: every member sees themselves.** New socket method `sock.aunuPersonalTagAll(groupJid, options)`: for EVERY group member the bot sends one card carrying **that member's own profile picture** and their own name, mentioning exactly them — not one generic tag-all message. Pictures come from `profilePictureUrl` (the PN form is used when a member is LID-addressed and the LID store knows the pair); the caption is built from a template with `{name}`, `{number}`, `{mention}`, `{jid}` placeholders; names come from a consumer-supplied `getName` resolver when provided, falling back to the number. Members without a profile picture get a text card, or the `fallbackImage` when set. Built-in anti-spam pacing: a delay between sends (`delayMs`, default 1500) and a member cap (`maxMembers`, default 30); `dm: true` delivers each card to the member's private chat instead. Returns a `{ total, sent, failed, skipped }` summary. Experimental, like the five features of 1.0.47.
+
 ### 🆕 What's new in 1.0.48 / Baru di 1.0.48
 
 - 🩹 **Group Bad MAC now heals both layers.** The "Bad MAC" error (from Tenka's live log on 11 Nov 2026, the same LID address as the B-01 finding and the 1.0.46 flood) is thrown by `SessionCipher` — the whisper/E2E session layer — and in groups it can equally come from the sender-key layer. The old strike-limit path (1.0.14) for groups deleted only the sender key, so a rotten E2E session of the author was never touched and the failures repeated forever: the same wrong-layer class that 1.0.46 closed for session failures, now closed on the strike path. At the 3-failure limit, groups now reset the author's E2E session (including the alternate PN↔LID address record) AND drop the sender key, with the retry receipt carrying fresh keys. DM behaviour and the 3-strike threshold are unchanged. The `messages.decrypt-failure` event now distinguishes `errorClass: 'bad-mac'` from `'session'`/`'other'` (new exported predicate: `isBadMacError(text)`).
