@@ -240,6 +240,8 @@ export type AnyMessageContent = (AnyRegularMessageContent | {
 }) & {
     /** AunuBaileys: mark the message with the AI label (private chats only) */
     ai?: boolean;
+    /** AunuBaileys: force the biz binary node (secure Meta service label) onto this message's stanza */
+    secureMetaServiceLabel?: boolean;
 };
 export type GroupMetadataParticipants = Pick<GroupMetadata, 'participants'>;
 type MinimalRelayOptions = {

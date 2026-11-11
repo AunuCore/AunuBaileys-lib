@@ -18,6 +18,7 @@ export declare const prepareDisappearingMessageSettingContent: (ephemeralExpirat
  * @param options.forceForward will show the message as forwarded even if it is from you
  */
 export declare const generateForwardMessageContent: (message: WAMessage, forceForward?: boolean) => proto.IMessage;
+export declare const shouldIncludeBizBinaryNode: (message: any) => boolean;
 export declare const generateWAMessageContent: (message: AnyMessageContent, options: MessageContentGenerationOptions) => Promise<proto.Message>;
 export declare const generateWAMessageFromContent: (jid: string, message: WAMessageContent, options: MessageGenerationOptionsFromContent) => proto.WebMessageInfo;
 export declare const generateWAMessage: (jid: string, content: AnyMessageContent, options: MessageGenerationOptions) => Promise<proto.WebMessageInfo>;

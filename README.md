@@ -64,6 +64,10 @@ Everything else is pure upstream. When upstream moves, we rebase the patch layer
 
 
 
+### 🆕 What's new in 1.0.41 / Baru di 1.0.41
+
+- 🏷️ **The biz binary node machinery, plus the `secureMetaServiceLabel` option** — the 6.7.24 base never had the `biz` companion node that official clients attach to business/interactive message stanzas. This release ports it in full from @itsliaaa/baileys: `getBizBinaryNode()` (`actual_actors`/`host_storage`/`privacy_mode_ts` attributes + a `quality_control` child, with `native_flow` variants for known flow buttons and a `list` variant for list messages) and the `shouldIncludeBizBinaryNode()` decider. `relayMessage` now attaches the node **automatically** for buttons/list/template/native-flow messages, and the content option `secureMetaServiceLabel: true` forces it onto any message (the secure Meta service label). Both functions are exported for consumers who need to inspect or build the node themselves.
+
 ### 🆕 What's new in 1.0.40 / Baru di 1.0.40
 
 - 🎁 **Four future-proof message wrapper options** — **`viewOnceV2: true`** wraps content into `viewOnceMessageV2`, **`viewOnceV2Extension: true`** into `viewOnceMessageV2Extension`, **`ephemeral: true`** into `ephemeralMessage`, and **`interactiveAsTemplate: true`** wraps an interactive message into a `templateMessage` (optional `templateId`; the `messageContextInfo` device-list metadata is preserved alongside, and using it on a non-interactive message throws a clear 400). The 6.7.24 proto already carries all four wrapper types — only the boolean options were missing. Adapted from @itsliaaa/baileys; classic `viewOnce` behaviour is unchanged.

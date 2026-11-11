@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.0.41 — 2026-11-11 — Mesin **biz binary node** kini ada di library, beserta opsi **`secureMetaServiceLabel: true`**. Basis 6.7.24 tidak pernah punya node pendamping `biz` yang di klien resmi menemani stanza pesan bisnis/interaktif — rilis ini mem-port-nya utuh dari @itsliaaa/baileys: `getBizBinaryNode()` (atribut `actual_actors`/`host_storage`/`privacy_mode_ts` + anak `quality_control`, dengan varian `native_flow` untuk tombol flow yang dikenal dan varian `list` untuk pesan daftar) dan penentu `shouldIncludeBizBinaryNode()`. `relayMessage` kini menempelkan node itu **otomatis** untuk pesan buttons/list/template/native-flow, dan opsi konten `secureMetaServiceLabel: true` memaksakannya pada pesan apa pun (label layanan aman Meta). Kedua fungsi diekspor untuk konsumen yang perlu memeriksa atau menyusun node-nya sendiri.
+
+- `lib/WABinary/generic-utils.js`, `lib/WABinary/generic-utils.d.ts`, `lib/Utils/messages.js`, `lib/Utils/messages.d.ts`, `lib/Socket/messages-send.js`, `lib/Types/Message.d.ts`
+
 ## 1.0.40 — 2026-11-11 — Empat opsi pembungkus pesan baru yang proaktif ke tipe pesan masa depan WhatsApp: **`viewOnceV2: true`** membungkus isi ke `viewOnceMessageV2`, **`viewOnceV2Extension: true`** ke `viewOnceMessageV2Extension`, **`ephemeral: true`** ke `ephemeralMessage`, dan **`interactiveAsTemplate: true`** membungkus pesan interaktif ke `templateMessage` (dengan `templateId` opsional; `messageContextInfo` berisi metadata daftar perangkat dipertahankan di sisinya, dan pemakaian pada pesan non-interaktif ditolak dengan error 400). Proto 6.7.24 sudah memuat keempat tipe pembungkus ini — yang belum ada hanya opsi booleannya. Diadaptasi dari @itsliaaa/baileys; perilaku `viewOnce` lama tidak berubah.
 
 - `lib/Utils/messages.js`, `lib/Types/Message.d.ts`
