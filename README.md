@@ -64,6 +64,10 @@ Everything else is pure upstream. When upstream moves, we rebase the patch layer
 
 
 
+### 🗄️ What's new in 1.0.62 / Baru di 1.0.62 — bounded retry caches + keepalive stagger
+
+- 🗄️ **The per-socket receive caches are bounded now.** The retry, call-offer and placeholder-resend caches had a TTL but no size limit, so they grew without bound inside the TTL window — per socket, multiplied by every session in the process. Their defaults are now `makeBoundedTTLCache` (new exported util): oldest-first eviction at the ceiling, and **reads never refresh an entry's expiry**, so a message stuck in a retry loop cannot keep its own counter alive forever. Consumer-supplied caches via config are still honoured. The first keepalive ping is also staggered by a random offset, so a fleet of sockets no longer pings in the same tick. *(Behaviour learned from the @violetix/baileys dissection.)*
+
 ### 🏷️ What's new in 1.0.61 / Baru di 1.0.61 — named disconnect reasons
 
 - 🏷️ **Disconnect errors now name their reason in the message itself** — `Connection Failure [401 loggedOut]`, `Connection Closed [428 connectionClosed]`. Hosts that forward only `error.message` could not tell a dead session (401) from a transient blip (503) and reconnected both, risking the number. The `nameDisconnectReason(error)` helper is exported for consumers. *(Behaviour learned from the @violetix/baileys dissection.)*

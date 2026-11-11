@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.0.62 — 2026-11-11 — **Cache retry dibatasi + keepalive diacak.** Dari bedah @violetix/baileys: tiga cache per-socket di jalur terima (retry, call offer, placeholder resend) hanya punya TTL tanpa batas ukuran — di dalam jendela TTL mereka tumbuh tanpa batas, per socket, dan armada mengalikannya. Kini bawaan mereka `makeBoundedTTLCache` (util baru, diekspor): eviction entri tertua saat melewati plafon (1000/256/1000), dan **bacaan tidak pernah memperpanjang umur entri** — pesan yang terjebak loop retry tidak lagi menghidupkan counternya sendiri selamanya. Cache suntikan konsumen lewat config tetap dihormati. Selain itu ping keepalive pertama kini diacak offset-nya (0–interval) supaya banyak socket dalam satu proses tidak ping di tick yang sama.
+
+- `lib/Utils/bounded-cache.js` (baru), `lib/Socket/messages-recv.js`, `lib/Socket/socket.js`, `lib/Utils/index.js`
+
 ## 1.0.61 — 2026-11-11 — **Nama alasan putus koneksi di pesan error.** Dari bedah @violetix/baileys: host yang meneruskan hanya `error.message` tidak bisa membedakan sesi mati (401) dari gangguan sesaat (503) — dua-duanya tiba sebagai "Connection Failure" yang sama, lalu host menyambung ulang sesi mati sampai nomornya terancam. Kini `end()` menamai alasannya langsung di pesan: `Connection Failure [401 loggedOut]`, `Connection Closed [428 connectionClosed]`. Helper `nameDisconnectReason(error)` diekspor dari socket untuk pemakaian/uji konsumen; pesan yang sudah bernama dan kode tak dikenal dibiarkan utuh.
 
 - `lib/Socket/socket.js`
