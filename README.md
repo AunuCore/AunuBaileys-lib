@@ -8,8 +8,8 @@
 [![npm downloads](https://img.shields.io/npm/dt/aunubaileys?style=for-the-badge&logo=npm&logoColor=white)](https://www.npmjs.com/package/aunubaileys)
 [![Fork of WhiskeySockets/Baileys](https://img.shields.io/badge/fork%20of-WhiskeySockets%2FBaileys-25D366?style=for-the-badge&logo=whatsapp&logoColor=white)](https://github.com/WhiskeySockets/Baileys)
 [![License: MIT](https://img.shields.io/badge/license-MIT-yellow?style=for-the-badge)](./LICENSE)
-[![GitHub stars](https://img.shields.io/github/stars/AunuHost/AunuBaileys-lib?style=for-the-badge&logo=github)](https://github.com/AunuHost/AunuBaileys-lib/stargazers)
-[![GitHub forks](https://img.shields.io/github/forks/AunuHost/AunuBaileys-lib?style=for-the-badge&logo=github)](https://github.com/AunuHost/AunuBaileys-lib/forks)
+[![GitHub stars](https://img.shields.io/github/stars/AunuCore/AunuBaileys-lib?style=for-the-badge&logo=github)](https://github.com/AunuCore/AunuBaileys-lib/stargazers)
+[![GitHub forks](https://img.shields.io/github/forks/AunuCore/AunuBaileys-lib?style=for-the-badge&logo=github)](https://github.com/AunuCore/AunuBaileys-lib/forks)
 
 **Full upstream power — with the soul that community forks used to have.**
 The in-memory store is back, legacy exports are back, and every upstream update flows straight in.
