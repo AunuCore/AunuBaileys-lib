@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.0.64 — 2026-11-11 — **Permukaan kirim newsletter/status.** Dari bedah @violetix/baileys, tiga hal: (1) `newsletterMetadata()` kini meminta `fetch_pinned_messages`, jadi postingan tersemat ikut kembali bersama metadata; (2) opsi kirim **`statusPrivacy`** (`'contacts' | 'allowlist' | 'denylist'`) diteruskan ke server sebagai node `<meta status_setting>` pada stanza status (ditekan pada edit); (3) **quote di dalam saluran bekerja** — cabang quoted tidak lagi mengecualikan JID newsletter (stanzaId = id server postingan; hanya `remoteJid` yang tetap ditahan untuk saluran, persis perilaku referensinya). Quote grup/DM tidak berubah.
+
+- `lib/Socket/newsletter.js`, `lib/Socket/messages-send.js`, `lib/Utils/messages.js`, `lib/Types/Message.d.ts`
+
 ## 1.0.63 — 2026-11-11 — **Logger untuk auth-state multi-file.** Dari bedah @violetix/baileys: `useMultiFileAuthState(folder, logger)` kini menerima logger opsional. Titik buta kita ada di `readData`: SEMUA error — termasuk JSON korup — ditelan menjadi `null`, jadi `creds.json` yang rusak diam-diam berubah menjadi sesi baru (logout yang tampak acak). Sekarang file hilang tetap senyap (jalan pertama yang normal), tetapi korupsi/ketidak terbacaan **dilaporkan keras** lewat logger; kegagalan tulis dicatat di titik gagalnya (dan tetap dilempar); `saveCreds` mencatat kegagalan bahkan saat tidak ada yang menunggunya. Tanpa logger, perilaku persis seperti sebelumnya.
 
 - `lib/Utils/use-multi-file-auth-state.js`, `lib/Utils/use-multi-file-auth-state.d.ts`

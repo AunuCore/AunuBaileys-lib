@@ -64,6 +64,10 @@ Everything else is pure upstream. When upstream moves, we rebase the patch layer
 
 
 
+### 📰 What's new in 1.0.64 / Baru di 1.0.64 — newsletter & status send surface
+
+- 📰 **Three send-surface completions.** `newsletterMetadata()` now requests `fetch_pinned_messages`, so pinned posts return with the metadata. The **`statusPrivacy`** send option (`'contacts' | 'allowlist' | 'denylist'`) rides to the server as a `<meta status_setting>` node in the status stanza (suppressed on edits). And **quoting inside newsletters works**: the quoted branch no longer excludes channel JIDs — the quote carries the post's server id, with only `remoteJid` withheld for channels. Group/DM quoting is unchanged. *(Protocol behaviour learned from the @violetix/baileys dissection.)*
+
 ### 🔐 What's new in 1.0.63 / Baru di 1.0.63 — auth-state logger
 
 - 🔐 **`useMultiFileAuthState(folder, logger)` accepts an optional logger.** The silent spot was the read path: every error — corrupt JSON included — became a quiet `null`, so a damaged `creds.json` silently turned into a brand-new session (a logout that looked random). Now a missing file stays silent (a normal first run) while corruption is **reported loudly**, write failures are logged where they happen (and still thrown), and `saveCreds` logs failures even when nobody awaits it. Without a logger, behaviour is exactly as before. *(Behaviour learned from the @violetix/baileys dissection.)*

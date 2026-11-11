@@ -295,6 +295,8 @@ export type MessageRelayOptions = MinimalRelayOptions & {
     useUserDevicesCache?: boolean;
     /** jid list of participants for status@broadcast */
     statusJidList?: string[];
+    /** AunuBaileys: status audience privacy, sent as a <meta status_setting> node */
+    statusPrivacy?: 'contacts' | 'allowlist' | 'denylist';
 };
 export type MiscMessageGenerationOptions = MinimalRelayOptions & {
     /** optional, if you want to manually set the timestamp of the message */
@@ -311,6 +313,8 @@ export type MiscMessageGenerationOptions = MinimalRelayOptions & {
     mediaUploadTimeoutMs?: number;
     /** jid list of participants for status@broadcast */
     statusJidList?: string[];
+    /** AunuBaileys: status audience privacy, sent as a <meta status_setting> node */
+    statusPrivacy?: 'contacts' | 'allowlist' | 'denylist';
     /** backgroundcolor for status */
     backgroundColor?: string;
     /** font type for status */
