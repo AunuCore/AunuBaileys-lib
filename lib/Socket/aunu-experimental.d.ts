@@ -114,7 +114,5 @@ export interface AunuExperimentalAPI {
     aunuSideText: (jid: string, options: AunuSideTextOptions) => Promise<any>;
     aunuGhostMention: (jid: string, content: Record<string, unknown>, options?: MiscMessageGenerationOptions) => Promise<any>;
     aunuFakeForward: (jid: string, content: Record<string, unknown>, options?: { score?: number; channelName?: string; channelJid?: string; serverMessageId?: number; messageOptions?: MiscMessageGenerationOptions }) => Promise<any>;
-    aunuCountdown: (jid: string, options?: { from?: number; intervalMs?: number; format?: (n: number) => string; finalText?: string; messageOptions?: MiscMessageGenerationOptions }) => Promise<any>;
-    aunuSplitText: (jid: string, text: string, options?: { maxChars?: number; messageOptions?: MiscMessageGenerationOptions }) => Promise<any[]>;
 }
 export declare const attachAunuExperimental: <T>(sock: T) => T & AunuExperimentalAPI;

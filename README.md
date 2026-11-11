@@ -64,9 +64,13 @@ Everything else is pure upstream. When upstream moves, we rebase the patch layer
 
 
 
+### ✂️ What's new in 1.0.54 / Baru di 1.0.54
+
+- **Pruning.** `aunuCountdown` and `aunuSplitText` (added in 1.0.53) are **removed**: the AunuBaileys experimental line keeps only the rare features, and those two were generic utilities. The experimental API is back to **15 methods**; `aunuSideText`, `aunuGhostMention` and `aunuFakeForward` stay.
+
 ### 🧪 What's new in 1.0.53 / Baru di 1.0.53 — EXPERIMENTAL
 
-- 📇 **Five more experimental features (17 total).** **`aunuSideText`** — text with a small picture **at the side**: a name/title beside the picture and the chat under the name (the preview layout group menus use); the picture can be someone's real profile picture (`profileOf`), your own image, the built-in grey **"deleted account"** avatar (`deletedProfile: true`), or no picture at all. **`aunuGhostMention`** — mention every group member invisibly: everyone is notified, the text shows no @ pile-up. **`aunuFakeForward`** — the forwarded look (high forwarding score, optional channel attribution). **`aunuCountdown`** — one message edited down a countdown to a final text. **`aunuSplitText`** — a long text sent as a self-quoting chain. New exported utils: `getDeletedProfileImage()` (the embedded deleted-account avatar PNG) and `buildSideTextAdReply()`.
+- 📇 **Three new experimental features.** **`aunuSideText`** — text with a small picture **at the side**: a name/title beside the picture and the chat under the name (the preview layout group menus use); the picture can be someone's real profile picture (`profileOf`), your own image, the built-in grey **"deleted account"** avatar (`deletedProfile: true`), or no picture at all. **`aunuGhostMention`** — mention every group member invisibly: everyone is notified, the text shows no @ pile-up. **`aunuFakeForward`** — the forwarded look (high forwarding score, optional channel attribution). New exported utils: `getDeletedProfileImage()` (the embedded deleted-account avatar PNG) and `buildSideTextAdReply()`. (This release also briefly carried `aunuCountdown`/`aunuSplitText`, removed again in 1.0.54.)
 
 ### 🧪 What's new in 1.0.52 / Baru di 1.0.52 — EXPERIMENTAL
 
