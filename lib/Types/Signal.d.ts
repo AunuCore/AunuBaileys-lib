@@ -54,6 +54,7 @@ export type SignalRepository = {
     injectE2ESession(opts: E2ESessionOpts): Promise<void>;
     /** AunuBaileys: delete the stored E2E session for a JID (used by the Bad MAC self-heal). */
     deleteSession(jid: string): Promise<void>;
+    migrateSession(fromJid: string, toJid: string): Promise<boolean>;
     /** AunuBaileys: delete the stored sender-key record for a group author (stale group session heal). */
     deleteSenderKey(group: string, authorJid: string): Promise<void>;
     jidToSignalProtocolAddress(jid: string): string;
