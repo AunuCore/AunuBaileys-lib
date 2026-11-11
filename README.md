@@ -64,6 +64,10 @@ Everything else is pure upstream. When upstream moves, we rebase the patch layer
 
 
 
+### 🧪 What's new in 1.0.55 / Baru di 1.0.55 — EXPERIMENTAL
+
+- 👻 **`aunuVanish`** — send any content with a **custom per-message disappearing timer**: `sock.aunuVanish(jid, content, '5m')` (raw seconds or `'30s'`/`'5m'`/`'2h'`/`'7d'`; the parser is exported as `parseVanishDuration`). This is WhatsApp's native expiry — the receiving client removes the message **without a trace** when the timer ends. It is NOT delete-for-everyone: no "this message was deleted" tombstone. Enforcement is by the receiving client, exactly like built-in disappearing messages. The experimental API is now 16 methods. This release also ships the rewritten npm description + keywords.
+
 ### ✂️ What's new in 1.0.54 / Baru di 1.0.54
 
 - **Pruning.** `aunuCountdown` and `aunuSplitText` (added in 1.0.53) are **removed**: the AunuBaileys experimental line keeps only the rare features, and those two were generic utilities. The experimental API is back to **15 methods**; `aunuSideText`, `aunuGhostMention` and `aunuFakeForward` stay.

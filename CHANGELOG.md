@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.0.55 — 2026-11-11 — **EKSPERIMENTAL: `aunuVanish` — pesan lenyap dengan timer kustom per pesan.** `sock.aunuVanish(jid, content, duration)` mengirim konten apa pun dengan masa berlaku yang kau tentukan sendiri — detik mentah atau string `'30s'`/`'5m'`/`'2h'`/`'7d'` (parser diekspor sebagai `parseVanishDuration`). Ini mekanisme *disappearing messages* asli WhatsApp (stempel `expiration` pada pesan): klien penerima menghapusnya **tanpa bekas** saat timer habis — BUKAN hapus-untuk-semua, tidak ada batu nisan "pesan ini dihapus". Penegakannya oleh klien penerima, sama seperti pesan sementara bawaan; klien mod dapat mengabaikannya. API experimental kini 16 metode. Rilis ini juga membawa deskripsi + keywords npm yang ditulis ulang.
+
+- `lib/Socket/aunu-experimental.js`, `lib/Socket/aunu-experimental.d.ts`, `lib/Utils/aunu-experimental.js`, `package.json` (metadata)
+
 ## 1.0.54 — 2026-11-11 — **Pruning: `aunuCountdown` dan `aunuSplitText` DICABUT.** Keputusan maintainer: lini experimental AunuBaileys hanya menyimpan fitur yang langka — dua fitur generik itu tidak memenuhi standar dan dihapus satu versi setelah masuk. API experimental kembali ke **15 metode**; `aunuSideText`, `aunuGhostMention`, dan `aunuFakeForward` dari 1.0.53 tetap. Tidak ada perubahan lain.
 
 - `lib/Socket/aunu-experimental.js`, `lib/Socket/aunu-experimental.d.ts`
