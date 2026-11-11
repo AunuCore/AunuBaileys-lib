@@ -1,0 +1,52 @@
+# Publish `@aunucore/aunubaileys` to GitHub Packages automatically.
+#
+# GitHub Packages requires npm packages to be scoped to the owner, so
+# the same code is published there under the scoped name. This fills
+# the repository's "Packages" section and connects the package to
+# this repository. The canonical unscoped `aunubaileys` continues to
+# publish to npmjs via publish.yml.
+#
+# Triggers on the same GitHub Release as publish.yml, and can be run
+# manually from the Actions tab (workflow_dispatch).
+
+name: Publish to GitHub Packages
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  publish-ghp:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          registry-url: https://npm.pkg.github.com
+          scope: '@aunucore'
+
+      - name: Guard - release tag must match package.json version
+        if: github.event_name == 'release'
+        run: |
+          PKG=$(node -p "require('./package.json').version")
+          TAG="${GITHUB_REF_NAME#v}"
+          if [ "$PKG" != "$TAG" ]; then
+            echo "::error::package.json version ($PKG) does not match release tag ($TAG). Bump package.json first."
+            exit 1
+          fi
+          echo "Publishing @aunucore/aunubaileys@$PKG to GitHub Packages"
+
+      - name: Scope the package name for GitHub Packages
+        run: npm pkg set name=@aunucore/aunubaileys
+
+      - name: Publish to GitHub Packages
+        run: npm publish --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
