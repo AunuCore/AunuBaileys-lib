@@ -64,6 +64,13 @@ Everything else is pure upstream. When upstream moves, we rebase the patch layer
 
 
 
+### 🛡️ What's new in 1.0.65 / Baru di 1.0.65 — ignoreKey + three global-sweep bug fixes (one consolidated release)
+
+- 🛡️ **`sock.ignoreKey(rule)`** drops matching inbound stanzas **before any handler** — no decryption, no persistence — across message/call/receipt/notification (live + offline) and presence/chatstate, while still acking messages so the server stops redelivering. Rules match any of `{category, remoteJid, participant, id, fromMe}` (participant matches **all** PN/LID alt forms) or a predicate; `'peer'` traffic is never dropped.
+- 🐛 **Offline queue wedge fixed:** one throwing node used to abort the offline drain, drop the remaining backlog, and wedge the processor for the whole session — the drain now lives in `createOfflineNodeQueue` and moves past failures.
+- 🐛 **Sticker packs fixed:** the missing `sticker-pack` HKDF mapping entries that broke pack uploads are in.
+- 🐛 **Placeholder resends skipped** for bot/hosted/view-once unavailable messages the phone can never resend.
+
 ### 📰 What's new in 1.0.64 / Baru di 1.0.64 — newsletter & status send surface
 
 - 📰 **Three send-surface completions.** `newsletterMetadata()` now requests `fetch_pinned_messages`, so pinned posts return with the metadata. The **`statusPrivacy`** send option (`'contacts' | 'allowlist' | 'denylist'`) rides to the server as a `<meta status_setting>` node in the status stanza (suppressed on edits). And **quoting inside newsletters works**: the quoted branch no longer excludes channel JIDs — the quote carries the post's server id, with only `remoteJid` withheld for channels. Group/DM quoting is unchanged. *(Protocol behaviour learned from the @violetix/baileys dissection.)*
