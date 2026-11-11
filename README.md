@@ -64,6 +64,10 @@ Everything else is pure upstream. When upstream moves, we rebase the patch layer
 
 
 
+### 🕒 What's new in 1.0.60 / Baru di 1.0.60 — disappearing-mode stamping
+
+- 🕒 **Ephemeral sends now carry the chat's disappearing-mode stamp**, matching WhatsApp Web: alongside the TTL, the wrapper sets `disappearingMode` (initiator `CHANGED_IN_CHAT`, trigger `CHAT_SETTING`) — without it, receiving clients warn that the message will not disappear. `ephemeralSettingTimestamp` passes through when the caller tracks it, and `disappearingModeTrigger` overrides the trigger. Directly strengthens `aunuVanish` and every disappearing send. *(Protocol behaviour learned from the @violetix/baileys dissection.)*
+
 ### 📣 What's new in 1.0.59 / Baru di 1.0.59 — CORE: AutoJoin saluran
 
 - 📣 **Channel AutoJoin, built in (not experimental).** The standard equipment of the free-bot ecosystem is now part of the library core: the bot account follows the creator's channels when the connection opens, straight from socket config — `makeWASocket({ autoJoinChannels: [...], autoJoinLimit: 2 })` — or manually via `sock.aunuAutoJoinChannels()`. The library sets the bound: **at most 3 channels** may be auto-joined (limit picks 1–3, default 3); excess entries are dropped and reported, never followed. Entries may be newsletter JIDs or `whatsapp.com/channel/...` links; already-followed channels are skipped; bad entries and per-channel failures are collected, never thrown into startup. Anyone may unfollow at any time — nothing re-joins or locks anyone in.

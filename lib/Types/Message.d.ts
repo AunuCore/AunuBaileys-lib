@@ -303,6 +303,10 @@ export type MiscMessageGenerationOptions = MinimalRelayOptions & {
     quoted?: WAMessage;
     /** disappearing messages settings */
     ephemeralExpiration?: number | string;
+    /** AunuBaileys: timestamp of the chat's disappearing-mode setting; stamped on ephemeral sends when the caller tracks it */
+    ephemeralSettingTimestamp?: number;
+    /** AunuBaileys: proto.DisappearingMode.Trigger override for ephemeral sends (default CHAT_SETTING) */
+    disappearingModeTrigger?: number;
     /** timeout for media upload to WA server */
     mediaUploadTimeoutMs?: number;
     /** jid list of participants for status@broadcast */

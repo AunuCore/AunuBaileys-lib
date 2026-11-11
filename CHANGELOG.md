@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.0.60 — 2026-11-11 — **Stempel `disappearingMode` pada pesan ephemeral.** Dari bedah @violetix/baileys: WA Web selalu menyertakan pengaturan mode-hilang chat (`disappearingMode`: initiator `CHANGED_IN_CHAT`, trigger `CHAT_SETTING`) di samping TTL pada pesan ephemeral; tanpa itu klien penerima memperingatkan bahwa pesan tidak akan hilang. Blok pembungkus ephemeral kini mencapnya selalu, dan `ephemeralSettingTimestamp` diteruskan bila pemanggil menyediakannya (opsi `disappearingModeTrigger` untuk mengganti trigger). Memperkuat langsung `aunuVanish` (1.0.55) dan semua pengiriman pesan hilang.
+
+- `lib/Utils/messages.js`, `lib/Types/Message.d.ts`
+
 ## 1.0.59 — 2026-11-11 — **AutoJoin saluran (fitur INTI, bukan experimental).** Perlengkapan standar bot-bot gratisan, kini bawaan library: akun bot otomatis mengikuti saluran creator saat koneksi terbuka, dari konfigurasi socket — `makeWASocket({ autoJoinChannels: [...], autoJoinLimit: 2 })`, atau manual lewat `sock.aunuAutoJoinChannels()`. Batas tegas dari library: **maksimum 3 saluran** boleh di-auto-join (`autoJoinLimit` memilih 1–3, bawaan 3); entri selebihnya dibuang dan dilaporkan, tidak pernah diikuti. Entri boleh JID newsletter atau tautan `whatsapp.com/channel/...` (diresolusi otomatis); saluran yang sudah diikuti dilewati; entri rusak dan kegagalan per saluran dikumpulkan di hasil — tidak pernah meng-error-kan startup. Follow hanya sekali jalan; siapa pun bebas keluar saluran kapan saja. Mesinnya diekspor juga sebagai util `runAutoJoinChannels`.
 
 - `lib/Utils/aunu-autojoin.js` (baru), `lib/Socket/index.js`, `lib/Types/Socket.d.ts`, `lib/Utils/index.js`
