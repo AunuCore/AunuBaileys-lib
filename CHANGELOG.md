@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.0.57 — 2026-11-11 — **EKSPERIMENTAL: lima fitur manipulasi pesan (total 25 metode).** Semua tampilan di WhatsApp adalah klaim pengirim di dalam protokol; aplikasi resmi selalu menulis nilai jujur, AunuBaileys kini membiarkanmu menulis klaimmu sendiri. (21) **`aunuFakeDoc`** — dokumen tampil berukuran palsu (bawaan 2 GB) dengan jumlah halaman palsu (bawaan 9.999). (22) **`aunuFakeVideo`** — video mengklaim durasi palsu (bawaan 3600 detik) + thumbnail umpan. (23) **`aunuFakeLocation`** — kartu lokasi dengan nama, alamat, foto, dan koordinat yang semuanya rekayasa (bawaan: Monas, Jakarta). (24) **`aunuFakeAlbum`** — header album mengklaim jumlah item melebihi yang dikirim — bahkan album hantu tanpa item sama sekali. (25) **`aunuWordReact`** — reaksi berisi kata, bukan emoji. Yang berbohong adalah tampilannya; membuka isinya tetap memperlihatkan file asli.
+
+- `lib/Socket/aunu-experimental.js`, `lib/Socket/aunu-experimental.d.ts`
+
 ## 1.0.56 — 2026-11-11 — **EKSPERIMENTAL: empat fitur langka pilihan maintainer (total 20 metode).** (17) **`aunuTrapImage`** — foto jebakan: thumbnail pratinjau yang dilihat penerima adalah gambar umpan, foto yang terbuka saat diketuk adalah gambar lain; pesan dibangun tangan dan di-relay agar kedua field itu independen. (18) **`aunuFakeVN`** — voice note yang mengklaim durasi palsu (bawaan 3600 detik) dengan waveform penuh hasil generator `buildFakeWaveform()`, berapa pun durasi klip aslinya. (19) **`aunuGhostMessage`** — gelembung pesan yang tampil benar-benar kosong (hanya karakter zero-width), opsional menyembunyikan tag watermark. (20) **`aunuPromoCode`** — kartu kode promo dengan tombol salin bawaan (cta_copy membawa kodenya), di atas `aunuCard`.
 
 - `lib/Socket/aunu-experimental.js`, `lib/Socket/aunu-experimental.d.ts`, `lib/Utils/aunu-experimental.js`

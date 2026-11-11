@@ -119,5 +119,10 @@ export interface AunuExperimentalAPI {
     aunuFakeVN: (jid: string, options: { audio?: any; audioMessage?: Record<string, unknown>; seconds?: number; waveform?: Uint8Array; waveformSamples?: number; quoted?: any }) => Promise<any>;
     aunuGhostMessage: (jid: string, options?: { tag?: string; count?: number; messageOptions?: MiscMessageGenerationOptions }) => Promise<any>;
     aunuPromoCode: (jid: string, options: { code: string; title?: string; subtitle?: string; text?: string; footer?: string; image?: any; imageMessage?: Record<string, unknown>; buttonText?: string; buttons?: any[] }) => Promise<any>;
+    aunuFakeDoc: (jid: string, options: { document?: any; documentMessage?: Record<string, unknown>; fakeSizeBytes?: number; fakePages?: number; fileName?: string; mimetype?: string; caption?: string; thumbnail?: Buffer; quoted?: any }) => Promise<any>;
+    aunuFakeVideo: (jid: string, options: { video?: any; videoMessage?: Record<string, unknown>; fakeSeconds?: number; thumbnail?: Buffer; caption?: string; gifPlayback?: boolean; viewOnce?: boolean; quoted?: any }) => Promise<any>;
+    aunuFakeLocation: (jid: string, options?: { lat?: number; lng?: number; name?: string; address?: string; thumbnail?: Buffer; comment?: string; quoted?: any }) => Promise<any>;
+    aunuFakeAlbum: (jid: string, options: { items?: any[]; fakeImageCount?: number; fakeVideoCount?: number; delayMs?: number; quoted?: any }) => Promise<{ header: any; children: any[] }>;
+    aunuWordReact: (jid: string, key: Record<string, unknown>, text: string, options?: { messageOptions?: MiscMessageGenerationOptions }) => Promise<any>;
 }
 export declare const attachAunuExperimental: <T>(sock: T) => T & AunuExperimentalAPI;
