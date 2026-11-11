@@ -100,6 +100,10 @@ export type SocketConfig = {
      * Messages from that jid will also not be decrypted
      * */
     shouldIgnoreJid: (jid: string) => boolean | undefined;
+    /** AunuBaileys: channels (newsletter JIDs or whatsapp.com/channel invite links) the account auto-joins when the connection opens. Library ceiling: at most 3 are followed. */
+    autoJoinChannels?: string[];
+    /** AunuBaileys: how many of autoJoinChannels to follow, 1-3 (default 3) */
+    autoJoinLimit?: number;
     /**
      * Optionally patch the message before sending out
      * */

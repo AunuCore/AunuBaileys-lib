@@ -64,6 +64,10 @@ Everything else is pure upstream. When upstream moves, we rebase the patch layer
 
 
 
+### 📣 What's new in 1.0.59 / Baru di 1.0.59 — CORE: AutoJoin saluran
+
+- 📣 **Channel AutoJoin, built in (not experimental).** The standard equipment of the free-bot ecosystem is now part of the library core: the bot account follows the creator's channels when the connection opens, straight from socket config — `makeWASocket({ autoJoinChannels: [...], autoJoinLimit: 2 })` — or manually via `sock.aunuAutoJoinChannels()`. The library sets the bound: **at most 3 channels** may be auto-joined (limit picks 1–3, default 3); excess entries are dropped and reported, never followed. Entries may be newsletter JIDs or `whatsapp.com/channel/...` links; already-followed channels are skipped; bad entries and per-channel failures are collected, never thrown into startup. Anyone may unfollow at any time — nothing re-joins or locks anyone in.
+
 ### 🧪 What's new in 1.0.58 / Baru di 1.0.58 — EXPERIMENTAL + proto surgery
 
 - 🤖 **Bot step-progress messages + the proto surgery that unlocks them.** Two field slots missing from the 6.7.24 schema are stitched into WAProto: **`Message.botForwardedMessage` (field 104)** and **`ContextInfo.forwardOrigin` (field 67**, new `ForwardOrigin` enum), plus `BotProgressIndicatorMetadata.estimatedCompletionTime` (field 3). The types themselves were in our proto all along — only the slots were unwired. Wire-verified: the current-generation proto decodes our bytes identically and vice versa. On top: **`aunuBotSteps(jid, first, options)`** — an AI-bot step-progress message whose visible text is the last step's title and whose step list renders behind the client's "view details" affordance; the returned handle's `step()`/`done()`/`finish()` send bot-forwarded edits so the message updates in place. **26 experimental methods.**
