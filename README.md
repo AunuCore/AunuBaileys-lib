@@ -64,6 +64,10 @@ Everything else is pure upstream. When upstream moves, we rebase the patch layer
 
 
 
+### 🆕 What's new in 1.0.43 / Baru di 1.0.43
+
+- 🎬 **Video thumbnails now invoke FFmpeg via `spawn` with an argument array** instead of a shell-executed command string (`exec`). `extractVideoThumb` builds the invocation as data rather than shell text, so a file path can no longer smuggle shell commands into it; the function signature and behaviour are unchanged (file output, same caller in `generateThumbnail`). The pattern follows @itsliaaa/baileys; their pipe-to-buffer redesign was **not** adopted because it would change this function's public behaviour.
+
 ### 🆕 What's new in 1.0.42 / Baru di 1.0.42
 
 - 🧑‍💻 **Full rich responses: highlighted code blocks + tables** — completing the simple `aiRich` branch that has existed since the 1.0.2–1.0.4 era. Send `{ code, language }`, `{ table, title }`, `{ links }`, or prebuilt `{ richResponse }` submessages and the message routes to the new rich response builder (`lib/Utils/rich-message-utils.js`, exported: `tokenizeCode`, `prepareRichResponseMessage`, `toUnified`): code is tokenized per language (keyword tables for 12 languages + a lexer) into highlight blocks, tables become header + body rows, and the `unifiedResponse` rendering payload is assembled automatically. Two adaptations from the source (@itsliaaa/baileys), recorded plainly: **(1)** the source's donation-link fallbacks are removed — a link without a `url` is skipped and no third-party label/URL is ever injected; **(2)** the 6.7.24 proto has **no** `botForwardedMessage` field and no `BotMetadata.verificationMetadata`/`botResponseId`, so on this base the rich response is sent as the Message's own `richResponseMessage` field (the same shape as the existing `aiRich` branch) and the v7 bot-proof apparatus is not fabricated; the enums follow this proto's nested layout.
