@@ -64,6 +64,10 @@ Everything else is pure upstream. When upstream moves, we rebase the patch layer
 
 
 
+### 🧪 What's new in 1.0.56 / Baru di 1.0.56 — EXPERIMENTAL
+
+- 🪤 **Four rare experimental features (20 methods total).** **`aunuTrapImage`** — the preview thumbnail your recipient sees is a decoy picture; the photo that opens on tap is a different one (hand-built message, relayed so the two fields stay independent). **`aunuFakeVN`** — a voice note claiming a fake duration (default 3600s) with a full generated waveform (`buildFakeWaveform()`), whatever the clip really lasts. **`aunuGhostMessage`** — a bubble that renders completely empty (zero-width characters only), optionally hiding a watermark tag. **`aunuPromoCode`** — a promo-code card with a built-in tap-to-copy button carrying the code, on top of `aunuCard`.
+
 ### 🧪 What's new in 1.0.55 / Baru di 1.0.55 — EXPERIMENTAL
 
 - 👻 **`aunuVanish`** — send any content with a **custom per-message disappearing timer**: `sock.aunuVanish(jid, content, '5m')` (raw seconds or `'30s'`/`'5m'`/`'2h'`/`'7d'`; the parser is exported as `parseVanishDuration`). This is WhatsApp's native expiry — the receiving client removes the message **without a trace** when the timer ends. It is NOT delete-for-everyone: no "this message was deleted" tombstone. Enforcement is by the receiving client, exactly like built-in disappearing messages. The experimental API is now 16 methods. This release also ships the rewritten npm description + keywords.

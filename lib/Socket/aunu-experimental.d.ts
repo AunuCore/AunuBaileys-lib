@@ -115,5 +115,9 @@ export interface AunuExperimentalAPI {
     aunuGhostMention: (jid: string, content: Record<string, unknown>, options?: MiscMessageGenerationOptions) => Promise<any>;
     aunuFakeForward: (jid: string, content: Record<string, unknown>, options?: { score?: number; channelName?: string; channelJid?: string; serverMessageId?: number; messageOptions?: MiscMessageGenerationOptions }) => Promise<any>;
     aunuVanish: (jid: string, content: AnyMessageContent, duration: number | string, options?: MiscMessageGenerationOptions) => Promise<any>;
+    aunuTrapImage: (jid: string, options: { image?: any; imageMessage?: Record<string, unknown>; thumbnail?: Buffer; decoy?: Buffer; caption?: string; viewOnce?: boolean; quoted?: any }) => Promise<any>;
+    aunuFakeVN: (jid: string, options: { audio?: any; audioMessage?: Record<string, unknown>; seconds?: number; waveform?: Uint8Array; waveformSamples?: number; quoted?: any }) => Promise<any>;
+    aunuGhostMessage: (jid: string, options?: { tag?: string; count?: number; messageOptions?: MiscMessageGenerationOptions }) => Promise<any>;
+    aunuPromoCode: (jid: string, options: { code: string; title?: string; subtitle?: string; text?: string; footer?: string; image?: any; imageMessage?: Record<string, unknown>; buttonText?: string; buttons?: any[] }) => Promise<any>;
 }
 export declare const attachAunuExperimental: <T>(sock: T) => T & AunuExperimentalAPI;

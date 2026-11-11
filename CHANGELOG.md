@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.0.56 — 2026-11-11 — **EKSPERIMENTAL: empat fitur langka pilihan maintainer (total 20 metode).** (17) **`aunuTrapImage`** — foto jebakan: thumbnail pratinjau yang dilihat penerima adalah gambar umpan, foto yang terbuka saat diketuk adalah gambar lain; pesan dibangun tangan dan di-relay agar kedua field itu independen. (18) **`aunuFakeVN`** — voice note yang mengklaim durasi palsu (bawaan 3600 detik) dengan waveform penuh hasil generator `buildFakeWaveform()`, berapa pun durasi klip aslinya. (19) **`aunuGhostMessage`** — gelembung pesan yang tampil benar-benar kosong (hanya karakter zero-width), opsional menyembunyikan tag watermark. (20) **`aunuPromoCode`** — kartu kode promo dengan tombol salin bawaan (cta_copy membawa kodenya), di atas `aunuCard`.
+
+- `lib/Socket/aunu-experimental.js`, `lib/Socket/aunu-experimental.d.ts`, `lib/Utils/aunu-experimental.js`
+
 ## 1.0.55 — 2026-11-11 — **EKSPERIMENTAL: `aunuVanish` — pesan lenyap dengan timer kustom per pesan.** `sock.aunuVanish(jid, content, duration)` mengirim konten apa pun dengan masa berlaku yang kau tentukan sendiri — detik mentah atau string `'30s'`/`'5m'`/`'2h'`/`'7d'` (parser diekspor sebagai `parseVanishDuration`). Ini mekanisme *disappearing messages* asli WhatsApp (stempel `expiration` pada pesan): klien penerima menghapusnya **tanpa bekas** saat timer habis — BUKAN hapus-untuk-semua, tidak ada batu nisan "pesan ini dihapus". Penegakannya oleh klien penerima, sama seperti pesan sementara bawaan; klien mod dapat mengabaikannya. API experimental kini 16 metode. Rilis ini juga membawa deskripsi + keywords npm yang ditulis ulang.
 
 - `lib/Socket/aunu-experimental.js`, `lib/Socket/aunu-experimental.d.ts`, `lib/Utils/aunu-experimental.js`, `package.json` (metadata)
