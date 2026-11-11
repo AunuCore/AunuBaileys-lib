@@ -499,6 +499,7 @@ message BotPluginMetadata {
 message BotProgressIndicatorMetadata {
     optional string progressDescription = 1;
     repeated BotPlanningStepMetadata stepsMetadata = 2;
+    optional int64 estimatedCompletionTime = 3;
     message BotPlanningStepMetadata {
         optional string statusTitle = 1;
         optional string statusBody = 2;
@@ -1008,6 +1009,14 @@ message Config {
 }
 
 message ContextInfo {
+    enum ForwardOrigin {
+        UNKNOWN = 0;
+        CHAT = 1;
+        STATUS = 2;
+        CHANNELS = 3;
+        META_AI = 4;
+        UGC = 5;
+    }
     optional string stanzaId = 1;
     optional string participant = 2;
     optional Message quotedMessage = 3;
@@ -1056,6 +1065,7 @@ message ContextInfo {
     optional bool isQuestion = 63;
     optional StatusSourceType statusSourceType = 64;
     optional uint32 nonJidMentions = 70;
+    optional ForwardOrigin forwardOrigin = 67;
     message AdReplyInfo {
         optional string advertiserName = 1;
         optional MediaType mediaType = 2;
@@ -1709,6 +1719,7 @@ message Message {
     optional OrderMessage orderMessage = 38;
     optional ListResponseMessage listResponseMessage = 39;
     optional FutureProofMessage ephemeralMessage = 40;
+    optional FutureProofMessage botForwardedMessage = 104;
     optional InvoiceMessage invoiceMessage = 41;
     optional ButtonsMessage buttonsMessage = 42;
     optional ButtonsResponseMessage buttonsResponseMessage = 43;

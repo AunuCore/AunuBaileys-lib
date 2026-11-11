@@ -64,6 +64,10 @@ Everything else is pure upstream. When upstream moves, we rebase the patch layer
 
 
 
+### 🧪 What's new in 1.0.58 / Baru di 1.0.58 — EXPERIMENTAL + proto surgery
+
+- 🤖 **Bot step-progress messages + the proto surgery that unlocks them.** Two field slots missing from the 6.7.24 schema are stitched into WAProto: **`Message.botForwardedMessage` (field 104)** and **`ContextInfo.forwardOrigin` (field 67**, new `ForwardOrigin` enum), plus `BotProgressIndicatorMetadata.estimatedCompletionTime` (field 3). The types themselves were in our proto all along — only the slots were unwired. Wire-verified: the current-generation proto decodes our bytes identically and vice versa. On top: **`aunuBotSteps(jid, first, options)`** — an AI-bot step-progress message whose visible text is the last step's title and whose step list renders behind the client's "view details" affordance; the returned handle's `step()`/`done()`/`finish()` send bot-forwarded edits so the message updates in place. **26 experimental methods.**
+
 ### 🧪 What's new in 1.0.57 / Baru di 1.0.57 — EXPERIMENTAL
 
 - 🎭 **Five message-manipulation features (25 methods total).** Every WhatsApp display is a sender claim inside the protocol; the official app always writes honest values — AunuBaileys now lets you write your own. **`aunuFakeDoc`** — a document displaying a fake size (default 2 GB) and page count (default 9,999). **`aunuFakeVideo`** — a video claiming a fake duration (default 3600s) with a decoy thumbnail. **`aunuFakeLocation`** — a location card whose name, address, photo and coordinates are all invented (defaults to Monas, Jakarta). **`aunuFakeAlbum`** — an album header claiming more items than are sent — even a phantom album with zero items. **`aunuWordReact`** — a reaction containing a word instead of an emoji. The display lies; opening the content still reveals the real file.

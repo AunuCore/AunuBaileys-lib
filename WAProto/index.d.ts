@@ -5553,6 +5553,9 @@ export namespace proto {
         /** BotProgressIndicatorMetadata progressDescription */
         progressDescription?: (string|null);
 
+        /** BotProgressIndicatorMetadata estimatedCompletionTime */
+        estimatedCompletionTime?: (number|Long|null);
+
         /** BotProgressIndicatorMetadata stepsMetadata */
         stepsMetadata?: (proto.BotProgressIndicatorMetadata.IBotPlanningStepMetadata[]|null);
     }
@@ -5568,6 +5571,9 @@ export namespace proto {
 
         /** BotProgressIndicatorMetadata progressDescription. */
         public progressDescription?: (string|null);
+
+        /** BotProgressIndicatorMetadata estimatedCompletionTime */
+        public estimatedCompletionTime?: (number|Long|null);
 
         /** BotProgressIndicatorMetadata stepsMetadata. */
         public stepsMetadata: proto.BotProgressIndicatorMetadata.IBotPlanningStepMetadata[];
@@ -10880,6 +10886,9 @@ export namespace proto {
 
         /** ContextInfo nonJidMentions */
         nonJidMentions?: (number|null);
+
+        /** ContextInfo forwardOrigin */
+        forwardOrigin?: (proto.ContextInfo.ForwardOrigin|null);
     }
 
     /** Represents a ContextInfo. */
@@ -11034,6 +11043,9 @@ export namespace proto {
 
         /** ContextInfo nonJidMentions. */
         public nonJidMentions?: (number|null);
+
+        /** ContextInfo forwardOrigin */
+        public forwardOrigin?: (proto.ContextInfo.ForwardOrigin|null);
 
         /**
          * Creates a new ContextInfo instance using the specified properties.
@@ -12052,6 +12064,15 @@ export namespace proto {
         }
 
         /** Properties of a ForwardedNewsletterMessageInfo. */
+        enum ForwardOrigin {
+            UNKNOWN = 0,
+            CHAT = 1,
+            STATUS = 2,
+            CHANNELS = 3,
+            META_AI = 4,
+            UGC = 5
+        }
+
         interface IForwardedNewsletterMessageInfo {
 
             /** ForwardedNewsletterMessageInfo newsletterJid */
@@ -18437,6 +18458,9 @@ export namespace proto {
         /** Message ephemeralMessage */
         ephemeralMessage?: (proto.Message.IFutureProofMessage|null);
 
+        /** Message botForwardedMessage */
+        botForwardedMessage?: (proto.Message.IFutureProofMessage|null);
+
         /** Message invoiceMessage */
         invoiceMessage?: (proto.Message.IInvoiceMessage|null);
 
@@ -18704,6 +18728,9 @@ export namespace proto {
 
         /** Message ephemeralMessage. */
         public ephemeralMessage?: (proto.Message.IFutureProofMessage|null);
+
+        /** Message botForwardedMessage */
+        public botForwardedMessage?: (proto.Message.IFutureProofMessage|null);
 
         /** Message invoiceMessage. */
         public invoiceMessage?: (proto.Message.IInvoiceMessage|null);

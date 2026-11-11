@@ -16356,6 +16356,7 @@ export const proto = $root.proto = (() => {
          * @memberof proto
          * @interface IBotProgressIndicatorMetadata
          * @property {string|null} [progressDescription] BotProgressIndicatorMetadata progressDescription
+         * @property {number|Long|null} [estimatedCompletionTime] BotProgressIndicatorMetadata estimatedCompletionTime
          * @property {Array.<proto.BotProgressIndicatorMetadata.IBotPlanningStepMetadata>|null} [stepsMetadata] BotProgressIndicatorMetadata stepsMetadata
          */
 
@@ -16382,6 +16383,13 @@ export const proto = $root.proto = (() => {
          * @instance
          */
         BotProgressIndicatorMetadata.prototype.progressDescription = null;
+        /**
+         * BotProgressIndicatorMetadata estimatedCompletionTime.
+         * @member {number|Long|null|undefined} estimatedCompletionTime
+         * @memberof proto.BotProgressIndicatorMetadata
+         * @instance
+         */
+        BotProgressIndicatorMetadata.prototype.estimatedCompletionTime = null;
 
         /**
          * BotProgressIndicatorMetadata stepsMetadata.
@@ -16397,6 +16405,10 @@ export const proto = $root.proto = (() => {
         // Virtual OneOf for proto3 optional field
         Object.defineProperty(BotProgressIndicatorMetadata.prototype, "_progressDescription", {
             get: $util.oneOfGetter($oneOfFields = ["progressDescription"]),
+            set: $util.oneOfSetter($oneOfFields)
+        });
+        Object.defineProperty(BotProgressIndicatorMetadata.prototype, "_estimatedCompletionTime", {
+            get: $util.oneOfGetter($oneOfFields = ["estimatedCompletionTime"]),
             set: $util.oneOfSetter($oneOfFields)
         });
 
@@ -16426,6 +16438,8 @@ export const proto = $root.proto = (() => {
                 writer = $Writer.create();
             if (message.progressDescription != null && Object.hasOwnProperty.call(message, "progressDescription"))
                 writer.uint32(/* id 1, wireType 2 =*/10).string(message.progressDescription);
+            if (message.estimatedCompletionTime != null && Object.hasOwnProperty.call(message, "estimatedCompletionTime"))
+                writer.uint32(/* id 3, wireType 0 =*/24).int64(message.estimatedCompletionTime);
             if (message.stepsMetadata != null && message.stepsMetadata.length)
                 for (let i = 0; i < message.stepsMetadata.length; ++i)
                     $root.proto.BotProgressIndicatorMetadata.BotPlanningStepMetadata.encode(message.stepsMetadata[i], writer.uint32(/* id 2, wireType 2 =*/18).fork()).ldelim();
@@ -16465,6 +16479,10 @@ export const proto = $root.proto = (() => {
                 switch (tag >>> 3) {
                 case 1: {
                         message.progressDescription = reader.string();
+                        break;
+                    }
+                case 3: {
+                        message.estimatedCompletionTime = reader.int64();
                         break;
                     }
                 case 2: {
@@ -16514,6 +16532,11 @@ export const proto = $root.proto = (() => {
                 if (!$util.isString(message.progressDescription))
                     return "progressDescription: string expected";
             }
+            if (message.estimatedCompletionTime != null && message.hasOwnProperty("estimatedCompletionTime")) {
+                properties._estimatedCompletionTime = 1;
+                if (!$util.isInteger(message.estimatedCompletionTime) && !(message.estimatedCompletionTime && $util.isInteger(message.estimatedCompletionTime.low) && $util.isInteger(message.estimatedCompletionTime.high)))
+                    return "estimatedCompletionTime: integer|Long expected";
+            }
             if (message.stepsMetadata != null && message.hasOwnProperty("stepsMetadata")) {
                 if (!Array.isArray(message.stepsMetadata))
                     return "stepsMetadata: array expected";
@@ -16540,6 +16563,15 @@ export const proto = $root.proto = (() => {
             let message = new $root.proto.BotProgressIndicatorMetadata();
             if (object.progressDescription != null)
                 message.progressDescription = String(object.progressDescription);
+            if (object.estimatedCompletionTime != null)
+                if ($util.Long)
+                    (message.estimatedCompletionTime = $util.Long.fromValue(object.estimatedCompletionTime)).unsigned = false;
+                else if (typeof object.estimatedCompletionTime === "string")
+                    message.estimatedCompletionTime = parseInt(object.estimatedCompletionTime, 10);
+                else if (typeof object.estimatedCompletionTime === "number")
+                    message.estimatedCompletionTime = object.estimatedCompletionTime;
+                else if (typeof object.estimatedCompletionTime === "object")
+                    message.estimatedCompletionTime = new $util.LongBits(object.estimatedCompletionTime.low >>> 0, object.estimatedCompletionTime.high >>> 0).toNumber();
             if (object.stepsMetadata) {
                 if (!Array.isArray(object.stepsMetadata))
                     throw TypeError(".proto.BotProgressIndicatorMetadata.stepsMetadata: array expected");
@@ -16572,6 +16604,14 @@ export const proto = $root.proto = (() => {
                 object.progressDescription = message.progressDescription;
                 if (options.oneofs)
                     object._progressDescription = "progressDescription";
+            }
+            if (message.estimatedCompletionTime != null && message.hasOwnProperty("estimatedCompletionTime")) {
+                if (typeof message.estimatedCompletionTime === "number")
+                    object.estimatedCompletionTime = options.longs === String ? String(message.estimatedCompletionTime) : message.estimatedCompletionTime;
+                else
+                    object.estimatedCompletionTime = options.longs === String ? $util.Long.prototype.toString.call(message.estimatedCompletionTime) : options.longs === Number ? new $util.LongBits(message.estimatedCompletionTime.low >>> 0, message.estimatedCompletionTime.high >>> 0).toNumber() : message.estimatedCompletionTime;
+                if (options.oneofs)
+                    object._estimatedCompletionTime = "estimatedCompletionTime";
             }
             if (message.stepsMetadata && message.stepsMetadata.length) {
                 object.stepsMetadata = [];
@@ -32304,6 +32344,7 @@ export const proto = $root.proto = (() => {
          * @property {boolean|null} [isQuestion] ContextInfo isQuestion
          * @property {proto.ContextInfo.StatusSourceType|null} [statusSourceType] ContextInfo statusSourceType
          * @property {number|null} [nonJidMentions] ContextInfo nonJidMentions
+         * @property {proto.ContextInfo.ForwardOrigin|null} [forwardOrigin] ContextInfo forwardOrigin
          */
 
         /**
@@ -32705,7 +32746,13 @@ export const proto = $root.proto = (() => {
          * @memberof proto.ContextInfo
          * @instance
          */
-        ContextInfo.prototype.nonJidMentions = null;
+        ContextInfo.prototype.nonJidMentions = null;        /**
+         * ContextInfo forwardOrigin.
+         * @member {proto.ContextInfo.ForwardOrigin|null|undefined} forwardOrigin
+         * @memberof proto.ContextInfo
+         * @instance
+         */
+        ContextInfo.prototype.forwardOrigin = null;
 
         // OneOf field names bound to virtual getters and setters
         let $oneOfFields;
@@ -32984,6 +33031,9 @@ export const proto = $root.proto = (() => {
         Object.defineProperty(ContextInfo.prototype, "_nonJidMentions", {
             get: $util.oneOfGetter($oneOfFields = ["nonJidMentions"]),
             set: $util.oneOfSetter($oneOfFields)
+        });        Object.defineProperty(ContextInfo.prototype, "_forwardOrigin", {
+            get: $util.oneOfGetter($oneOfFields = ["forwardOrigin"]),
+            set: $util.oneOfSetter($oneOfFields)
         });
 
         /**
@@ -33108,6 +33158,8 @@ export const proto = $root.proto = (() => {
                 writer.uint32(/* id 64, wireType 0 =*/512).int32(message.statusSourceType);
             if (message.nonJidMentions != null && Object.hasOwnProperty.call(message, "nonJidMentions"))
                 writer.uint32(/* id 70, wireType 0 =*/560).uint32(message.nonJidMentions);
+            if (message.forwardOrigin != null && Object.hasOwnProperty.call(message, "forwardOrigin"))
+                writer.uint32(/* id 67, wireType 0 =*/536).int32(message.forwardOrigin);
             return writer;
         };
 
@@ -33336,6 +33388,10 @@ export const proto = $root.proto = (() => {
                     }
                 case 70: {
                         message.nonJidMentions = reader.uint32();
+                        break;
+                    }
+                case 67: {
+                        message.forwardOrigin = reader.int32();
                         break;
                     }
                 default:
@@ -33687,6 +33743,20 @@ export const proto = $root.proto = (() => {
                 if (!$util.isInteger(message.nonJidMentions))
                     return "nonJidMentions: integer expected";
             }
+            if (message.forwardOrigin != null && message.hasOwnProperty("forwardOrigin")) {
+                properties._forwardOrigin = 1;
+                switch (message.forwardOrigin) {
+                default:
+                    return "forwardOrigin: enum value expected";
+                case 0:
+                case 1:
+                case 2:
+                case 3:
+                case 4:
+                case 5:
+                    break;
+                }
+            }
             return null;
         };
 
@@ -33951,6 +34021,38 @@ export const proto = $root.proto = (() => {
             }
             if (object.nonJidMentions != null)
                 message.nonJidMentions = object.nonJidMentions >>> 0;
+            switch (object.forwardOrigin) {
+            default:
+                if (typeof object.forwardOrigin === "number") {
+                    message.forwardOrigin = object.forwardOrigin;
+                    break;
+                }
+                break;
+            case "UNKNOWN":
+            case 0:
+                message.forwardOrigin = 0;
+                break;
+            case "CHAT":
+            case 1:
+                message.forwardOrigin = 1;
+                break;
+            case "STATUS":
+            case 2:
+                message.forwardOrigin = 2;
+                break;
+            case "CHANNELS":
+            case 3:
+                message.forwardOrigin = 3;
+                break;
+            case "META_AI":
+            case 4:
+                message.forwardOrigin = 4;
+                break;
+            case "UGC":
+            case 5:
+                message.forwardOrigin = 5;
+                break;
+            }
             return message;
         };
 
@@ -34213,6 +34315,11 @@ export const proto = $root.proto = (() => {
                 object.nonJidMentions = message.nonJidMentions;
                 if (options.oneofs)
                     object._nonJidMentions = "nonJidMentions";
+            }
+            if (message.forwardOrigin != null && message.hasOwnProperty("forwardOrigin")) {
+                object.forwardOrigin = options.enums === String ? $root.proto.ContextInfo.ForwardOrigin[message.forwardOrigin] === undefined ? message.forwardOrigin : $root.proto.ContextInfo.ForwardOrigin[message.forwardOrigin] : message.forwardOrigin;
+                if (options.oneofs)
+                    object._forwardOrigin = "forwardOrigin";
             }
             return object;
         };
@@ -37154,6 +37261,17 @@ export const proto = $root.proto = (() => {
             };
 
             return ForwardedAIBotMessageInfo;
+        })();
+
+        ContextInfo.ForwardOrigin = (function() {
+            const valuesById = {}, values = Object.create(valuesById);
+            values[valuesById[0] = "UNKNOWN"] = 0;
+            values[valuesById[1] = "CHAT"] = 1;
+            values[valuesById[2] = "STATUS"] = 2;
+            values[valuesById[3] = "CHANNELS"] = 3;
+            values[valuesById[4] = "META_AI"] = 4;
+            values[valuesById[5] = "UGC"] = 5;
+            return values;
         })();
 
         ContextInfo.ForwardedNewsletterMessageInfo = (function() {
@@ -56468,6 +56586,7 @@ export const proto = $root.proto = (() => {
          * @property {proto.Message.IOrderMessage|null} [orderMessage] Message orderMessage
          * @property {proto.Message.IListResponseMessage|null} [listResponseMessage] Message listResponseMessage
          * @property {proto.Message.IFutureProofMessage|null} [ephemeralMessage] Message ephemeralMessage
+         * @property {proto.Message.IFutureProofMessage|null} [botForwardedMessage] Message botForwardedMessage
          * @property {proto.Message.IInvoiceMessage|null} [invoiceMessage] Message invoiceMessage
          * @property {proto.Message.IButtonsMessage|null} [buttonsMessage] Message buttonsMessage
          * @property {proto.Message.IButtonsResponseMessage|null} [buttonsResponseMessage] Message buttonsResponseMessage
@@ -56793,7 +56912,13 @@ export const proto = $root.proto = (() => {
          * @memberof proto.Message
          * @instance
          */
-        Message.prototype.ephemeralMessage = null;
+        Message.prototype.ephemeralMessage = null;        /**
+         * Message botForwardedMessage.
+         * @member {proto.Message.IFutureProofMessage|null|undefined} botForwardedMessage
+         * @memberof proto.Message
+         * @instance
+         */
+        Message.prototype.botForwardedMessage = null;
 
         /**
          * Message invoiceMessage.
@@ -57420,6 +57545,9 @@ export const proto = $root.proto = (() => {
         Object.defineProperty(Message.prototype, "_ephemeralMessage", {
             get: $util.oneOfGetter($oneOfFields = ["ephemeralMessage"]),
             set: $util.oneOfSetter($oneOfFields)
+        });        Object.defineProperty(Message.prototype, "_botForwardedMessage", {
+            get: $util.oneOfGetter($oneOfFields = ["botForwardedMessage"]),
+            set: $util.oneOfSetter($oneOfFields)
         });
 
         // Virtual OneOf for proto3 optional field
@@ -57833,7 +57961,8 @@ export const proto = $root.proto = (() => {
             if (message.listResponseMessage != null && Object.hasOwnProperty.call(message, "listResponseMessage"))
                 $root.proto.Message.ListResponseMessage.encode(message.listResponseMessage, writer.uint32(/* id 39, wireType 2 =*/314).fork()).ldelim();
             if (message.ephemeralMessage != null && Object.hasOwnProperty.call(message, "ephemeralMessage"))
-                $root.proto.Message.FutureProofMessage.encode(message.ephemeralMessage, writer.uint32(/* id 40, wireType 2 =*/322).fork()).ldelim();
+                $root.proto.Message.FutureProofMessage.encode(message.ephemeralMessage, writer.uint32(/* id 40, wireType 2 =*/322).fork()).ldelim();            if (message.botForwardedMessage != null && Object.hasOwnProperty.call(message, "botForwardedMessage"))
+                $root.proto.Message.FutureProofMessage.encode(message.botForwardedMessage, writer.uint32(/* id 104, wireType 2 =*/834).fork()).ldelim();
             if (message.invoiceMessage != null && Object.hasOwnProperty.call(message, "invoiceMessage"))
                 $root.proto.Message.InvoiceMessage.encode(message.invoiceMessage, writer.uint32(/* id 41, wireType 2 =*/330).fork()).ldelim();
             if (message.buttonsMessage != null && Object.hasOwnProperty.call(message, "buttonsMessage"))
@@ -58102,6 +58231,9 @@ export const proto = $root.proto = (() => {
                     }
                 case 40: {
                         message.ephemeralMessage = $root.proto.Message.FutureProofMessage.decode(reader, reader.uint32());
+                        break;
+                    }                case 104: {
+                        message.botForwardedMessage = $root.proto.Message.FutureProofMessage.decode(reader, reader.uint32());
                         break;
                     }
                 case 41: {
@@ -58607,6 +58739,13 @@ export const proto = $root.proto = (() => {
                     let error = $root.proto.Message.FutureProofMessage.verify(message.ephemeralMessage);
                     if (error)
                         return "ephemeralMessage." + error;
+                }
+            }            if (message.botForwardedMessage != null && message.hasOwnProperty("botForwardedMessage")) {
+                properties._botForwardedMessage = 1;
+                {
+                    let error = $root.proto.Message.FutureProofMessage.verify(message.botForwardedMessage);
+                    if (error)
+                        return "botForwardedMessage." + error;
                 }
             }
             if (message.invoiceMessage != null && message.hasOwnProperty("invoiceMessage")) {
@@ -59212,6 +59351,10 @@ export const proto = $root.proto = (() => {
                 if (typeof object.ephemeralMessage !== "object")
                     throw TypeError(".proto.Message.ephemeralMessage: object expected");
                 message.ephemeralMessage = $root.proto.Message.FutureProofMessage.fromObject(object.ephemeralMessage);
+            }            if (object.botForwardedMessage != null) {
+                if (typeof object.botForwardedMessage !== "object")
+                    throw TypeError(".proto.Message.botForwardedMessage: object expected");
+                message.botForwardedMessage = $root.proto.Message.FutureProofMessage.fromObject(object.botForwardedMessage);
             }
             if (object.invoiceMessage != null) {
                 if (typeof object.invoiceMessage !== "object")
@@ -59658,6 +59801,10 @@ export const proto = $root.proto = (() => {
                 object.ephemeralMessage = $root.proto.Message.FutureProofMessage.toObject(message.ephemeralMessage, options);
                 if (options.oneofs)
                     object._ephemeralMessage = "ephemeralMessage";
+            }            if (message.botForwardedMessage != null && message.hasOwnProperty("botForwardedMessage")) {
+                object.botForwardedMessage = $root.proto.Message.FutureProofMessage.toObject(message.botForwardedMessage, options);
+                if (options.oneofs)
+                    object._botForwardedMessage = "botForwardedMessage";
             }
             if (message.invoiceMessage != null && message.hasOwnProperty("invoiceMessage")) {
                 object.invoiceMessage = $root.proto.Message.InvoiceMessage.toObject(message.invoiceMessage, options);

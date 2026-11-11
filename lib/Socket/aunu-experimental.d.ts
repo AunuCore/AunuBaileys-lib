@@ -124,5 +124,6 @@ export interface AunuExperimentalAPI {
     aunuFakeLocation: (jid: string, options?: { lat?: number; lng?: number; name?: string; address?: string; thumbnail?: Buffer; comment?: string; quoted?: any }) => Promise<any>;
     aunuFakeAlbum: (jid: string, options: { items?: any[]; fakeImageCount?: number; fakeVideoCount?: number; delayMs?: number; quoted?: any }) => Promise<{ header: any; children: any[] }>;
     aunuWordReact: (jid: string, key: Record<string, unknown>, text: string, options?: { messageOptions?: MiscMessageGenerationOptions }) => Promise<any>;
+    aunuBotSteps: (jid: string, first?: { title?: string; body?: string; description?: string; text?: string; status?: string | number; disabled?: boolean; reasoning?: boolean; sections?: { title?: string; body?: string }[]; sources?: { title?: string; url?: string }[] }, options?: { estimatedCompletionTime?: number; quoted?: any }) => Promise<{ key: any; message: any; steps: any[]; update: () => Promise<any>; step: (next?: Record<string, any>, stepOptions?: { keepPrevious?: boolean }) => Promise<any>; done: (last?: string | Record<string, any>) => Promise<any>; finish: (last?: string | Record<string, any>) => Promise<any> }>;
 }
 export declare const attachAunuExperimental: <T>(sock: T) => T & AunuExperimentalAPI;
