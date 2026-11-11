@@ -64,6 +64,10 @@ Everything else is pure upstream. When upstream moves, we rebase the patch layer
 
 
 
+### 🧪 What's new in 1.0.53 / Baru di 1.0.53 — EXPERIMENTAL
+
+- 📇 **Five more experimental features (17 total).** **`aunuSideText`** — text with a small picture **at the side**: a name/title beside the picture and the chat under the name (the preview layout group menus use); the picture can be someone's real profile picture (`profileOf`), your own image, the built-in grey **"deleted account"** avatar (`deletedProfile: true`), or no picture at all. **`aunuGhostMention`** — mention every group member invisibly: everyone is notified, the text shows no @ pile-up. **`aunuFakeForward`** — the forwarded look (high forwarding score, optional channel attribution). **`aunuCountdown`** — one message edited down a countdown to a final text. **`aunuSplitText`** — a long text sent as a self-quoting chain. New exported utils: `getDeletedProfileImage()` (the embedded deleted-account avatar PNG) and `buildSideTextAdReply()`.
+
 ### 🧪 What's new in 1.0.52 / Baru di 1.0.52 — EXPERIMENTAL
 
 - 👍 **`aunuCard` gains like/dislike buttons.** The new `likeDislike: true` option appends two quick-reply buttons under the card — **👍 Suka** (id `aunu_like`) and **👎 Tidak Suka** (id `aunu_dislike`) — after any custom buttons. The ids are overridable via `likeId`/`dislikeId`; taps return to the bot as button replies carrying those ids, so votes can be counted. Without the option, card behaviour is exactly as in 1.0.50.

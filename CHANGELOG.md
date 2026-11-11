@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.0.53 — 2026-11-11 — **EKSPERIMENTAL: lima fitur lagi (total 17).** (13) **`aunuSideText`** — teks dengan gambar kecil **di samping**: nama/judul di sebelah gambar, chat di bawah nama (tata letak pratinjau yang dipakai menu-menu grup). Gambarnya bisa foto profil asli seseorang (`profileOf`), gambar sendiri, avatar abu-abu **"akun terhapus"** bawaan (`deletedProfile: true`), atau tanpa gambar sama sekali. (14) **`aunuGhostMention`** — mention semua member grup secara tak terlihat: notifikasi masuk ke semua, teks bersih tanpa @. (15) **`aunuFakeForward`** — tampilan pesan terusan (skor forward tinggi + atribusi saluran opsional). (16) **`aunuCountdown`** — satu pesan diedit menghitung mundur sampai teks final. (17) **`aunuSplitText`** — teks panjang dikirim sebagai rantai pesan yang saling mengutip. Util baru yang diekspor: `getDeletedProfileImage()` (PNG avatar akun-terhapus tertanam) dan `buildSideTextAdReply()`.
+
+- `lib/Socket/aunu-experimental.js`, `lib/Socket/aunu-experimental.d.ts`, `lib/Utils/aunu-experimental.js`
+
 ## 1.0.52 — 2026-11-11 — **EKSPERIMENTAL: tombol like/dislike untuk `aunuCard`.** Opsi baru `likeDislike: true` menambahkan dua tombol quick-reply di bawah kartu — **👍 Suka** (id `aunu_like`) dan **👎 Tidak Suka** (id `aunu_dislike`) — sesudah tombol kustom apa pun. Id bisa diganti lewat `likeId`/`dislikeId`; ketukan tombol kembali ke bot sebagai balasan tombol berisi id tersebut, jadi suara bisa dihitung. Tanpa opsi ini, perilaku kartu sama persis seperti 1.0.50.
 
 - `lib/Socket/aunu-experimental.js`, `lib/Socket/aunu-experimental.d.ts`

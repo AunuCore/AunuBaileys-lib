@@ -75,6 +75,24 @@ export interface AunuFakeQuoteOptions {
     id?: string;
     quotedMessage?: Record<string, unknown>;
 }
+export interface AunuSideTextOptions {
+    /** The chat text (required). */
+    text: string;
+    /** Name/title beside the picture. `name` is an alias. */
+    title?: string;
+    name?: string;
+    /** Line under the title; defaults to the text itself. */
+    body?: string;
+    /** Side picture as raw bytes... */
+    image?: Buffer | { url: string };
+    /** ...or fetch this JID's real profile picture... */
+    profileOf?: string;
+    /** ...or use the built-in "deleted account" grey avatar... */
+    deletedProfile?: boolean;
+    /** Optional link opened when the preview block is tapped. Never substituted when omitted. */
+    url?: string;
+    messageOptions?: MiscMessageGenerationOptions;
+}
 export interface AunuExperimentalAPI {
     aunuWatermark: (text: string, tag: string) => string;
     aunuReadWatermark: (text: string) => string | null;
@@ -93,5 +111,10 @@ export interface AunuExperimentalAPI {
     aunuReactSequence: (jid: string, key: Record<string, unknown>, emojis: string | string[], options?: { intervalMs?: number; messageOptions?: MiscMessageGenerationOptions }) => Promise<number>;
     aunuPostStatus: (text: string, options?: { backgroundColor?: string; font?: number } & MiscMessageGenerationOptions) => Promise<any>;
     aunuPersonalCard: (jid: string | null, targetJid: string, options?: AunuPersonalTagAllOptions) => Promise<any>;
+    aunuSideText: (jid: string, options: AunuSideTextOptions) => Promise<any>;
+    aunuGhostMention: (jid: string, content: Record<string, unknown>, options?: MiscMessageGenerationOptions) => Promise<any>;
+    aunuFakeForward: (jid: string, content: Record<string, unknown>, options?: { score?: number; channelName?: string; channelJid?: string; serverMessageId?: number; messageOptions?: MiscMessageGenerationOptions }) => Promise<any>;
+    aunuCountdown: (jid: string, options?: { from?: number; intervalMs?: number; format?: (n: number) => string; finalText?: string; messageOptions?: MiscMessageGenerationOptions }) => Promise<any>;
+    aunuSplitText: (jid: string, text: string, options?: { maxChars?: number; messageOptions?: MiscMessageGenerationOptions }) => Promise<any[]>;
 }
 export declare const attachAunuExperimental: <T>(sock: T) => T & AunuExperimentalAPI;
