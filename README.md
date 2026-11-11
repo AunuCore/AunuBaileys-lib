@@ -64,6 +64,10 @@ Everything else is pure upstream. When upstream moves, we rebase the patch layer
 
 
 
+### 🆕 What's new in 1.0.40 / Baru di 1.0.40
+
+- 🎁 **Four future-proof message wrapper options** — **`viewOnceV2: true`** wraps content into `viewOnceMessageV2`, **`viewOnceV2Extension: true`** into `viewOnceMessageV2Extension`, **`ephemeral: true`** into `ephemeralMessage`, and **`interactiveAsTemplate: true`** wraps an interactive message into a `templateMessage` (optional `templateId`; the `messageContextInfo` device-list metadata is preserved alongside, and using it on a non-interactive message throws a clear 400). The 6.7.24 proto already carries all four wrapper types — only the boolean options were missing. Adapted from @itsliaaa/baileys; classic `viewOnce` behaviour is unchanged.
+
 ### 🆕 What's new in 1.0.39 / Baru di 1.0.39
 
 - 📰 **New `sock.newsletterSubscribed()`** — fetch **every newsletter this account follows** in one call, the newsletter analogue of `groupFetchAllParticipating()` that was missing until now (only `newsletterSubscribers(jid)`, the follower count of one newsletter, existed). Implemented over the same MEX path as the other newsletter methods: query id `6388546374527196`, path `xwa2_newsletter_subscribed` (WhatsApp's own MEX schema constants), added to the `QueryIds`/`XWAPaths` enums. Adapted from @itsliaaa/baileys.

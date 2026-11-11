@@ -91,6 +91,16 @@ type Contextable = {
 };
 type ViewOnce = {
     viewOnce?: boolean;
+    /** wrap the message into viewOnceMessageV2 */
+    viewOnceV2?: boolean;
+    /** wrap the message into viewOnceMessageV2Extension */
+    viewOnceV2Extension?: boolean;
+    /** wrap the message into ephemeralMessage */
+    ephemeral?: boolean;
+    /** wrap an interactive message into a templateMessage (requires `interactive` content) */
+    interactiveAsTemplate?: boolean;
+    /** optional template id used when interactiveAsTemplate is set */
+    templateId?: string;
 };
 type Editable = {
     edit?: WAMessageKey;

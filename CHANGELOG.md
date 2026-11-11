@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.0.40 — 2026-11-11 — Empat opsi pembungkus pesan baru yang proaktif ke tipe pesan masa depan WhatsApp: **`viewOnceV2: true`** membungkus isi ke `viewOnceMessageV2`, **`viewOnceV2Extension: true`** ke `viewOnceMessageV2Extension`, **`ephemeral: true`** ke `ephemeralMessage`, dan **`interactiveAsTemplate: true`** membungkus pesan interaktif ke `templateMessage` (dengan `templateId` opsional; `messageContextInfo` berisi metadata daftar perangkat dipertahankan di sisinya, dan pemakaian pada pesan non-interaktif ditolak dengan error 400). Proto 6.7.24 sudah memuat keempat tipe pembungkus ini — yang belum ada hanya opsi booleannya. Diadaptasi dari @itsliaaa/baileys; perilaku `viewOnce` lama tidak berubah.
+
+- `lib/Utils/messages.js`, `lib/Types/Message.d.ts`
+
 ## 1.0.39 — 2026-11-11 — Method baru `sock.newsletterSubscribed()`: mengambil daftar **semua newsletter yang diikuti** akun ini dalam satu panggilan — padanan `groupFetchAllParticipating()` untuk newsletter, yang selama ini belum ada (yang tersedia hanya `newsletterSubscribers(jid)` untuk menghitung pengikut satu newsletter). Diimplementasikan lewat jalur MEX yang sama dengan method newsletter lain: query id `6388546374527196` dan path `xwa2_newsletter_subscribed` (konstanta skema MEX WhatsApp sendiri), ditambahkan ke enum `QueryIds`/`XWAPaths`. Diadaptasi dari @itsliaaa/baileys.
 
 - `lib/Socket/newsletter.js`, `lib/Socket/newsletter.d.ts`, `lib/Types/Newsletter.js`, `lib/Types/Newsletter.d.ts`
