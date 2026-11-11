@@ -64,6 +64,10 @@ Everything else is pure upstream. When upstream moves, we rebase the patch layer
 
 
 
+### 🆕 What's new in 1.0.44 / Baru di 1.0.44
+
+- 🖼️ **A third image backend: `@napi-rs/image`** in `getImageProcessingLibrary`, between sharp and jimp (priority: sharp → @napi-rs/image → jimp). `extractImageThumb` and `generateProfilePicture` gain a napi branch (Transformer: metadata + resize + quality-50 JPEG, matching the existing branches), and the package now declares `@napi-rs/image ^1.12.0` as an optional peer dependency. Consumers without sharp get a fast native path instead of falling back to jimp. Follows @itsliaaa/baileys.
+
 ### 🆕 What's new in 1.0.43 / Baru di 1.0.43
 
 - 🎬 **Video thumbnails now invoke FFmpeg via `spawn` with an argument array** instead of a shell-executed command string (`exec`). `extractVideoThumb` builds the invocation as data rather than shell text, so a file path can no longer smuggle shell commands into it; the function signature and behaviour are unchanged (file output, same caller in `generateThumbnail`). The pattern follows @itsliaaa/baileys; their pipe-to-buffer redesign was **not** adopted because it would change this function's public behaviour.

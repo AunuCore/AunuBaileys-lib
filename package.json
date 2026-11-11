@@ -1,7 +1,7 @@
 {
   "name": "aunubaileys",
   "type": "module",
-  "version": "1.0.43",
+  "version": "1.0.44",
   "description": "AunuBaileys \u2014 a WhatsApp Web API for bots that never sleep. Full upstream power with the beloved in-memory store restored and pairing that just works. Forged by AunuCore.",
   "keywords": [
     "whatsapp",
@@ -83,7 +83,8 @@
     "audio-decode": "^2.1.3",
     "jimp": "^1.6.0",
     "link-preview-js": "^3.0.0",
-    "sharp": "*"
+    "sharp": "*",
+    "@napi-rs/image": "^1.12.0"
   },
   "peerDependenciesMeta": {
     "audio-decode": {

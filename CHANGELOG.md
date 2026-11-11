@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.0.44 — 2026-11-11 — **Backend gambar ketiga: `@napi-rs/image`** di `getImageProcessingLibrary`, di antara sharp dan jimp (prioritas: sharp → @napi-rs/image → jimp). `extractImageThumb` dan `generateProfilePicture` mendapat cabang napi (Transformer: metadata + resize + JPEG kualitas 50, menyamai cabang yang sudah ada), dan paket kini mendeklarasikan `@napi-rs/image ^1.12.0` sebagai peer dependency opsional. Konsumen yang tidak memasang sharp kini punya jalur native cepat tanpa jatuh ke jimp. Mengikuti @itsliaaa/baileys.
+
+- `lib/Utils/messages-media.js`, `package.json` (peerDependencies)
+
 ## 1.0.43 — 2026-11-11 — **Thumbnail video FFmpeg kini lewat `spawn` dengan array argumen**, bukan string perintah yang dieksekusi shell (`exec`). `extractVideoThumb` menyusun perintah sebagai data, bukan teks shell, sehingga path file tidak lagi bisa menyusupkan perintah shell; tanda tangan fungsi dan perilakunya tetap persis sama (keluaran file, pemanggil yang sama di `generateThumbnail`). Pola ini mengikuti @itsliaaa/baileys; desain ulang mereka yang mengalirkan hasil lewat pipe ke buffer **tidak** diadopsi karena mengubah perilaku publik fungsi ini.
 
 - `lib/Utils/messages-media.js`
