@@ -38,6 +38,39 @@ export interface AunuPersonalTagAllResult {
     failed: { jid: string; error: string }[];
     skipped: number;
 }
+export interface AunuCardButton {
+    type?: 'reply' | 'url' | 'copy' | 'call';
+    displayText?: string;
+    text?: string;
+    id?: string;
+    url?: string;
+    copyCode?: string;
+    phoneNumber?: string;
+    /** Raw native-flow passthrough. */
+    name?: string;
+    buttonParamsJson?: string | Record<string, unknown>;
+}
+export interface AunuCardOptions {
+    title?: string;
+    subtitle?: string;
+    /** Body text fused under the photo in the same bubble. */
+    text?: string;
+    footer?: string;
+    /** Header photo (Buffer or { url }); uploaded and embedded as the card header — it does not open as a normal photo. */
+    image?: Buffer | { url: string };
+    /** Prebuilt imageMessage object, used as-is when provided. */
+    imageMessage?: Record<string, unknown>;
+    buttons?: AunuCardButton[];
+    messageOptions?: MiscMessageGenerationOptions;
+}
+export interface AunuFakeQuoteOptions {
+    /** JID the fabricated quote pretends to come from. Defaults to the chat JID. */
+    from?: string;
+    /** Text of the fabricated quoted message. */
+    text?: string;
+    id?: string;
+    quotedMessage?: Record<string, unknown>;
+}
 export interface AunuExperimentalAPI {
     aunuWatermark: (text: string, tag: string) => string;
     aunuReadWatermark: (text: string) => string | null;
@@ -50,5 +83,11 @@ export interface AunuExperimentalAPI {
     aunuCancelSelfDestruct: (messageId: string) => boolean;
     aunuDoctor: () => AunuDoctorReport;
     aunuPersonalTagAll: (groupJid: string, options?: AunuPersonalTagAllOptions) => Promise<AunuPersonalTagAllResult>;
+    aunuCard: (jid: string, options?: AunuCardOptions) => Promise<any>;
+    aunuFakeQuote: (jid: string, content: Record<string, unknown>, quote?: AunuFakeQuoteOptions, options?: MiscMessageGenerationOptions) => Promise<any>;
+    aunuTypewriter: (jid: string, text: string, options?: { steps?: number; intervalMs?: number; messageOptions?: MiscMessageGenerationOptions }) => Promise<any>;
+    aunuReactSequence: (jid: string, key: Record<string, unknown>, emojis: string | string[], options?: { intervalMs?: number; messageOptions?: MiscMessageGenerationOptions }) => Promise<number>;
+    aunuPostStatus: (text: string, options?: { backgroundColor?: string; font?: number } & MiscMessageGenerationOptions) => Promise<any>;
+    aunuPersonalCard: (jid: string | null, targetJid: string, options?: AunuPersonalTagAllOptions) => Promise<any>;
 }
 export declare const attachAunuExperimental: <T>(sock: T) => T & AunuExperimentalAPI;
