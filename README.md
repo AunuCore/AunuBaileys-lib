@@ -64,6 +64,10 @@ Everything else is pure upstream. When upstream moves, we rebase the patch layer
 
 
 
+### 🆕 What's new in 1.0.38 / Baru di 1.0.38
+
+- 📰 **Ad-reply / link-preview cards as a direct message option** — attaching an `externalAdReply` card (title + thumbnail riding on top of a message) used to mean hand-assembling a full `contextInfo`. Now just pass `externalAdReply: { title, body, url, thumbnail, largeThumbnail }` in the message content: `url` maps to both `mediaUrl` and `sourceUrl`, `mediaType` defaults to 1 (image), and the result merges cleanly with an explicit `contextInfo` and with `mentions`/`mentionAll` when combined. One deliberate difference from the adaptation source (@itsliaaa/baileys): there, a missing `url` is silently replaced with the maintainer's donation link — here a missing url **stays empty**; this library never injects a third-party link into your messages. A non-Buffer thumbnail is rejected with a clear 400 error.
+
 ### 🆕 What's new in 1.0.37 / Baru di 1.0.37
 
 - 📣 **Mention everyone in a group without listing a single JID** — until now, mentioning all group members meant building a `mentions` array of every participant JID yourself: heavy for large groups and impossible without group metadata. The new `mentionAll: true` message option sets WhatsApp's native `nonJidMentions` contextInfo flag, and receiving clients render it as a mass mention with no JID list at all. To carry the flag on the wire, `ContextInfo.nonJidMentions` (field 70, uint32 — matching the current WhatsApp proto) was added to this package's WAProto with full encode/decode/verify/fromObject/toObject support, proven by a byte-level roundtrip test. `mentionAll` combines freely with ordinary `mentions`; existing `mentions` behaviour is unchanged. Adapted from @itsliaaa/baileys.

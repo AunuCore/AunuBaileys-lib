@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.0.38 — 2026-11-11 — Kartu ad-reply / pratinjau link kini bisa ditulis sebagai opsi langsung. Sebelumnya, memasang `externalAdReply` (kartu judul + thumbnail yang menumpang di atas pesan) berarti merakit `contextInfo` utuh dengan tangan. Sekarang cukup `externalAdReply: { title, body, url, thumbnail, largeThumbnail }` pada konten pesan: `url` dipetakan ke `mediaUrl` sekaligus `sourceUrl`, `mediaType` bawaan 1 (gambar), dan hasilnya digabung rapi dengan `contextInfo` eksplisit maupun `mentions`/`mentionAll` bila sama-sama dipakai. Satu perbedaan sadar dari sumber adaptasinya (@itsliaaa/baileys): di sana `url` yang kosong diam-diam diganti link donasi mereka — di sini url kosong **tetap kosong**; library ini tidak pernah menyisipkan tautan pihak ketiga ke pesan pengguna. Thumbnail non-Buffer ditolak dengan error 400 yang jelas.
+
+- `lib/Utils/messages.js`, `lib/Types/Message.d.ts`
+
 ## 1.0.37 — 2026-11-11 — Mention semua peserta grup kini bisa tanpa daftar JID. Sampai sekarang, menyebut semua anggota grup berarti menyusun sendiri daftar `mentions` berisi seluruh JID peserta — berat untuk grup besar dan mustahil tanpa metadata grup. Sekarang ada opsi `mentionAll: true` pada konten pesan: library menyetel flag native WhatsApp `nonJidMentions` pada contextInfo, dan klien penerima menampilkannya sebagai mention massal tanpa daftar JID sama sekali. Agar flag itu selamat sampai kabel, field `ContextInfo.nonJidMentions` (field 70, uint32 — sama seperti proto WhatsApp terkini) ditambahkan ke WAProto kita, lengkap encode/decode/verify/fromObject/toObject, dan terbukti roundtrip di level byte. `mentionAll` bisa digabung dengan `mentions` biasa; perilaku `mentions` lama tidak berubah. Diadaptasi dari @itsliaaa/baileys.
 
 - `WAProto/WAProto.proto`, `WAProto/index.js`, `WAProto/index.d.ts`, `lib/Utils/messages.js`, `lib/Types/Message.d.ts`

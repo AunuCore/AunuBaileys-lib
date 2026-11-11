@@ -71,6 +71,23 @@ type Mentionable = {
 type Contextable = {
     /** add contextInfo to the message */
     contextInfo?: proto.IContextInfo;
+    /**
+     * shorthand for contextInfo.externalAdReply — renders an ad-reply / link-preview
+     * card without hand-writing contextInfo. `url` maps to both mediaUrl and sourceUrl;
+     * a missing url stays empty (no fallback link is ever injected).
+     */
+    externalAdReply?: {
+        title?: string;
+        body?: string;
+        url?: string;
+        mediaType?: proto.Message.ExternalAdReplyInfo.MediaType;
+        /** thumbnail image bytes */
+        thumbnail?: Buffer;
+        thumbnailUrl?: string;
+        /** render the large thumbnail variant */
+        largeThumbnail?: boolean;
+        showAdAttribution?: boolean;
+    };
 };
 type ViewOnce = {
     viewOnce?: boolean;
