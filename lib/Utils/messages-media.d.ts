@@ -110,4 +110,11 @@ export declare const decryptMediaRetryData: ({ ciphertext, iv }: {
 export declare const getStatusCodeForMediaRetry: (code: number) => 200 | 412 | 404 | 418;
 export {};
 //# sourceMappingURL=messages-media.d.ts.map
+export declare const addStickerExif: (webpBuffer: Buffer, metadata?: {
+    packId?: string;
+    packname?: string;
+    author?: string;
+    emojis?: string[];
+    categories?: string[];
+}) => Buffer;
 export declare const getImageProcessingLibrary: () => Promise<Record<string, any>>;

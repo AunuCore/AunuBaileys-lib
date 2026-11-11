@@ -269,6 +269,9 @@ export type AnyMessageContent = (AnyRegularMessageContent | {
     footerText?: string;
     disclaimerText?: string;
     noHeading?: boolean;
+    html?: string;
+    trustedSources?: string[];
+    richHtml?: { html?: string; title?: string; tabHeader?: string; url?: string; trustedSources?: string[]; tabs?: any[] };
 };
 export type GroupMetadataParticipants = Pick<GroupMetadata, 'participants'>;
 type MinimalRelayOptions = {

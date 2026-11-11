@@ -64,6 +64,12 @@ Everything else is pure upstream. When upstream moves, we rebase the patch layer
 
 
 
+### 🆕 What's new in 1.0.45 / Baru di 1.0.45
+
+- 📞 **VOIP call support (from plogme, original implementation)** — one combined release from an 8-package sweep (raiden-baileys, @neoxr/wb, @zervonex/baileys, @itsliaaa/starseal, alya-baileys, @ryuu-reinzz/baileys, @cogitator-ai/channels, plogme — all audited clean). New socket methods: `offerCall(jid, isVideo?)` and `groupCall(groupJid, participants, isVideo?)` build the `<offer>` with a per-device encrypted call-key envelope, `cancelGroupCall(groupJid, callId)`, and `acceptCall(callId, callFrom)` / `terminateCall(callId, callFrom, reason?)` join the existing `rejectCall`. Pure stanza builders are exported from `lib/Utils/call-utils.js` so the wire shapes are unit-testable. The stanza shapes follow the WhatsApp call protocol; the code is an original AunuBaileys implementation (plogme's license forbids copying its code). This is the signalling layer — two-way VOIP media is out of scope. plogme's voip-rekey decoder was **not** ported: the 6.7.24 proto has no `E2eRekeyPayload`.
+- 🌐 **HTML messages — EXPERIMENTAL (Aunu's call):** content `{ html, trustedSources }` adds an `FOAHtmlPrimitiveDemoDONOTUSE` section to the unified response (or use `prepareHtmlMessage(...)`), and `{ richHtml: { html, title, tabs, ... } }` / `prepareRichHtmlMessage(...)` builds an interactive screen as an embedded screen (`GenAIaeacdsnwHtmlPrimitive` inside `FOAIDNixelButtonSheets` tabs) — the surface interactive HTML+JS lives on. The library transports the payload intact; whether the receiving WhatsApp client renders/executes it depends on the client version and is not guaranteed.
+- 🏷️ **`addStickerExif(webpBuffer, { packId?, packname?, author?, emojis?, categories? })`** (the @itsliaaa/starseal idea): writes sticker EXIF metadata into a WebP buffer — an existing EXIF chunk is replaced, not stacked; non-WebP input is rejected.
+
 ### 🆕 What's new in 1.0.44 / Baru di 1.0.44
 
 - 🖼️ **A third image backend: `@napi-rs/image`** in `getImageProcessingLibrary`, between sharp and jimp (priority: sharp → @napi-rs/image → jimp). `extractImageThumb` and `generateProfilePicture` gain a napi branch (Transformer: metadata + resize + quality-50 JPEG, matching the existing branches), and the package now declares `@napi-rs/image ^1.12.0` as an optional peer dependency. Consumers without sharp get a fast native path instead of falling back to jimp. Follows @itsliaaa/baileys.
