@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.0.37 — 2026-11-11 — Mention semua peserta grup kini bisa tanpa daftar JID. Sampai sekarang, menyebut semua anggota grup berarti menyusun sendiri daftar `mentions` berisi seluruh JID peserta — berat untuk grup besar dan mustahil tanpa metadata grup. Sekarang ada opsi `mentionAll: true` pada konten pesan: library menyetel flag native WhatsApp `nonJidMentions` pada contextInfo, dan klien penerima menampilkannya sebagai mention massal tanpa daftar JID sama sekali. Agar flag itu selamat sampai kabel, field `ContextInfo.nonJidMentions` (field 70, uint32 — sama seperti proto WhatsApp terkini) ditambahkan ke WAProto kita, lengkap encode/decode/verify/fromObject/toObject, dan terbukti roundtrip di level byte. `mentionAll` bisa digabung dengan `mentions` biasa; perilaku `mentions` lama tidak berubah. Diadaptasi dari @itsliaaa/baileys.
+
+- `WAProto/WAProto.proto`, `WAProto/index.js`, `WAProto/index.d.ts`, `lib/Utils/messages.js`, `lib/Types/Message.d.ts`
+
 ## 1.0.36 — 2026-11-11 — Lisensi kini memegang copyright AunuCore Creative Network. File LICENSE sebelumnya hanya mencantumkan copyright upstream (WhiskeySockets), padahal AunuBaileys dikembangkan dan dirawat oleh AunuCore Creative Network. Sekarang baris copyright utama adalah AunuCore Creative Network, dengan atribusi upstream dipertahankan di bawahnya persis seperti yang diwajibkan lisensi MIT, plus satu baris penjelasan asal-usul paket. Isi lisensinya tidak berubah: tetap MIT, field `license` di package.json tetap "MIT", dan hak-hak pengguna paket tidak berubah sama sekali. Tidak ada perubahan kode pada rilis ini.
 
 - `LICENSE`

@@ -10877,6 +10877,9 @@ export namespace proto {
 
         /** ContextInfo statusSourceType */
         statusSourceType?: (proto.ContextInfo.StatusSourceType|null);
+
+        /** ContextInfo nonJidMentions */
+        nonJidMentions?: (number|null);
     }
 
     /** Represents a ContextInfo. */
@@ -11028,6 +11031,9 @@ export namespace proto {
 
         /** ContextInfo statusSourceType. */
         public statusSourceType?: (proto.ContextInfo.StatusSourceType|null);
+
+        /** ContextInfo nonJidMentions. */
+        public nonJidMentions?: (number|null);
 
         /**
          * Creates a new ContextInfo instance using the specified properties.

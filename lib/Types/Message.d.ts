@@ -65,6 +65,8 @@ export interface WAUrlInfo {
 type Mentionable = {
     /** list of jids that are mentioned in the accompanying text */
     mentions?: string[];
+    /** mention all group participants via the native non-JID mention flag (no JID list needed) */
+    mentionAll?: boolean;
 };
 type Contextable = {
     /** add contextInfo to the message */

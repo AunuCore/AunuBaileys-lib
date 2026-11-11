@@ -64,6 +64,10 @@ Everything else is pure upstream. When upstream moves, we rebase the patch layer
 
 
 
+### 🆕 What's new in 1.0.37 / Baru di 1.0.37
+
+- 📣 **Mention everyone in a group without listing a single JID** — until now, mentioning all group members meant building a `mentions` array of every participant JID yourself: heavy for large groups and impossible without group metadata. The new `mentionAll: true` message option sets WhatsApp's native `nonJidMentions` contextInfo flag, and receiving clients render it as a mass mention with no JID list at all. To carry the flag on the wire, `ContextInfo.nonJidMentions` (field 70, uint32 — matching the current WhatsApp proto) was added to this package's WAProto with full encode/decode/verify/fromObject/toObject support, proven by a byte-level roundtrip test. `mentionAll` combines freely with ordinary `mentions`; existing `mentions` behaviour is unchanged. Adapted from @itsliaaa/baileys.
+
 ### 🆕 What's new in 1.0.36 / Baru di 1.0.36
 
 - 📜 **The license now carries the AunuCore Creative Network copyright** — the LICENSE file previously listed only the upstream (WhiskeySockets) copyright, even though AunuBaileys is developed and maintained by AunuCore Creative Network. The primary copyright line is now AunuCore Creative Network, with the upstream attribution retained directly below it exactly as the MIT License requires, plus one line explaining the package's origin. The license itself is unchanged: still MIT, the package.json `license` field is still "MIT", and package users' rights are exactly as before. No code changes in this release.

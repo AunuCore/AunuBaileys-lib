@@ -32303,6 +32303,7 @@ export const proto = $root.proto = (() => {
          * @property {proto.IMemberLabel|null} [memberLabel] ContextInfo memberLabel
          * @property {boolean|null} [isQuestion] ContextInfo isQuestion
          * @property {proto.ContextInfo.StatusSourceType|null} [statusSourceType] ContextInfo statusSourceType
+         * @property {number|null} [nonJidMentions] ContextInfo nonJidMentions
          */
 
         /**
@@ -32698,6 +32699,14 @@ export const proto = $root.proto = (() => {
          */
         ContextInfo.prototype.statusSourceType = null;
 
+        /**
+         * ContextInfo nonJidMentions.
+         * @member {number|null|undefined} nonJidMentions
+         * @memberof proto.ContextInfo
+         * @instance
+         */
+        ContextInfo.prototype.nonJidMentions = null;
+
         // OneOf field names bound to virtual getters and setters
         let $oneOfFields;
 
@@ -32971,6 +32980,12 @@ export const proto = $root.proto = (() => {
             set: $util.oneOfSetter($oneOfFields)
         });
 
+        // Virtual OneOf for proto3 optional field
+        Object.defineProperty(ContextInfo.prototype, "_nonJidMentions", {
+            get: $util.oneOfGetter($oneOfFields = ["nonJidMentions"]),
+            set: $util.oneOfSetter($oneOfFields)
+        });
+
         /**
          * Creates a new ContextInfo instance using the specified properties.
          * @function create
@@ -33091,6 +33106,8 @@ export const proto = $root.proto = (() => {
                 writer.uint32(/* id 63, wireType 0 =*/504).bool(message.isQuestion);
             if (message.statusSourceType != null && Object.hasOwnProperty.call(message, "statusSourceType"))
                 writer.uint32(/* id 64, wireType 0 =*/512).int32(message.statusSourceType);
+            if (message.nonJidMentions != null && Object.hasOwnProperty.call(message, "nonJidMentions"))
+                writer.uint32(/* id 70, wireType 0 =*/560).uint32(message.nonJidMentions);
             return writer;
         };
 
@@ -33315,6 +33332,10 @@ export const proto = $root.proto = (() => {
                     }
                 case 64: {
                         message.statusSourceType = reader.int32();
+                        break;
+                    }
+                case 70: {
+                        message.nonJidMentions = reader.uint32();
                         break;
                     }
                 default:
@@ -33661,6 +33682,11 @@ export const proto = $root.proto = (() => {
                     break;
                 }
             }
+            if (message.nonJidMentions != null && message.hasOwnProperty("nonJidMentions")) {
+                properties._nonJidMentions = 1;
+                if (!$util.isInteger(message.nonJidMentions))
+                    return "nonJidMentions: integer expected";
+            }
             return null;
         };
 
@@ -33923,6 +33949,8 @@ export const proto = $root.proto = (() => {
                 message.statusSourceType = 5;
                 break;
             }
+            if (object.nonJidMentions != null)
+                message.nonJidMentions = object.nonJidMentions >>> 0;
             return message;
         };
 
@@ -34180,6 +34208,11 @@ export const proto = $root.proto = (() => {
                 object.statusSourceType = options.enums === String ? $root.proto.ContextInfo.StatusSourceType[message.statusSourceType] === undefined ? message.statusSourceType : $root.proto.ContextInfo.StatusSourceType[message.statusSourceType] : message.statusSourceType;
                 if (options.oneofs)
                     object._statusSourceType = "statusSourceType";
+            }
+            if (message.nonJidMentions != null && message.hasOwnProperty("nonJidMentions")) {
+                object.nonJidMentions = message.nonJidMentions;
+                if (options.oneofs)
+                    object._nonJidMentions = "nonJidMentions";
             }
             return object;
         };
