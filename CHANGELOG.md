@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.0.36 — 2026-11-11 — Lisensi kini memegang copyright AunuCore Creative Network. File LICENSE sebelumnya hanya mencantumkan copyright upstream (WhiskeySockets), padahal AunuBaileys dikembangkan dan dirawat oleh AunuCore Creative Network. Sekarang baris copyright utama adalah AunuCore Creative Network, dengan atribusi upstream dipertahankan di bawahnya persis seperti yang diwajibkan lisensi MIT, plus satu baris penjelasan asal-usul paket. Isi lisensinya tidak berubah: tetap MIT, field `license` di package.json tetap "MIT", dan hak-hak pengguna paket tidak berubah sama sekali. Tidak ada perubahan kode pada rilis ini.
+
+- `LICENSE`
+
 ## 1.0.35 — 2026-11-11 — Kegagalan dekripsi kini memberi sinyal terstruktur, bukan banjir log. Satu sesi yang rusak bisa menggagalkan ratusan pesan dalam hitungan menit (B-01), dan setiap kegagalan dicatat di level ERROR — log tenggelam, sementara bot tidak punya cara terprogram untuk tahu sedang terjadi banjir Bad MAC. Sekarang: (1) log error dekripsi di-throttle per alamat pengirim — baris pertama langsung, lalu paling banyak satu baris per menit per pengirim dengan hitungan kegagalan yang disembunyikan; (2) event baru `messages.decrypt-failure` membawa remoteJid, pengirim, alamat sinyal, jumlah kegagalan beruntun, dan apakah kegagalan ini memicu reset sesi/sender-key — konsumen bisa memberi peringatan dan mengagregasi tanpa membaca log. Penanganan kegagalannya sendiri tidak berubah. Versi penutup rangkaian perbaikan 1.0.14–1.0.35.
 
 - `lib/Utils/decode-wa-message.js`, `lib/Socket/messages-recv.js`, `lib/Types/Events.d.ts`

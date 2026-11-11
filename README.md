@@ -64,6 +64,10 @@ Everything else is pure upstream. When upstream moves, we rebase the patch layer
 
 
 
+### 🆕 What's new in 1.0.36 / Baru di 1.0.36
+
+- 📜 **The license now carries the AunuCore Creative Network copyright** — the LICENSE file previously listed only the upstream (WhiskeySockets) copyright, even though AunuBaileys is developed and maintained by AunuCore Creative Network. The primary copyright line is now AunuCore Creative Network, with the upstream attribution retained directly below it exactly as the MIT License requires, plus one line explaining the package's origin. The license itself is unchanged: still MIT, the package.json `license` field is still "MIT", and package users' rights are exactly as before. No code changes in this release.
+
 ### 🆕 What's new in 1.0.35 / Baru di 1.0.35
 
 - 📡 **Decrypt failures now emit a structured signal instead of a log flood** — one rotten session can fail hundreds of messages in minutes (B-01), and every failure was logged at ERROR level, drowning the logs while the bot had no programmatic way to know a Bad MAC flood was happening. Now: (1) the decrypt error log is throttled per sender address — first line immediately, then at most one line per minute per sender carrying the suppressed-failure count; (2) a new `messages.decrypt-failure` event carries the chat, sender, signal address, consecutive failure count, and whether this failure tripped the session/sender-key reset — consumers can alert and aggregate without parsing logs. The failure handling itself is unchanged. Closing release of the 1.0.14–1.0.35 fix train.
