@@ -242,6 +242,33 @@ export type AnyMessageContent = (AnyRegularMessageContent | {
     ai?: boolean;
     /** AunuBaileys: force the biz binary node (secure Meta service label) onto this message's stanza */
     secureMetaServiceLabel?: boolean;
+    /** AunuBaileys: rich response — a highlighted code block (routes the whole message to the rich response builder) */
+    code?: string;
+    /** language for the rich response code block (default javascript) */
+    language?: string;
+    /** AunuBaileys: rich response — a table; first row is the heading unless noHeading is set */
+    table?: string[][];
+    /** title for the rich response table */
+    title?: string;
+    /** AunuBaileys: rich response — citation links (a link without url is skipped; no fallback is injected) */
+    links?: {
+        text: string;
+        url?: string;
+        title?: string;
+        displayName?: string;
+        sources?: {
+            displayName?: string;
+            subtitle?: string;
+            url?: string;
+        }[];
+    }[];
+    /** AunuBaileys: rich response — prebuilt submessages */
+    richResponse?: any[];
+    headerText?: string;
+    contentText?: string;
+    footerText?: string;
+    disclaimerText?: string;
+    noHeading?: boolean;
 };
 export type GroupMetadataParticipants = Pick<GroupMetadata, 'participants'>;
 type MinimalRelayOptions = {
