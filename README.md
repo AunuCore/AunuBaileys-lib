@@ -64,6 +64,10 @@ Everything else is pure upstream. When upstream moves, we rebase the patch layer
 
 
 
+### 🔐 What's new in 1.0.63 / Baru di 1.0.63 — auth-state logger
+
+- 🔐 **`useMultiFileAuthState(folder, logger)` accepts an optional logger.** The silent spot was the read path: every error — corrupt JSON included — became a quiet `null`, so a damaged `creds.json` silently turned into a brand-new session (a logout that looked random). Now a missing file stays silent (a normal first run) while corruption is **reported loudly**, write failures are logged where they happen (and still thrown), and `saveCreds` logs failures even when nobody awaits it. Without a logger, behaviour is exactly as before. *(Behaviour learned from the @violetix/baileys dissection.)*
+
 ### 🗄️ What's new in 1.0.62 / Baru di 1.0.62 — bounded retry caches + keepalive stagger
 
 - 🗄️ **The per-socket receive caches are bounded now.** The retry, call-offer and placeholder-resend caches had a TTL but no size limit, so they grew without bound inside the TTL window — per socket, multiplied by every session in the process. Their defaults are now `makeBoundedTTLCache` (new exported util): oldest-first eviction at the ceiling, and **reads never refresh an entry's expiry**, so a message stuck in a retry loop cannot keep its own counter alive forever. Consumer-supplied caches via config are still honoured. The first keepalive ping is also staggered by a random offset, so a fleet of sockets no longer pings in the same tick. *(Behaviour learned from the @violetix/baileys dissection.)*

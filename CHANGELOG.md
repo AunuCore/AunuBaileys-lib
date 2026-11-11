@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.0.63 — 2026-11-11 — **Logger untuk auth-state multi-file.** Dari bedah @violetix/baileys: `useMultiFileAuthState(folder, logger)` kini menerima logger opsional. Titik buta kita ada di `readData`: SEMUA error — termasuk JSON korup — ditelan menjadi `null`, jadi `creds.json` yang rusak diam-diam berubah menjadi sesi baru (logout yang tampak acak). Sekarang file hilang tetap senyap (jalan pertama yang normal), tetapi korupsi/ketidak terbacaan **dilaporkan keras** lewat logger; kegagalan tulis dicatat di titik gagalnya (dan tetap dilempar); `saveCreds` mencatat kegagalan bahkan saat tidak ada yang menunggunya. Tanpa logger, perilaku persis seperti sebelumnya.
+
+- `lib/Utils/use-multi-file-auth-state.js`, `lib/Utils/use-multi-file-auth-state.d.ts`
+
 ## 1.0.62 — 2026-11-11 — **Cache retry dibatasi + keepalive diacak.** Dari bedah @violetix/baileys: tiga cache per-socket di jalur terima (retry, call offer, placeholder resend) hanya punya TTL tanpa batas ukuran — di dalam jendela TTL mereka tumbuh tanpa batas, per socket, dan armada mengalikannya. Kini bawaan mereka `makeBoundedTTLCache` (util baru, diekspor): eviction entri tertua saat melewati plafon (1000/256/1000), dan **bacaan tidak pernah memperpanjang umur entri** — pesan yang terjebak loop retry tidak lagi menghidupkan counternya sendiri selamanya. Cache suntikan konsumen lewat config tetap dihormati. Selain itu ping keepalive pertama kini diacak offset-nya (0–interval) supaya banyak socket dalam satu proses tidak ping di tick yang sama.
 
 - `lib/Utils/bounded-cache.js` (baru), `lib/Socket/messages-recv.js`, `lib/Socket/socket.js`, `lib/Utils/index.js`
