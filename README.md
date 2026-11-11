@@ -64,6 +64,10 @@ Everything else is pure upstream. When upstream moves, we rebase the patch layer
 
 
 
+### 🏷️ What's new in 1.0.61 / Baru di 1.0.61 — named disconnect reasons
+
+- 🏷️ **Disconnect errors now name their reason in the message itself** — `Connection Failure [401 loggedOut]`, `Connection Closed [428 connectionClosed]`. Hosts that forward only `error.message` could not tell a dead session (401) from a transient blip (503) and reconnected both, risking the number. The `nameDisconnectReason(error)` helper is exported for consumers. *(Behaviour learned from the @violetix/baileys dissection.)*
+
 ### 🕒 What's new in 1.0.60 / Baru di 1.0.60 — disappearing-mode stamping
 
 - 🕒 **Ephemeral sends now carry the chat's disappearing-mode stamp**, matching WhatsApp Web: alongside the TTL, the wrapper sets `disappearingMode` (initiator `CHANGED_IN_CHAT`, trigger `CHAT_SETTING`) — without it, receiving clients warn that the message will not disappear. `ephemeralSettingTimestamp` passes through when the caller tracks it, and `disappearingModeTrigger` overrides the trigger. Directly strengthens `aunuVanish` and every disappearing send. *(Protocol behaviour learned from the @violetix/baileys dissection.)*

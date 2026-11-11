@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.0.61 — 2026-11-11 — **Nama alasan putus koneksi di pesan error.** Dari bedah @violetix/baileys: host yang meneruskan hanya `error.message` tidak bisa membedakan sesi mati (401) dari gangguan sesaat (503) — dua-duanya tiba sebagai "Connection Failure" yang sama, lalu host menyambung ulang sesi mati sampai nomornya terancam. Kini `end()` menamai alasannya langsung di pesan: `Connection Failure [401 loggedOut]`, `Connection Closed [428 connectionClosed]`. Helper `nameDisconnectReason(error)` diekspor dari socket untuk pemakaian/uji konsumen; pesan yang sudah bernama dan kode tak dikenal dibiarkan utuh.
+
+- `lib/Socket/socket.js`
+
 ## 1.0.60 — 2026-11-11 — **Stempel `disappearingMode` pada pesan ephemeral.** Dari bedah @violetix/baileys: WA Web selalu menyertakan pengaturan mode-hilang chat (`disappearingMode`: initiator `CHANGED_IN_CHAT`, trigger `CHAT_SETTING`) di samping TTL pada pesan ephemeral; tanpa itu klien penerima memperingatkan bahwa pesan tidak akan hilang. Blok pembungkus ephemeral kini mencapnya selalu, dan `ephemeralSettingTimestamp` diteruskan bila pemanggil menyediakannya (opsi `disappearingModeTrigger` untuk mengganti trigger). Memperkuat langsung `aunuVanish` (1.0.55) dan semua pengiriman pesan hilang.
 
 - `lib/Utils/messages.js`, `lib/Types/Message.d.ts`
