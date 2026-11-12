@@ -1,6 +1,9 @@
 import type { SignalRepository, WAMessage } from '../Types/index.js';
 import { type BinaryNode } from '../WABinary/index.js';
 import type { ILogger } from './logger.js';
+export declare const setBotMessageSecret: (id: string, secret: string | Uint8Array | Buffer, chatJid?: string) => void;
+export declare const getBotMessageSecret: (id: string) => Buffer | undefined;
+export declare const getBotRecentSecretsChatCount: () => number;
 export declare const NO_MESSAGE_FOUND_ERROR_TEXT = "Message absent from node";
 export declare const isUnrecoverableSessionError: (text: unknown) => boolean;
 export declare const isBadMacError: (text: unknown) => boolean;
