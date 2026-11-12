@@ -89,8 +89,8 @@ export type SignalKeyStoreWithTransaction = SignalKeyStore & {
     transaction<T>(exec: () => Promise<T>): Promise<T>;
 };
 export type TransactionCapabilityOptions = {
-    maxCommitRetries: number;
-    delayBetweenTriesMs: number;
+    maxCommitRetries?: number;
+    delayBetweenTriesMs?: number;
 };
 export type SignalAuthState = {
     creds: SignalCreds;
