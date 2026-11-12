@@ -1,4 +1,4 @@
-# Publish `@aunucore/aunubaileys` to GitHub Packages automatically.
+# Publish `@aunucore/baileys` to GitHub Packages automatically.
 #
 # GitHub Packages requires npm packages to be scoped to the owner, so
 # the same code is published there under the scoped name. This fills
@@ -41,10 +41,10 @@ jobs:
             echo "::error::package.json version ($PKG) does not match release tag ($TAG). Bump package.json first."
             exit 1
           fi
-          echo "Publishing @aunucore/aunubaileys@$PKG to GitHub Packages"
+          echo "Publishing @aunucore/baileys@$PKG to GitHub Packages"
 
       - name: Scope the package name for GitHub Packages
-        run: npm pkg set name=@aunucore/aunubaileys
+        run: npm pkg set name=@aunucore/baileys
 
       - name: Publish to GitHub Packages
         run: npm publish --access public
