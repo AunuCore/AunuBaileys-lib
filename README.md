@@ -4,9 +4,9 @@
 
 ### The self-healing WhatsApp Web API for Node.js — for bots that never sleep.
 
-[![npm version](https://img.shields.io/npm/v/aunubaileys?style=for-the-badge&logo=npm&logoColor=white&color=CB3837)](https://www.npmjs.com/package/aunubaileys)
-[![npm downloads/week](https://img.shields.io/npm/dw/aunubaileys?style=for-the-badge&logo=npm&logoColor=white&color=blue)](https://www.npmjs.com/package/aunubaileys)
-[![npm downloads total](https://img.shields.io/npm/dt/aunubaileys?style=for-the-badge&logo=npm&logoColor=white)](https://www.npmjs.com/package/aunubaileys)
+[![npm version](https://img.shields.io/npm/v/@aunucore/baileys?style=for-the-badge&logo=npm&logoColor=white&color=CB3837)](https://www.npmjs.com/package/@aunucore/baileys)
+[![npm downloads/week](https://img.shields.io/npm/dw/@aunucore/baileys?style=for-the-badge&logo=npm&logoColor=white&color=blue)](https://www.npmjs.com/package/@aunucore/baileys)
+[![npm downloads total](https://img.shields.io/npm/dt/@aunucore/baileys?style=for-the-badge&logo=npm&logoColor=white)](https://www.npmjs.com/package/@aunucore/baileys)
 [![License: MIT](https://img.shields.io/badge/license-MIT-yellow?style=for-the-badge)](./LICENSE)
 [![GitHub stars](https://img.shields.io/github/stars/AunuCore/AunuBaileys-lib?style=for-the-badge&logo=github)](https://github.com/AunuCore/AunuBaileys-lib/stargazers)
 [![Docs](https://img.shields.io/badge/docs-docsjs.aunucore.eu.cc-25D366?style=for-the-badge&logo=whatsapp&logoColor=white)](https://docsjs.aunucore.eu.cc)
@@ -15,6 +15,8 @@
 Plus **29 experimental message tricks no other Baileys fork ships** — and the store everyone thought was gone forever.
 
 📚 **[Full documentation — docsjs.aunucore.eu.cc](https://docsjs.aunucore.eu.cc)** · [Quick start](#-quick-start) · [Experimental API](#-the-experimental-api--29-socket-methods) · [Bahasa Indonesia](#-bahasa-indonesia)
+
+> 📦 This package was previously published as `aunubaileys` — that name is frozen at v1.0.73. Same code, new canonical name.
 
 </div>
 
@@ -85,11 +87,11 @@ Message manipulations that are **impossible in stock WhatsApp**, attached automa
 ### 🚀 Quick start
 
 ```bash
-npm i aunubaileys
+npm i @aunucore/baileys
 ```
 
 ```ts
-import makeWASocket, { useMultiFileAuthState, makeInMemoryStore } from 'aunubaileys'
+import makeWASocket, { useMultiFileAuthState, makeInMemoryStore } from '@aunucore/baileys'
 
 const store = makeInMemoryStore({})
 const { state, saveCreds } = await useMultiFileAuthState('auth')
@@ -104,7 +106,7 @@ await sock.aunuGhostMention(groupJid, { text: 'meeting in 5' })
 CommonJS works too (Node ≥ 20.19):
 
 ```js
-const { default: makeWASocket, useMultiFileAuthState } = require('aunubaileys')
+const { default: makeWASocket, useMultiFileAuthState } = require('@aunucore/baileys')
 ```
 
 **Requirements:** Node.js ≥ 20. ESM-native with complete TypeScript types.
@@ -159,11 +161,11 @@ MIT — primary copyright **AunuCore Creative Network**, upstream WhiskeySockets
 ### 🚀 Mulai cepat
 
 ```bash
-npm i aunubaileys
+npm i @aunucore/baileys
 ```
 
 ```ts
-import makeWASocket, { useMultiFileAuthState, makeInMemoryStore } from 'aunubaileys'
+import makeWASocket, { useMultiFileAuthState, makeInMemoryStore } from '@aunucore/baileys'
 
 const { state, saveCreds } = await useMultiFileAuthState('auth')
 const sock = makeWASocket({ auth: state })

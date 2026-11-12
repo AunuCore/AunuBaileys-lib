@@ -1,4 +1,10 @@
-# Publish `aunubaileys` to npm automatically.
+# Publish `@aunucore/baileys` to npm automatically.
+#
+# Since the rename at 1.0.73, the canonical npm name is
+# `@aunucore/baileys`. package.json keeps the legacy name
+# `aunubaileys` (frozen at 1.0.73 and deprecated on npm); the
+# publish job below rewrites the name in the runner before
+# publishing — the same pattern publish-ghp.yml uses.
 #
 # How it works:
 #   1. Bump "version" in package.json (one step at a time: 1.0.5 -> 1.0.6).
@@ -44,7 +50,10 @@ jobs:
             echo "::error::package.json version ($PKG) does not match release tag ($TAG). Bump package.json first."
             exit 1
           fi
-          echo "Publishing aunubaileys@$PKG"
+          echo "Publishing @aunucore/baileys@$PKG"
+
+      - name: Scope the package name for npmjs (canonical name since 1.0.73)
+        run: npm pkg set name=@aunucore/baileys
 
       - name: Publish to npm
         run: npm publish --access public
