@@ -90,7 +90,8 @@ type Contextable = {
     };
 };
 type ViewOnce = {
-    viewOnce?: boolean;
+    /** boolean keeps the old v1 wrap; 'v2' / 'force' / { version, force } select the universal view-once variant */
+    viewOnce?: boolean | 'v1' | 'v2' | 'force' | 'v2-force' | { version?: 1 | 2 | 'v1' | 'v2'; force?: boolean };
     /** wrap the message into viewOnceMessageV2 */
     viewOnceV2?: boolean;
     /** wrap the message into viewOnceMessageV2Extension */
@@ -116,6 +117,30 @@ export type PollMessageOptions = {
     /** 32 byte message secret to encrypt poll selections */
     messageSecret?: Uint8Array;
     toAnnouncementGroup?: boolean;
+    /** 1 = quiz (requires correctAnswer); anything else is a plain poll */
+    pollType?: number;
+    /** the correct option for a quiz poll */
+    correctAnswer?: string;
+    /** when set, the poll closes at this time (PollCreationMessage endTime) */
+    endDate?: Date;
+    /** hide voter names — routes the poll to pollCreationMessageV6 */
+    hideVoter?: boolean;
+    /** let voters add their own options — routes the poll to pollCreationMessageV6 */
+    canAddOption?: boolean;
+};
+export type ImagePollOption = {
+    name: string;
+    /** the option image; uploaded by sendMessage before the parent is built */
+    image: WAMediaUpload;
+    /** filled in by sendMessage via hashImagePollOption — never set by hand */
+    optionHash?: string;
+};
+export type ImagePollMessageOptions = {
+    name: string;
+    selectableCount?: number;
+    options: ImagePollOption[];
+    /** 32 byte message secret to encrypt poll selections */
+    messageSecret?: Uint8Array;
 };
 type SharePhoneNumber = {
     sharePhoneNumber: boolean;
@@ -172,6 +197,8 @@ export type AnyRegularMessageContent = (({
     linkPreview?: WAUrlInfo | null;
 } & Mentionable & Contextable & Editable) | AnyMediaMessageContent | ({
     poll: PollMessageOptions;
+} & Mentionable & Contextable & Editable) | ({
+    imagePoll: ImagePollMessageOptions;
 } & Mentionable & Contextable & Editable) | {
     contacts: {
         displayName?: string;
@@ -240,6 +267,20 @@ export type AnyMessageContent = (AnyRegularMessageContent | {
 }) & {
     /** AunuBaileys: mark the message with the AI label (private chats only) */
     ai?: boolean;
+    /** AunuBaileys: A2UI widget — an AunuA2UI instance or a built bloksWidget payload */
+    a2ui?: any;
+    /** AunuBaileys: A2UI payload type (default 'im_a2ui') */
+    a2uiType?: string;
+    /** AunuBaileys: A2UI surface envelope on/off (default true) */
+    a2uiWrapped?: boolean;
+    /** AunuBaileys: wrap the built message in lottieStickerMessage */
+    isLottie?: boolean;
+    /** AunuBaileys: pass the content object straight through to generateWAMessage() unprocessed */
+    raw?: boolean;
+    /** AunuBaileys (1.0.71): wrap the message in spoilerMessage (tap-to-reveal) */
+    spoiler?: boolean;
+    /** AunuBaileys (1.0.71): wrap the message in groupStatusMessageV2 (group status/story) */
+    groupStatus?: boolean;
     /** AunuBaileys: force the biz binary node (secure Meta service label) onto this message's stanza */
     secureMetaServiceLabel?: boolean;
     /** AunuBaileys: rich response — a highlighted code block (routes the whole message to the rich response builder) */
@@ -315,6 +356,8 @@ export type MiscMessageGenerationOptions = MinimalRelayOptions & {
     statusJidList?: string[];
     /** AunuBaileys: status audience privacy, sent as a <meta status_setting> node */
     statusPrivacy?: 'contacts' | 'allowlist' | 'denylist';
+    /** AunuBaileys: send into a group addressed to one member only — a JID, or true to use the quoted message's author (groups only) */
+    exclusive?: boolean | string;
     /** backgroundcolor for status */
     backgroundColor?: string;
     /** font type for status */

@@ -125,5 +125,8 @@ export interface AunuExperimentalAPI {
     aunuFakeAlbum: (jid: string, options: { items?: any[]; fakeImageCount?: number; fakeVideoCount?: number; delayMs?: number; quoted?: any }) => Promise<{ header: any; children: any[] }>;
     aunuWordReact: (jid: string, key: Record<string, unknown>, text: string, options?: { messageOptions?: MiscMessageGenerationOptions }) => Promise<any>;
     aunuBotSteps: (jid: string, first?: { title?: string; body?: string; description?: string; text?: string; status?: string | number; disabled?: boolean; reasoning?: boolean; sections?: { title?: string; body?: string }[]; sources?: { title?: string; url?: string }[] }, options?: { estimatedCompletionTime?: number; quoted?: any }) => Promise<{ key: any; message: any; steps: any[]; update: () => Promise<any>; step: (next?: Record<string, any>, stepOptions?: { keepPrevious?: boolean }) => Promise<any>; done: (last?: string | Record<string, any>) => Promise<any>; finish: (last?: string | Record<string, any>) => Promise<any> }>;
+    aunuSendSpoiler: (jid: string, content: AnyMessageContent, options?: MiscMessageGenerationOptions) => Promise<WAMessage | undefined>;
+    aunuSendGroupStatus: (jid: string, content: AnyMessageContent, options?: MiscMessageGenerationOptions) => Promise<WAMessage | undefined>;
+    aunuSendA2UI: (jid: string, widget: any, options?: { text?: string; footer?: string; singleScreen?: boolean; type?: string; wrapped?: boolean; messageOptions?: MiscMessageGenerationOptions }) => Promise<WAMessage | undefined>;
 }
 export declare const attachAunuExperimental: <T>(sock: T) => T & AunuExperimentalAPI;

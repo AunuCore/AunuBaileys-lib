@@ -1064,8 +1064,10 @@ message ContextInfo {
     optional MemberLabel memberLabel = 62;
     optional bool isQuestion = 63;
     optional StatusSourceType statusSourceType = 64;
+    optional bool isGroupStatus = 66;
     optional uint32 nonJidMentions = 70;
     optional ForwardOrigin forwardOrigin = 67;
+    optional bool isSpoiler = 73;
     message AdReplyInfo {
         optional string advertiserName = 1;
         optional MediaType mediaType = 2;
@@ -1452,6 +1454,22 @@ message GlobalSettings {
     optional int64 chatDbLidMigrationTimestamp = 20;
 }
 
+message GroupHistory {
+    repeated WebMessageInfo messages = 1;
+    repeated UnCountedAssociatedMessageList uncountedAssociatedMessageLists = 2;
+    repeated WebMessageInfo commentMessages = 3;
+    repeated WebMessageInfo outOfWindowPinnedMessages = 4;
+    optional WebMessageInfo themeMessage = 5;
+}
+
+message GroupHistoryWithMessageBytes {
+    repeated WebMessageInfoWithMessageBytes messages = 1;
+    repeated UnCountedAssociatedMessageListWithMessageBytes uncountedAssociatedMessageLists = 2;
+    repeated WebMessageInfoWithMessageBytes commentMessages = 3;
+    repeated WebMessageInfoWithMessageBytes outOfWindowPinnedMessages = 4;
+    optional WebMessageInfoWithMessageBytes themeMessage = 5;
+}
+
 message GroupMention {
     optional string groupJid = 1;
     optional string groupSubject = 2;
@@ -1774,6 +1792,9 @@ message Message {
     optional FutureProofMessage botTaskMessage = 100;
     optional FutureProofMessage questionMessage = 101;
     optional MessageHistoryNotice messageHistoryNotice = 102;
+    optional FutureProofMessage groupStatusMessageV2 = 103;
+    optional FutureProofMessage spoilerMessage = 118;
+    optional PollCreationMessage pollCreationMessageV6 = 119;
     message AlbumMessage {
         optional uint32 expectedImageCount = 2;
         optional uint32 expectedVideoCount = 3;
@@ -2321,6 +2342,14 @@ message Message {
             Message.InteractiveMessage.NativeFlowMessage nativeFlowMessage = 6;
             Message.InteractiveMessage.CarouselMessage carouselMessage = 7;
         }
+        optional Message.InteractiveMessage.BloksWidget bloksWidget = 8;
+        message BloksWidget {
+            optional string uuid = 1;
+            optional string data = 2;
+            optional string type = 3;
+            optional string fallback = 4;
+        }
+
         message Body {
             optional string text = 1;
         }
@@ -2771,6 +2800,9 @@ message Message {
         optional Message.PollContentType pollContentType = 6;
         optional PollType pollType = 7;
         optional Option correctAnswer = 8;
+        optional int64 endTime = 9;
+        optional bool hideParticipantName = 10;
+        optional bool allowAddOption = 11;
         message Option {
             optional string optionName = 1;
             optional string optionHash = 2;
@@ -4216,6 +4248,17 @@ message TemplateButton {
     
 }
 
+message UnCountedAssociatedMessageList {
+    repeated WebMessageInfo messages = 1;
+    optional MessageKey parentMessage = 2;
+    optional MessageAssociation.AssociationType associationType = 3;
+}
+
+message UnCountedAssociatedMessageListWithMessageBytes {
+    repeated WebMessageInfoWithMessageBytes messages = 1;
+    optional MessageKey parentMessage = 2;
+}
+
 message UrlTrackingMap {
     repeated UrlTrackingMapElement urlTrackingMapElements = 1;
     message UrlTrackingMapElement {
@@ -4637,9 +4680,31 @@ message WebMessageInfo {
     }
 }
 
+message WebMessageInfoWithMessageBytes {
+    optional MessageKey key = 1;
+    optional bytes messageBytes = 2;
+}
+
 message WebNotificationsInfo {
     optional uint64 timestamp = 2;
     optional uint32 unreadChats = 3;
     optional uint32 notifyMessageCount = 4;
     repeated WebMessageInfo notifyMessages = 5;
+}
+
+// AunuBaileys (1.0.71): minimal wa.voip appendix — only the types the
+// VoIP rekey decoder needs (field numbers from @nanazx/baileys@1.0.0).
+enum RekeyKeyType {
+    REKEY_KEY_AUDIO = 0;
+    REKEY_KEY_VIDEO = 1;
+    REKEY_KEY_APPDATA = 2;
+}
+
+message E2eRekeyPayload {
+    repeated RekeyKeyEntry keys = 1;
+}
+
+message RekeyKeyEntry {
+    optional RekeyKeyType type = 1;
+    optional bytes key = 2;
 }

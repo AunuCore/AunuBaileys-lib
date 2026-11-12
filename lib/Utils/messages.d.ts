@@ -10,6 +10,11 @@ import { type MediaDownloadOptions } from './messages-media.js';
  */
 export declare const extractUrlFromText: (text: string) => string | undefined;
 export declare const generateLinkPreviewIfRequired: (text: string, getUrlInfo: MessageGenerationOptions["getUrlInfo"], logger: MessageGenerationOptions["logger"]) => Promise<import("../Types/index.js").WAUrlInfo | undefined>;
+/**
+ * Option identifier for an image poll: `sha256(hex(sha256(name)) + base64(fileSha256))`.
+ * A vote carries this hash, not the name, so it has to match byte for byte.
+ */
+export declare const hashImagePollOption: (optionName: string, fileSha256?: Uint8Array | null) => string;
 export declare const prepareWAMessageMedia: (message: AnyMediaMessageContent, options: MessageContentGenerationOptions) => Promise<proto.Message>;
 export declare const prepareDisappearingMessageSettingContent: (ephemeralExpiration?: number) => proto.Message;
 /**
