@@ -12,8 +12,21 @@ import path from 'node:path'
 import { ROOT, lib } from './helpers.mjs'
 
 test('(i) getAudioDuration returns undefined (no crash) when music-metadata cannot be loaded', async () => {
-	// In this tree the peer is not installed at all, so the direct
-	// call already exercises the fallback.
+	// The direct call exercises the absence fallback only when the
+	// peer is genuinely absent in this tree. npm (unlike yarn)
+	// auto-installs peer dependencies, so on npm-installed trees the
+	// peer IS present and a garbage buffer is a parse error, which
+	// the library deliberately lets propagate (only the import is
+	// guarded). Probe presence the same way the library does; the
+	// blocked-resolver subprocess test below covers the absence
+	// fallback deterministically either way.
+	let peerPresent = true
+	try {
+		await import('music-metadata')
+	} catch {
+		peerPresent = false
+	}
+	if (peerPresent) return
 	const duration = await lib.getAudioDuration(Buffer.from('not real audio'))
 	assert.equal(duration, undefined)
 })
