@@ -607,8 +607,20 @@ export const makeSocket = (config: SocketConfig) => {
 			},
 			content: [{ tag: 'count', attrs: {} }]
 		})
-		const countChild = getBinaryNodeChild(result, 'count')!
-		return +countChild.attrs.value!
+		const countChild = getBinaryNodeChild(result, 'count')
+		// AunuBaileys (HB-284, donor v6 HB-47): a count-less or
+		// value-less response used to surface NaN / throw here, and the
+		// caller swallowed it — the pre-key upload was silently skipped.
+		// Sanitise at the boundary: only a finite, non-negative count is
+		// trusted; anything else reads as 0 ("unknown"), which makes the
+		// caller upload a fresh initial batch.
+		const rawCount = Number(countChild?.attrs?.value)
+		if (!Number.isFinite(rawCount) || rawCount < 0) {
+			logger.warn({ result }, 'pre-key count response is malformed; assuming 0')
+			return 0
+		}
+
+		return rawCount
 	}
 
 	// WAWeb has no time throttle here; the server drives uploads via PreKeyLow notifications.
@@ -1465,11 +1477,18 @@ ws.on('error', mapWebSocketError(end))
 
 	ws.on('CB:ib,,offline_preview', async (node: BinaryNode) => {
 		logger.info('offline preview received', JSON.stringify(node))
-		await sendNode({
-			tag: 'ib',
-			attrs: {},
-			content: [{ tag: 'offline_batch', attrs: { count: '100' } }]
-		})
+		// AunuBaileys (HB-283, donor v6 HB-7): sendNode rejects when the
+		// socket closes in the window after this stanza arrives; left
+		// unguarded that rejection is unhandled and crashes the process.
+		try {
+			await sendNode({
+				tag: 'ib',
+				attrs: {},
+				content: [{ tag: 'offline_batch', attrs: { count: '100' } }]
+			})
+		} catch (err) {
+			logger.error({ err }, 'failed to request offline batch after offline preview')
+		}
 	})
 
 	ws.on('CB:ib,,edge_routing', (node: BinaryNode) => {

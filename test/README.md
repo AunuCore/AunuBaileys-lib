@@ -26,6 +26,7 @@ gate; run it ad hoc with `npm run test:upstream` (fetches jest via npx).
 | `07-hardening-units.test.mjs` | HB-1, HB-69, HB-102, HB-111, HB-112, HB-114, HB-122, HB-124 family, HB-133, HB-165, HB-168, HB-175, HB-205/252, HB-271, HB-272, HB-273, HB-277, PTV delta |
 | `08-socket-ports.test.mjs` | (j) newsletter.status emit + ack despite a throwing listener; 405 → `clientTooOld` emitted **before** close (fetch stubbed); sticker-pack proto round-trip; HB-42/64, HB-139/174, HB-276, HB-280 |
 | `09-media-fallback.test.mjs` | (i) `music-metadata` absent → `getAudioDuration` resolves `undefined`, never crashes (direct call + subprocess with the specifier blocked at the resolver, so it is deterministic even where the peer is installed) |
+| `10-socket-regressions.test.mjs` | HB-283 (`CB:ib,,offline_preview` send failure caught + logged, healthy path still sends), HB-284 (malformed/missing pre-key `<count>` reads as 0 → initial upload follows), HB-285 (`getErrorCodeFromStreamError` always yields an integer 400–599; `CB:stream:error` with `abc`/`302` closes with Boom 500) |
 
 Sockets in tests are real `makeWASocket` instances pointed at a dead
 local WS URL (`ws://127.0.0.1:9`) with a fake open transport where a

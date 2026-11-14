@@ -379,7 +379,14 @@ const CODE_MAP: { [_: string]: DisconnectReason } = {
 export const getErrorCodeFromStreamError = (node: BinaryNode) => {
 	const [reasonNode] = getAllBinaryNodeChildren(node)
 	let reason = reasonNode?.tag || 'unknown'
-	const statusCode = +(node.attrs.code || CODE_MAP[reason] || DisconnectReason.badSession)
+	// AunuBaileys (HB-285, donor v6 HB-42): a non-numeric code (NaN) or
+	// a code outside 400–599 makes `new Boom` throw inside the
+	// CB:stream:error handler; fall back to badSession in those cases
+	// so the result is always an integer Boom can carry.
+	let statusCode = +(node.attrs.code || CODE_MAP[reason] || DisconnectReason.badSession)
+	if (!Number.isInteger(statusCode) || statusCode < 400 || statusCode > 599) {
+		statusCode = DisconnectReason.badSession
+	}
 
 	if (statusCode === DisconnectReason.restartRequired) {
 		reason = 'restart required'
