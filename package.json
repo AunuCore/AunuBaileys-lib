@@ -1,7 +1,7 @@
 {
   "name": "aunubaileys",
   "type": "module",
-  "version": "1.0.79",
+  "version": "1.0.80",
   "description": "AunuBaileys — the self-healing WhatsApp Web API for Node.js. Bad MAC and \"2000 messages into the future\" errors repair themselves, LID and phone-number identities stay in sync, anti-ban is built in, pairing codes are custom — plus 29 experimental features no other Baileys fork ships: invisible watermarks, per-person tag-all cards, side-profile text, ghost mentions and more. ESM, CJS and full TypeScript types.",
   "keywords": [
     "whatsapp",
