@@ -1,4 +1,5 @@
 import type { KeyPair } from '../Types/index.js';
+export declare const keyMaterialToBuffer: (key: unknown) => unknown;
 /** prefix version byte to the pub keys, required for some curve crypto functions */
 export declare const generateSignalPubKey: (pubKey: Uint8Array | Buffer) => Uint8Array<ArrayBufferLike> | Buffer<ArrayBufferLike>;
 export declare const Curve: {
