@@ -18,14 +18,11 @@ jobs:
         with:
           node-version: 20
 
-      - name: Enable Corepack (Yarn 4)
-        run: corepack enable
-
       - name: Install dependencies
-        run: yarn install
+        run: npm install --no-audit --no-fund
 
       - name: Build
-        run: yarn build
+        run: npm run build
 
       - name: Run regression suite (P8)
         run: npm test
