@@ -1,4 +1,8 @@
+blank_issues_enabled: true
 contact_links:
-  - name: Have a question?
-    about: Join our discord and send a post in the `#baileys-help` channel
-    url: https://discord.gg/WeJM5FP9GG
+  - name: Documentation
+    about: Read the AunuBaileys documentation first — usage, the experimental API, and the changelog
+    url: https://docsjs.aunucore.eu.cc
+  - name: Report a security vulnerability
+    about: Private disclosure only — please do not open a public issue for security problems
+    url: https://github.com/AunuCore/AunuBaileys-lib/security/advisories/new

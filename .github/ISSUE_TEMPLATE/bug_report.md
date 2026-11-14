@@ -1,6 +1,6 @@
 ---
 name: Bug report
-about: Create a report to help improve the library
+about: Create a report to help improve AunuBaileys
 title: "[BUG]"
 labels: bug
 assignees: ''
@@ -20,10 +20,12 @@ Steps to reproduce the behavior:
 A clear and concise description of what you expected to happen.
 
 **Environment (please complete the following information):**
+ - AunuBaileys version (`@aunucore/baileys`):
+ - Node.js version:
  - Is this on a server?
- - What do your `connectOptions` look like? 
+ - What do your `connectOptions` look like?
  - Do you have multiple clients on the same IP?
  - Are you using a proxy?
 
 **Additional context**
-Add any other context about the problem here.
+Add any other context about the problem here. Never paste auth/session state — it contains Signal identity keys equivalent to long-lived credentials. For security vulnerabilities, do not use this template; see `SECURITY.md`.
