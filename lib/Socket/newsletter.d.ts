@@ -22,7 +22,7 @@ export declare const makeNewsletterSocket: (sock: GroupsSocket) => {
     subscribeNewsletterUpdates: (jid: string) => Promise<{
         duration: string;
     } | null>;
-    newsletterAdminCount: (jid: string) => Promise<number>;
+    newsletterAdminCount: (jid: string) => Promise<number | undefined>;
     newsletterChangeOwner: (jid: string, newOwnerJid: string) => Promise<void>;
     newsletterDemote: (jid: string, userJid: string) => Promise<void>;
     newsletterDelete: (jid: string) => Promise<void>;
