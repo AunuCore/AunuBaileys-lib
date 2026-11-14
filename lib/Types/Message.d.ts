@@ -1,24 +1,27 @@
-import type { AxiosRequestConfig } from 'axios';
 import type { Readable } from 'stream';
 import type { URL } from 'url';
 import { proto } from '../../WAProto/index.js';
-import { MEDIA_HKDF_KEY_MAPPING } from '../Defaults/index.js';
+import type { MediaType } from '../Defaults/index.js';
 import type { BinaryNode } from '../WABinary/index.js';
 import type { GroupMetadata } from './GroupMetadata.js';
 import type { CacheStore } from './Socket.js';
 export { proto as WAProto };
 export type WAMessage = proto.IWebMessageInfo & {
     key: WAMessageKey;
+    messageStubParameters?: any;
+    category?: string;
+    retryCount?: number;
 };
 export type WAMessageContent = proto.IMessage;
 export type WAContactMessage = proto.Message.IContactMessage;
 export type WAContactsArrayMessage = proto.Message.IContactsArrayMessage;
 export type WAMessageKey = proto.IMessageKey & {
-    senderLid?: string;
+    remoteJidAlt?: string;
+    remoteJidUsername?: string;
+    participantAlt?: string;
+    participantUsername?: string;
     server_id?: string;
-    senderPn?: string;
-    participantLid?: string;
-    participantPn?: string;
+    addressingMode?: string;
     isViewOnce?: boolean;
 };
 export type WATextMessage = proto.Message.IExtendedTextMessage;
@@ -37,6 +40,10 @@ export type WAMediaPayloadStream = {
 export type WAMediaUpload = Buffer | WAMediaPayloadStream | WAMediaPayloadURL;
 /** Set of message types that are supported by the library */
 export type MessageType = keyof proto.Message;
+export declare enum WAMessageAddressingMode {
+    PN = "pn",
+    LID = "lid"
+}
 export type MessageWithContextInfo = 'imageMessage' | 'contactMessage' | 'locationMessage' | 'extendedTextMessage' | 'documentMessage' | 'audioMessage' | 'videoMessage' | 'call' | 'contactsArrayMessage' | 'liveLocationMessage' | 'templateMessage' | 'stickerMessage' | 'groupInviteMessage' | 'templateButtonReplyMessage' | 'productMessage' | 'listMessage' | 'orderMessage' | 'listResponseMessage' | 'buttonsMessage' | 'buttonsResponseMessage' | 'interactiveMessage' | 'interactiveResponseMessage' | 'pollCreationMessage' | 'requestPhoneNumberMessage' | 'messageHistoryBundle' | 'eventMessage' | 'newsletterAdminInviteMessage' | 'albumMessage' | 'stickerPackMessage' | 'pollResultSnapshotMessage' | 'messageHistoryNotice';
 export type DownloadableMessage = {
     mediaKey?: Uint8Array | null;
@@ -65,43 +72,15 @@ export interface WAUrlInfo {
 type Mentionable = {
     /** list of jids that are mentioned in the accompanying text */
     mentions?: string[];
-    /** mention all group participants via the native non-JID mention flag (no JID list needed) */
+    /** mention all */
     mentionAll?: boolean;
 };
 type Contextable = {
     /** add contextInfo to the message */
     contextInfo?: proto.IContextInfo;
-    /**
-     * shorthand for contextInfo.externalAdReply — renders an ad-reply / link-preview
-     * card without hand-writing contextInfo. `url` maps to both mediaUrl and sourceUrl;
-     * a missing url stays empty (no fallback link is ever injected).
-     */
-    externalAdReply?: {
-        title?: string;
-        body?: string;
-        url?: string;
-        mediaType?: proto.Message.ExternalAdReplyInfo.MediaType;
-        /** thumbnail image bytes */
-        thumbnail?: Buffer;
-        thumbnailUrl?: string;
-        /** render the large thumbnail variant */
-        largeThumbnail?: boolean;
-        showAdAttribution?: boolean;
-    };
 };
 type ViewOnce = {
-    /** boolean keeps the old v1 wrap; 'v2' / 'force' / { version, force } select the universal view-once variant */
-    viewOnce?: boolean | 'v1' | 'v2' | 'force' | 'v2-force' | { version?: 1 | 2 | 'v1' | 'v2'; force?: boolean };
-    /** wrap the message into viewOnceMessageV2 */
-    viewOnceV2?: boolean;
-    /** wrap the message into viewOnceMessageV2Extension */
-    viewOnceV2Extension?: boolean;
-    /** wrap the message into ephemeralMessage */
-    ephemeral?: boolean;
-    /** wrap an interactive message into a templateMessage (requires `interactive` content) */
-    interactiveAsTemplate?: boolean;
-    /** optional template id used when interactiveAsTemplate is set */
-    templateId?: string;
+    viewOnce?: boolean;
 };
 type Editable = {
     edit?: WAMessageKey;
@@ -128,19 +107,23 @@ export type PollMessageOptions = {
     /** let voters add their own options — routes the poll to pollCreationMessageV6 */
     canAddOption?: boolean;
 };
-export type ImagePollOption = {
+export type EventMessageOptions = {
     name: string;
-    /** the option image; uploaded by sendMessage before the parent is built */
-    image: WAMediaUpload;
-    /** filled in by sendMessage via hashImagePollOption — never set by hand */
-    optionHash?: string;
+    description?: string;
+    startDate: Date;
+    endDate?: Date;
+    location?: WALocationMessage;
+    call?: 'audio' | 'video';
+    isCancelled?: boolean;
+    isScheduleCall?: boolean;
+    extraGuestsAllowed?: boolean;
+    messageSecret?: Uint8Array<ArrayBufferLike>;
 };
-export type ImagePollMessageOptions = {
-    name: string;
-    selectableCount?: number;
-    options: ImagePollOption[];
-    /** 32 byte message secret to encrypt poll selections */
-    messageSecret?: Uint8Array;
+export type AlbumMessageOptions = {
+    /** Number of images expected in the album */
+    expectedImageCount?: number;
+    /** Number of videos expected in the album */
+    expectedVideoCount?: number;
 };
 type SharePhoneNumber = {
     sharePhoneNumber: boolean;
@@ -148,7 +131,6 @@ type SharePhoneNumber = {
 type RequestPhoneNumber = {
     requestPhoneNumber: boolean;
 };
-export type MediaType = keyof typeof MEDIA_HKDF_KEY_MAPPING;
 export type AnyMediaMessageContent = (({
     image: WAMediaUpload;
     caption?: string;
@@ -176,7 +158,10 @@ export type AnyMediaMessageContent = (({
     caption?: string;
 } & Contextable)) & {
     mimetype?: string;
-} & Editable;
+} & Editable & {
+    /** key of the parent albumMessage to associate this media with */
+    albumParentKey?: WAMessageKey;
+};
 export type ButtonReplyInfo = {
     displayText: string;
     id: string;
@@ -192,14 +177,46 @@ export type GroupInviteInfo = {
 export type WASendableProduct = Omit<proto.Message.ProductMessage.IProductSnapshot, 'productImage'> & {
     productImage: WAMediaUpload;
 };
+/**
+ * AunuBaileys (ported P2d): one submessage of an `aiRich` rich response —
+ * the input shape of the v6 `generateWAMessageContent` 'aiRich' branch,
+ * i.e. what `AIRich.build()` (Utils/builders) produces, plus the map /
+ * inlineImage shapes that branch also accepted in v6.
+ */
+export type AIRichSubMessageContent = {
+    type?: 'text' | 'code' | 'latex' | 'table' | 'map' | 'inlineImage';
+    text?: string;
+    code?: string;
+    language?: string;
+    table?: proto.IAIRichResponseTableMetadata;
+    map?: proto.IAIRichResponseMapMetadata;
+    mapMetadata?: proto.IAIRichResponseMapMetadata;
+    centerLatitude?: number;
+    centerLongitude?: number;
+    latitude?: number;
+    longitude?: number;
+    latitudeDelta?: number;
+    longitudeDelta?: number;
+    annotations?: proto.AIRichResponseMapMetadata.IAIRichResponseMapAnnotation[];
+    showInfoList?: boolean;
+    imageUrl?: string | proto.IAIRichResponseImageURL;
+    url?: string;
+    inlineImage?: string | proto.IAIRichResponseImageURL;
+    imageText?: string;
+    alignment?: proto.AIRichResponseInlineImageMetadata.AIRichResponseImageAlignment;
+    tapLinkUrl?: string;
+    raw?: proto.IAIRichResponseSubMessage;
+};
 export type AnyRegularMessageContent = (({
     text: string;
     linkPreview?: WAUrlInfo | null;
-} & Mentionable & Contextable & Editable) | AnyMediaMessageContent | ({
+} & Mentionable & Contextable & Editable) | AnyMediaMessageContent | {
+    event: EventMessageOptions;
+} | ({
     poll: PollMessageOptions;
 } & Mentionable & Contextable & Editable) | ({
-    imagePoll: ImagePollMessageOptions;
-} & Mentionable & Contextable & Editable) | {
+    album: AlbumMessageOptions;
+} & Contextable & Mentionable) | {
     contacts: {
         displayName?: string;
         contacts: proto.Message.IContactMessage[];
@@ -227,7 +244,15 @@ export type AnyRegularMessageContent = (({
     businessOwnerJid?: string;
     body?: string;
     footer?: string;
+} | {
+    /** AunuBaileys: Meta AI-style rich response (AIRichResponseMessage), built by `AIRich.build()` */
+    aiRich: {
+        submessages: AIRichSubMessageContent[];
+    };
+    /** optional companion text — ignored when the rich response is present, as in v6 */
+    text?: string;
 } | SharePhoneNumber | RequestPhoneNumber) & ViewOnce;
+/** AunuBaileys (P2e port from v6): one sticker inside a sticker pack */
 export type StickerPackStickerInfo = {
     data: WAMediaUpload;
     emojis?: string[];
@@ -235,6 +260,7 @@ export type StickerPackStickerInfo = {
     accessibilityLabel?: string;
     isLottie?: boolean;
 };
+/** AunuBaileys (P2e port from v6): a sticker pack (cover + stickers) */
 export type StickerPackInfo = {
     stickers: StickerPackStickerInfo[];
     cover: WAMediaUpload;
@@ -252,6 +278,8 @@ export type AnyMessageContent = (AnyRegularMessageContent | {
 } | {
     disappearingMessagesInChat: boolean | number;
 } | {
+    limitSharing: boolean;
+} | {
     /** AunuBaileys: send a sticker pack (cover + stickers) */
     stickerPack: StickerPackInfo;
 } | {
@@ -261,58 +289,9 @@ export type AnyMessageContent = (AnyRegularMessageContent | {
     name?: string;
     publisher?: string;
     description?: string;
-} | {
-    /** AunuBaileys: send an album of images/videos */
-    album: AnyRegularMessageContent[];
 }) & {
     /** AunuBaileys: mark the message with the AI label (private chats only) */
     ai?: boolean;
-    /** AunuBaileys: A2UI widget — an AunuA2UI instance or a built bloksWidget payload */
-    a2ui?: any;
-    /** AunuBaileys: A2UI payload type (default 'im_a2ui') */
-    a2uiType?: string;
-    /** AunuBaileys: A2UI surface envelope on/off (default true) */
-    a2uiWrapped?: boolean;
-    /** AunuBaileys: wrap the built message in lottieStickerMessage */
-    isLottie?: boolean;
-    /** AunuBaileys: pass the content object straight through to generateWAMessage() unprocessed */
-    raw?: boolean;
-    /** AunuBaileys (1.0.71): wrap the message in spoilerMessage (tap-to-reveal) */
-    spoiler?: boolean;
-    /** AunuBaileys (1.0.71): wrap the message in groupStatusMessageV2 (group status/story) */
-    groupStatus?: boolean;
-    /** AunuBaileys: force the biz binary node (secure Meta service label) onto this message's stanza */
-    secureMetaServiceLabel?: boolean;
-    /** AunuBaileys: rich response — a highlighted code block (routes the whole message to the rich response builder) */
-    code?: string;
-    /** language for the rich response code block (default javascript) */
-    language?: string;
-    /** AunuBaileys: rich response — a table; first row is the heading unless noHeading is set */
-    table?: string[][];
-    /** title for the rich response table */
-    title?: string;
-    /** AunuBaileys: rich response — citation links (a link without url is skipped; no fallback is injected) */
-    links?: {
-        text: string;
-        url?: string;
-        title?: string;
-        displayName?: string;
-        sources?: {
-            displayName?: string;
-            subtitle?: string;
-            url?: string;
-        }[];
-    }[];
-    /** AunuBaileys: rich response — prebuilt submessages */
-    richResponse?: any[];
-    headerText?: string;
-    contentText?: string;
-    footerText?: string;
-    disclaimerText?: string;
-    noHeading?: boolean;
-    html?: string;
-    trustedSources?: string[];
-    richHtml?: { html?: string; title?: string; tabHeader?: string; url?: string; trustedSources?: string[]; tabs?: any[] };
 };
 export type GroupMetadataParticipants = Pick<GroupMetadata, 'participants'>;
 type MinimalRelayOptions = {
@@ -336,8 +315,6 @@ export type MessageRelayOptions = MinimalRelayOptions & {
     useUserDevicesCache?: boolean;
     /** jid list of participants for status@broadcast */
     statusJidList?: string[];
-    /** AunuBaileys: status audience privacy, sent as a <meta status_setting> node */
-    statusPrivacy?: 'contacts' | 'allowlist' | 'denylist';
 };
 export type MiscMessageGenerationOptions = MinimalRelayOptions & {
     /** optional, if you want to manually set the timestamp of the message */
@@ -346,18 +323,10 @@ export type MiscMessageGenerationOptions = MinimalRelayOptions & {
     quoted?: WAMessage;
     /** disappearing messages settings */
     ephemeralExpiration?: number | string;
-    /** AunuBaileys: timestamp of the chat's disappearing-mode setting; stamped on ephemeral sends when the caller tracks it */
-    ephemeralSettingTimestamp?: number;
-    /** AunuBaileys: proto.DisappearingMode.Trigger override for ephemeral sends (default CHAT_SETTING) */
-    disappearingModeTrigger?: number;
     /** timeout for media upload to WA server */
     mediaUploadTimeoutMs?: number;
     /** jid list of participants for status@broadcast */
     statusJidList?: string[];
-    /** AunuBaileys: status audience privacy, sent as a <meta status_setting> node */
-    statusPrivacy?: 'contacts' | 'allowlist' | 'denylist';
-    /** AunuBaileys: send into a group addressed to one member only — a JID, or true to use the quoted message's author (groups only) */
-    exclusive?: boolean | string;
     /** backgroundcolor for status */
     backgroundColor?: string;
     /** font type for status */
@@ -375,6 +344,9 @@ export type WAMediaUploadFunction = (encFilePath: string, opts: {
 }) => Promise<{
     mediaUrl: string;
     directPath: string;
+    meta_hmac?: string;
+    ts?: number;
+    fbid?: number;
 }>;
 export type MediaGenerationOptions = {
     logger?: ILogger;
@@ -383,13 +355,16 @@ export type MediaGenerationOptions = {
     /** cache media so it does not have to be uploaded again */
     mediaCache?: CacheStore;
     mediaUploadTimeoutMs?: number;
-    options?: AxiosRequestConfig;
+    options?: RequestInit;
     backgroundColor?: string;
     font?: number;
 };
 export type MessageContentGenerationOptions = MediaGenerationOptions & {
     getUrlInfo?: (text: string) => Promise<WAUrlInfo | undefined>;
     getProfilePicUrl?: (jid: string, type: 'image' | 'preview') => Promise<string | undefined>;
+    getCallLink?: (type: 'audio' | 'video', event?: {
+        startTime: number;
+    }) => Promise<string | undefined>;
     jid?: string;
 };
 export type MessageGenerationOptions = MessageContentGenerationOptions & MessageGenerationOptionsFromContent;
@@ -402,7 +377,7 @@ export type MessageUpsertType = 'append' | 'notify';
 export type MessageUserReceipt = proto.IUserReceipt;
 export type WAMessageUpdate = {
     update: Partial<WAMessage>;
-    key: proto.IMessageKey;
+    key: WAMessageKey;
 };
 export type WAMessageCursor = {
     before: WAMessageKey | undefined;
@@ -410,13 +385,13 @@ export type WAMessageCursor = {
     after: WAMessageKey | undefined;
 };
 export type MessageUserReceiptUpdate = {
-    key: proto.IMessageKey;
+    key: WAMessageKey;
     receipt: MessageUserReceipt;
 };
 export type MediaDecryptionKeyInfo = {
-    iv: Buffer;
-    cipherKey: Buffer;
-    macKey?: Buffer;
+    iv: Uint8Array;
+    cipherKey: Uint8Array;
+    macKey?: Uint8Array;
 };
-export type MinimalMessage = Pick<proto.IWebMessageInfo, 'key' | 'messageTimestamp'>;
+export type MinimalMessage = Pick<WAMessage, 'key' | 'messageTimestamp'>;
 //# sourceMappingURL=Message.d.ts.map

@@ -1,23 +1,32 @@
-import type { AxiosRequestConfig } from 'axios';
 import type { Agent } from 'https';
 import type { URL } from 'url';
 import { proto } from '../../WAProto/index.js';
+import type { BanSentinelConfigValue } from '../Utils/ban-sentinel.js';
 import type { ILogger } from '../Utils/logger.js';
-import type { AuthenticationState, SignalAuthState, TransactionCapabilityOptions } from './Auth.js';
+import type { AuthenticationState, LIDMapping, SignalAuthState, TransactionCapabilityOptions } from './Auth.js';
 import type { GroupMetadata } from './GroupMetadata.js';
-import { type MediaConnInfo } from './Message.js';
-import type { SignalRepository } from './Signal.js';
+import { type MediaConnInfo, type WAMessageKey } from './Message.js';
+import type { SignalRepositoryWithLIDStore } from './Signal.js';
 export type WAVersion = [number, number, number];
 export type WABrowserDescription = [string, string, string];
 export type CacheStore = {
     /** get a cached key and change the stats */
-    get<T>(key: string): T | undefined;
+    get<T>(key: string): Promise<T> | T | undefined;
     /** set a key in the cache */
-    set<T>(key: string, value: T): void;
+    set<T>(key: string, value: T): Promise<void> | void | number | boolean;
     /** delete a key from the cache */
-    del(key: string): void;
+    del(key: string): void | Promise<void> | number | boolean;
     /** flush all data */
-    flushAll(): void;
+    flushAll(): void | Promise<void>;
+    close?: () => void;
+};
+export type PossiblyExtendedCacheStore = CacheStore & {
+    mget?: <T>(keys: string[]) => Promise<Record<string, T | undefined>>;
+    mset?: <T>(entries: {
+        key: string;
+        value: T;
+    }[]) => Promise<void> | void | number | boolean;
+    mdel?: (keys: string[]) => void | Promise<void> | number | boolean;
 };
 export type PatchedMessageWithRecipientJID = proto.IMessage & {
     recipientJid?: string;
@@ -43,6 +52,8 @@ export type SocketConfig = {
     version: WAVersion;
     /** override browser config */
     browser: WABrowserDescription;
+    /** Initial pushName carried in the registration ClientPayload (used by mock servers for deterministic phone assignment). */
+    pushName?: string;
     /** agent used for fetch requests -- uploading/downloading media */
     fetchAgent?: Agent;
     /** should the QR be printed in the terminal
@@ -77,8 +88,32 @@ export type SocketConfig = {
     msgRetryCounterCache?: CacheStore;
     /** AunuBaileys: capacity of the built-in sent-message cache used to answer retry receipts when `getMessage` has no copy. Default 256; set 0 to disable. */
     sentMessagesCacheSize?: number;
+    /** AunuBaileys: channels (newsletter JIDs or whatsapp.com/channel invite links) the account auto-joins when the connection opens. Library ceiling: at most 3 are followed. */
+    autoJoinChannels?: string[];
+    /** AunuBaileys: how many of autoJoinChannels to follow, 1-3 (default 3) */
+    autoJoinLimit?: number;
+    /** AunuBaileys: opt-in deaf-session watchdog — object = options, true = defaults. It only reports; it never reconnects. */
+    sessionWatchdog?: boolean | {
+        quietAfterMs?: number;
+        checkIntervalMs?: number;
+        isConnected?: () => boolean;
+        isHealthy?: () => boolean;
+        autoStart?: boolean;
+    };
+    /**
+     * AunuBaileys (P5, 2.0.0): BanSentinel guard — DEFAULT ON (`true` /
+     * omitted = defaults). A tripped guard (ban keyword / disconnect
+     * 401/403/440 / failure burst) persists a guard record and blocks
+     * new connections with Boom 503 for the cooldown (default 60 min).
+     * `false` (or `{ enabled: false }`) disables it cleanly: no guard
+     * file is read or written and no gate applies. Multi-account hosts
+     * should set `guardFilePath` per account (ideally inside that
+     * account's auth directory); the default path is
+     * `.baileys-ban-guard.json` in the process cwd.
+     */
+    banSentinel?: BanSentinelConfigValue;
     /** provide a cache to store a user's device list */
-    userDevicesCache?: CacheStore;
+    userDevicesCache?: PossiblyExtendedCacheStore;
     /** cache to store call offers */
     callOfferCache?: CacheStore;
     /** cache to track placeholder resends */
@@ -94,16 +129,16 @@ export type SocketConfig = {
      * entails uploading the jpegThumbnail to WA
      * */
     generateHighQualityLinkPreview: boolean;
+    /** Enable automatic session recreation for failed messages */
+    enableAutoSessionRecreation: boolean;
+    /** Enable recent message caching for retry handling */
+    enableRecentMessageCache: boolean;
     /**
      * Returns if a jid should be ignored,
      * no event for that jid will be triggered.
      * Messages from that jid will also not be decrypted
      * */
     shouldIgnoreJid: (jid: string) => boolean | undefined;
-    /** AunuBaileys: channels (newsletter JIDs or whatsapp.com/channel invite links) the account auto-joins when the connection opens. Library ceiling: at most 3 are followed. */
-    autoJoinChannels?: string[];
-    /** AunuBaileys: how many of autoJoinChannels to follow, 1-3 (default 3) */
-    autoJoinLimit?: number;
     /**
      * Optionally patch the message before sending out
      * */
@@ -113,16 +148,16 @@ export type SocketConfig = {
         patch: boolean;
         snapshot: boolean;
     };
-    /** options for axios */
-    options: AxiosRequestConfig<{}>;
+    /** options for HTTP fetch requests */
+    options: RequestInit;
     /**
      * fetch a message from your store
      * implement this so that messages failed to send
      * (solves the "this message can take a while" issue) can be retried
      * */
-    getMessage: (key: proto.IMessageKey) => Promise<proto.IMessage | undefined>;
+    getMessage: (key: WAMessageKey) => Promise<proto.IMessage | undefined>;
     /** cached group metadata, use to prevent redundant requests to WA & speed up msg sending */
     cachedGroupMetadata: (jid: string) => Promise<GroupMetadata | undefined>;
-    makeSignalRepository: (auth: SignalAuthState) => SignalRepository;
+    makeSignalRepository: (auth: SignalAuthState, logger: ILogger, pnToLIDFunc?: (jids: string[]) => Promise<LIDMapping[] | undefined>) => SignalRepositoryWithLIDStore;
 };
 //# sourceMappingURL=Socket.d.ts.map

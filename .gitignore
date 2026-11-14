@@ -1,5 +1,28 @@
-node_modules/
-package-lock.json
-sessions/
-probe-auth/
-*.log
+.DS_Store
+.env
+.yarn/
+*.tgz
+*/.DS_Store
+auth_info*.json
+baileys_auth_info*
+baileys_store*.json
+browser-messages.json
+browser-token.json
+decoded-ws.json
+docs
+!docs/
+docs/*
+!docs/index.html
+!docs/404.html
+!docs/.nojekyll
+# AunuBaileys: the built lib/ output IS committed to this repository
+# (the publish workflow and package verification consume it directly),
+# so it must not be git-ignored here.
+messages*.json
+node_modules
+output.csv
+Proxy
+test.ts
+TestData
+wa-logs*
+coverage

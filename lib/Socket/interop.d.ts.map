@@ -1,0 +1,1 @@
+{"version":3,"file":"interop.d.ts","sourceRoot":"","sources":["../../src/Socket/interop.ts"],"names":[],"mappings":"AAqBA,mDAAmD;AACnD,eAAO,MAAM,oBAAoB,KAAK,CAAA;AACtC,eAAO,MAAM,iBAAiB,KAAK,CAAA;AAYnC,kEAAkE;AAClE,eAAO,MAAM,YAAY,GAAG,QAAG,YAM9B,CAAA;AACD;;;;GAIG;AACH,eAAO,MAAM,eAAe,GAAG,QAAG;;;;;QAcjC,CAAA;AACD,eAAO,MAAM,iBAAiB,GAAG,SAAI,QA0bpC,CAAA"}

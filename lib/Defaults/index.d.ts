@@ -1,13 +1,21 @@
 import { proto } from '../../WAProto/index.js';
-import type { MediaType, SocketConfig } from '../Types/index.js';
-export declare const TEXT_ENCODER: TextEncoder;
-export declare const LEXER_REGEX: RegExp;
+import type { SocketConfig } from '../Types/index.js';
 export declare const UNAUTHORIZED_CODES: number[];
 export declare const DEFAULT_ORIGIN = "https://web.whatsapp.com";
+export declare const CALL_VIDEO_PREFIX = "https://call.whatsapp.com/video/";
+export declare const CALL_AUDIO_PREFIX = "https://call.whatsapp.com/voice/";
 export declare const DEF_CALLBACK_PREFIX = "CB:";
 export declare const DEF_TAG_PREFIX = "TAG:";
 export declare const PHONE_CONNECTION_CB = "CB:Pong";
+export declare const WA_ADV_ACCOUNT_SIG_PREFIX: Buffer<ArrayBuffer>;
+export declare const WA_ADV_DEVICE_SIG_PREFIX: Buffer<ArrayBuffer>;
+export declare const WA_ADV_HOSTED_ACCOUNT_SIG_PREFIX: Buffer<ArrayBuffer>;
+export declare const WA_ADV_HOSTED_DEVICE_SIG_PREFIX: Buffer<ArrayBuffer>;
 export declare const WA_DEFAULT_EPHEMERAL: number;
+/** Status messages older than 24 hours are considered expired */
+export declare const STATUS_EXPIRY_SECONDS: number;
+/** WA Web enforces a 14-day maximum age for placeholder resend requests */
+export declare const PLACEHOLDER_MAX_AGE_SECONDS: number;
 export declare const NOISE_MODE = "Noise_XX_25519_AESGCM_SHA256\0\0\0\0";
 export declare const DICT_VERSION = 3;
 export declare const KEY_BUNDLE_TYPE: Buffer<ArrayBuffer>;
@@ -16,8 +24,16 @@ export declare const NOISE_WA_HEADER: Buffer<ArrayBuffer>;
 export declare const URL_REGEX: RegExp;
 export declare const WA_CERT_DETAILS: {
     SERIAL: number;
+    ISSUER: string;
+    PUBLIC_KEY: Buffer<ArrayBuffer>;
 };
-export declare const PROCESSABLE_HISTORY_TYPES: proto.Message.HistorySyncNotification.HistorySyncType[];
+export declare const PROCESSABLE_HISTORY_TYPES: proto.HistorySync.HistorySyncType[];
+export declare const DEFAULT_CACHE_TTLS: {
+    SIGNAL_STORE: number;
+    MSG_RETRY: number;
+    CALL_OFFER: number;
+    USER_DEVICES: number;
+};
 export declare const DEFAULT_CONNECTION_CONFIG: SocketConfig;
 export declare const MEDIA_PATH_MAP: {
     [T in MediaType]?: string;
@@ -36,37 +52,27 @@ export declare const MEDIA_HKDF_KEY_MAPPING: {
     'thumbnail-image': string;
     'thumbnail-video': string;
     'thumbnail-link': string;
+    'sticker-pack': string;
+    'thumbnail-sticker-pack': string;
     'md-msg-hist': string;
     'md-app-state': string;
     'product-catalog-image': string;
     'payment-bg-image': string;
     ptv: string;
+    'biz-cover-photo': string;
 };
+export type MediaType = keyof typeof MEDIA_HKDF_KEY_MAPPING;
 export declare const MEDIA_KEYS: MediaType[];
+export declare const BIZ_BOT_SUPPORT_PAYLOAD = "{\"version\":1,\"is_ai_message\":true,\"should_upload_client_logs\":false,\"should_show_system_message\":false,\"ticket_id\":\"7004947587700716\",\"citation_items\":[],\"ticket_locale\":\"us\"}";
+/** 120s timeout for history sync stall detection, same as WA Web's handleChunkProgress / restartPausedTimer (g = 120) */
+export declare const HISTORY_SYNC_PAUSED_TIMEOUT_MS = 120000;
 export declare const MIN_PREKEY_COUNT = 5;
 export declare const INITIAL_PREKEY_COUNT = 812;
-export declare const DEFAULT_CACHE_TTLS: {
-    SIGNAL_STORE: number;
-    MSG_RETRY: number;
-    CALL_OFFER: number;
-    USER_DEVICES: number;
+export declare const UPLOAD_TIMEOUT = 30000;
+export declare const TimeMs: {
+    Minute: number;
+    Hour: number;
+    Day: number;
+    Week: number;
 };
-/** AunuBaileys: peta path upload khusus newsletter */
-export declare const NEWSLETTER_MEDIA_PATH_MAP: {
-    image: string;
-    video: string;
-    audio: string;
-    document: string;
-    sticker: string;
-    gif: string;
-    ptt: string;
-    ptv: string;
-    'music-artwork': string;
-    'sticker-pack': string;
-    'thumbnail-link': string;
-    'waffle-image': string;
-    'waffle-video': string;
-};
-/** AunuBaileys: payload label AI */
-export declare const BIZ_BOT_SUPPORT_PAYLOAD: string;
 //# sourceMappingURL=index.d.ts.map

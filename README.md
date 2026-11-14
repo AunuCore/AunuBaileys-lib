@@ -12,11 +12,11 @@
 [![Docs](https://img.shields.io/badge/docs-docsjs.aunucore.eu.cc-25D366?style=for-the-badge&logo=whatsapp&logoColor=white)](https://docsjs.aunucore.eu.cc)
 
 **Bad MAC repairs itself. "2000 messages into the future" repairs itself. LID and phone-number identities stay in sync.**
-Plus **29 experimental message tricks no other Baileys fork ships** — and the store everyone thought was gone forever.
+Plus **34 experimental message methods no other Baileys fork ships** — and the store everyone thought was gone forever.
 
-📚 **[Full documentation — docsjs.aunucore.eu.cc](https://docsjs.aunucore.eu.cc)** · [Quick start](#-quick-start) · [Experimental API](#-the-experimental-api--34-socket-methods) · [Bahasa Indonesia](#-bahasa-indonesia)
+📚 **[Full documentation — docsjs.aunucore.eu.cc](https://docsjs.aunucore.eu.cc)** · [Quick start](#-quick-start) · [Experimental API](#-the-experimental-api--34-socket-methods) · [BanSentinel](#-bansentinel)
 
-> 📦 This package was previously published as `aunubaileys` — that name is frozen at v1.0.73. Same code, new canonical name.
+> 📦 This package was previously published as `aunubaileys` — that name is frozen at v1.0.73. Same project, new canonical name: `@aunucore/baileys`.
 
 </div>
 
@@ -24,23 +24,30 @@ Plus **29 experimental message tricks no other Baileys fork ships** — and the 
 
 ## 🌍 English
 
-**AunuBaileys** is a fork of [WhiskeySockets/Baileys](https://github.com/WhiskeySockets/Baileys) maintained by **AunuCore Creative Network**. It keeps the battle-tested 6.7.24 core and adds a small, auditable patch layer: the pieces upstream removed, the self-healing upstream never built, and an experimental API for message manipulations that are impossible in stock WhatsApp.
+**AunuBaileys** is a fork of [WhiskeySockets/Baileys](https://github.com/WhiskeySockets/Baileys) maintained by **AunuCore Creative Network**.
 
-> ⚠️ Not affiliated with WhatsApp Inc. Use at your own risk — automated accounts can be banned. `AunuAntiBan` reduces risk; it cannot eliminate it.
+**2.0.0 is a new base, not a patch release.** The library is now built on a frozen snapshot of the WhiskeySockets Baileys **v7 master** — commit `bb0a87e0326ca8f882fe716c7ee42da362f73fc0` — in TypeScript / ESM, with the complete AunuBaileys patch layer re-applied and re-verified on that base: the self-healing session layer, the LID identity layer, the restored in-memory store, the anti-ban stack, and all 34 experimental socket methods. Auth state created by the 1.0.x (v6) line loads without re-pairing.
+
+> ⚠️ Not affiliated with WhatsApp Inc. Use at your own risk — automated accounts can be banned. `AunuAntiBan` and BanSentinel reduce risk; they cannot eliminate it.
 
 ### 💎 Why AunuBaileys
 
-- 🩹 **Self-healing sessions** — Bad MAC and unrecoverable session errors (including the *"Over 2000 messages into the future"* flood) trigger an immediate E2E session reset instead of failing forever. Group sender-key rot heals too, on both layers.
+- 🩹 **Self-healing sessions** — Bad MAC and unrecoverable session errors (including the *"Over 2000 messages into the future"* flood) trigger an immediate E2E session reset instead of failing forever. Group sender-key rot heals too, on both layers. A dedicated `messages.decrypt-failure` event surfaces what happened, with the self-heal outcome attached.
 - 🪪 **LID identity layer** — WhatsApp is migrating from phone numbers to LIDs; AunuBaileys learns the PN⇄LID mapping from live traffic (`sock.aunuLid`), fills in missing group attribution, dedupes poll voters across the split, and migrates sessions PN→LID automatically.
-- 🧠 **`makeInMemoryStore` is back** — chats, contacts, messages, labels: the full in-memory store upstream removed, restored and typed. Legacy exports (`processedMessages`, `initInMemoryKeyStore()`, `PHONENUMBER_MCC`) are back too.
+- 🧠 **`makeInMemoryStore` is still here** — chats, contacts, messages, labels: the full in-memory store upstream removed, restored and typed, and carried forward onto the v7 base. Legacy exports (`processedMessages`, `initInMemoryKeyStore()`, `PHONENUMBER_MCC`) are back too.
 - 🛡️ **AunuAntiBan built in** — per-chat & global rate limiting with Gaussian jitter, 7-day warmup ramp, group-operation guards, typing simulation, `classifyDisconnect()` + `getReconnectDelay()` recovery advice. No telemetry, no extra network calls.
+- 🚨 **BanSentinel (new in 2.0.0)** — a persistent anti-ban guard, **on by default**. It watches for ban signals — ban keywords in errors, dangerous disconnect codes (401 / 403 / 440), and bursts of failures — and, once tripped, blocks new connections for a cooldown period with a `Boom` 503 from its gate. The guard state persists in a guard file (`.baileys-ban-guard.json` by default) so a restart does not silently reset a tripped guard; a corrupt or unwritable guard file degrades to in-memory-only mode and never crashes the host. Disable it with `banSentinel: false` in the socket config, or pass an options object to tune it. The active sentinel is exposed as `sock.aunuBanSentinel` and the `AunuBanSentinel` class, `createBanSentinel`, and its guard stores are exported for direct use.
 - 🧨 **Crash-payload guard** — `attachAunuBugGuard(sock)` detects force-close payloads (invisible-char floods, nesting bombs, mention floods) in incoming and outgoing messages before they can kill a client.
 - 🔑 **Pairing that just works** — custom pairing codes, single-flight requests, readiness waits, and failure messages that carry the real disconnect reason.
+- 🧪 **A real test suite, in the repo** — 2.0.0 ships a regression suite under `test/` (Node's built-in test runner, no extra test dependencies) covering the export surface, the 34 experimental methods, BanSentinel, auth-state compatibility, the event buffer and store, internal caches and mutexes, and the re-applied hardening fixes. CI runs the build and the suite on every push and pull request, and both publish workflows (npm and GitHub Packages) run the suite as a test job that must pass before the publish job is allowed to run.
+- 📦 **Dependency diet** — runtime dependencies are down from 12 to **6**: `@hapi/boom`, `libsignal`, `pino`, `protobufjs`, `whatsapp-rust-bridge`, and `ws`. The small utilities that used to be external packages — the keyed database, the bounded caches, and the mutexes — are now internal modules, covered by the test suite.
 - ✅ **Every release is tarball-verified** — each published version passes a clean-room install + import + API-surface audit before it is announced. No exceptions, no skipped versions.
 
 ### 🧪 The experimental API — 34 socket methods
 
-Message manipulations that are **impossible in stock WhatsApp**, attached automatically to every socket from `makeWASocket`: 29 feature families, 34 methods in total counting the companion helpers (`aunuReadWatermark` / `aunuStripWatermark`, `aunuCancelScheduled` / `aunuListScheduled`, `aunuCancelSelfDestruct`). All experimental: semantics may change in any release. Honest limit: *the display lies, the content doesn't* — opening a faked item still reveals the real file.
+Message manipulations that are **impossible in stock WhatsApp**, attached automatically to every socket from `makeWASocket`: 34 methods in total, counting the companion helpers (`aunuReadWatermark` / `aunuStripWatermark`, `aunuCancelScheduled` / `aunuListScheduled`, `aunuCancelSelfDestruct`). All experimental: semantics may change in any release. Honest limit: *the display lies, the content doesn't* — opening a faked item still reveals the real file.
+
+The 34 methods: `aunuWatermark`, `aunuReadWatermark`, `aunuStripWatermark`, `aunuHumanSend`, `aunuSchedule`, `aunuCancelScheduled`, `aunuListScheduled`, `aunuSelfDestruct`, `aunuCancelSelfDestruct`, `aunuVanish`, `aunuDoctor`, `aunuPersonalTagAll`, `aunuPersonalCard`, `aunuCard`, `aunuSideText`, `aunuGhostMention`, `aunuFakeQuote`, `aunuFakeForward`, `aunuFakeDoc`, `aunuFakeVideo`, `aunuFakeVN`, `aunuFakeLocation`, `aunuFakeAlbum`, `aunuTrapImage`, `aunuGhostMessage`, `aunuPromoCode`, `aunuWordReact`, `aunuReactSequence`, `aunuTypewriter`, `aunuPostStatus`, `aunuBotSteps`, `aunuSendSpoiler`, `aunuSendGroupStatus`, `aunuSendA2UI`.
 
 | Method | What it does |
 |---|---|
@@ -76,13 +83,30 @@ Message manipulations that are **impossible in stock WhatsApp**, attached automa
 
 ### 📦 Also in the core
 
-- 🗳️ **Modern polls** — Poll V6 (`hideVoter` / `canAddOption`), **image polls**, `sendPoll` / `sendQuiz` / `sendPollPlus`, vote aggregation with LID⇄PN dedupe.
+- 🗳️ **Modern polls** — Poll V6 (`hideVoter` / `canAddOption`, proto `pollCreationMessageV6`), **image polls**, `sendPoll` / `sendQuiz` / `sendPollPlus`, vote aggregation with LID⇄PN dedupe.
 - 📣 **Channel AutoJoin** — `makeWASocket({ autoJoinChannels: [...], autoJoinLimit: 2 })` or `sock.aunuAutoJoinChannels()`; hard ceiling of 3 channels, framed as creator support.
 - 🚫 **`sock.ignoreKey(rule)`** — drop matching inbound stanzas before any handler (never drops `'peer'` traffic).
 - 🎨 **Rich responses** — code highlighting (12 languages), tables, link lists, LaTeX, Meta AI-style rich messages — with **no injected donation links, ever**. URLs are strictly user-supplied.
 - 📞 **VOIP call signalling** — `offerCall` / `groupCall` / `acceptCall` / `terminateCall` with per-device encrypted call-key envelopes.
-- 🖼️ **Sticker packs, albums, newsletter media** — the full send surface, plus `addStickerExif()`.
-- 📰 **Newsletters** — `newsletterSubscribed()`, pinned-message metadata, quoting inside channels, `statusPrivacy` on status sends.
+- 🖼️ **Sticker packs, albums, newsletter media** — the full send surface, including sticker packs (`stickerPackMessage`), plus `addStickerExif()`.
+- 📰 **Newsletters** — `newsletterSubscribed()`, pinned-message metadata, quoting inside channels, `statusPrivacy` on status sends, and a dedicated `newsletter.status` event.
+
+### 🚨 BanSentinel
+
+BanSentinel is **enabled by default** in 2.0.0:
+
+```ts
+const sock = makeWASocket({
+  auth: state,
+  // BanSentinel is on by default — no configuration needed.
+  // Turn it off completely:
+  // banSentinel: false,
+  // …or tune it with an options object:
+  // banSentinel: { cooldownMs: 30 * 60 * 1000 },
+})
+```
+
+When it trips — on a ban keyword, a dangerous disconnect code, or a burst of failures — new connection attempts are rejected with a `Boom` error carrying status code **503** until the cooldown expires. The trip state is persisted to its guard file so it survives restarts; inspect it at any time via `sock.aunuBanSentinel.status()`, and clear it deliberately with `sock.aunuBanSentinel.reset()`.
 
 ### 🚀 Quick start
 
@@ -103,33 +127,30 @@ sock.ev.on('creds.update', saveCreds)
 await sock.aunuGhostMention(groupJid, { text: 'meeting in 5' })
 ```
 
-CommonJS works too (Node ≥ 20.19):
-
-```js
-const { default: makeWASocket, useMultiFileAuthState } = require('@aunucore/baileys')
-```
-
-**Requirements:** Node.js ≥ 20. ESM-native with complete TypeScript types.
+**Requirements:** Node.js ≥ 20. **ESM only** — 2.0.0 is an ESM package with complete TypeScript types; there is no CommonJS entry point on the v7 base.
 
 ### 🛠️ The patch layer
 
 | Piece | Where |
 |---|---|
-| In-memory store | `lib/Store/` |
-| Experimental socket API (34 methods) | `lib/Socket/aunu-experimental.js` |
-| LID identity store (`sock.aunuLid`, `makeLIDStore()`) | `lib/Utils/lid-store.js` |
-| AunuAntiBan | `lib/Utils/antiban.js` |
-| Crash-payload guard | `lib/Utils/aunu-bug-guard.js` |
-| Channel AutoJoin | `lib/Utils/aunu-autojoin.js` |
-| Compat exports (`processedMessages`, `initInMemoryKeyStore`) | `lib/Utils/fork-compat.js` |
-| `PHONENUMBER_MCC` table | `lib/Utils/phonenumber-mcc.js` |
+| In-memory store | `src/Store/` (built to `lib/Store/`) |
+| Experimental socket API (34 methods) | `src/Socket/aunu-experimental.ts` |
+| LID identity store (`sock.aunuLid`, `makeLIDStore()`) | `src/Utils/lid-store.ts` |
+| AunuAntiBan | `src/Utils/antiban.ts` |
+| BanSentinel | `src/Utils/ban-sentinel.ts` |
+| Crash-payload guard | `src/Utils/aunu-bug-guard.ts` |
+| Channel AutoJoin | `src/Utils/aunu-autojoin.ts` |
+| Internal keyed-db / caches / mutexes | `src/Utils/` (internal modules, no external packages) |
+| Compat exports (`processedMessages`, `initInMemoryKeyStore`) | `src/Utils/fork-compat.ts` |
+| `PHONENUMBER_MCC` table | `src/Utils/phonenumber-mcc.ts` |
 
-Everything else is the upstream core. The patch layer stays small and deliberate — that discipline is the whole point of this fork.
+Everything else is the upstream v7 core, frozen at the snapshot commit above. The patch layer stays small and deliberate — that discipline is the whole point of this fork.
 
 ### 📰 Recent releases
 
-- **1.0.89 — README refresh; the v6 line closes.** README-only release (the latest) — no library code changes. This README now reflects the finished state below, with the current feature table above. The 1.0.x line on the 6.7.24 base ends here; the next step is 2.0.0 on the v7 base.
-- **1.0.74–1.0.88 — the hardening programme.** Fifteen themed fix releases that closed the entire verified bug queue: the fix-all batch and the partial-config / watchdog cleanup (1.0.74–1.0.75), the auditor series (1.0.76), socket & pairing (1.0.77), signal & sender-key (1.0.78), credentials & auth state (1.0.79), numeric-config sanitisation at the boundary (1.0.80), emit & listener guards (1.0.81), the receive path — decryption & retry (1.0.82), send & relay (1.0.83), store, event-buffer & file persistence (1.0.84), media with SSRF-safe link previews (1.0.85), groups & chats (1.0.86), newsletters, MEX & app state (1.0.87), and the mixed leftovers that finished the queue (1.0.88). Every finding was re-verified against the tree before it was patched; claims that did not reproduce were recorded as disproven, not patched. **The verified bug queue is now zero.**
+- **2.0.0 — the v7 base.** AunuBaileys rebased onto a frozen snapshot of WhiskeySockets Baileys v7 master (`bb0a87e0326ca8f882fe716c7ee42da362f73fc0`), TypeScript / ESM only. The full hardening programme from the 1.0.x line was re-applied and re-verified on the new base, together with the remaining queue. New: BanSentinel (on by default), the in-repo test suite with CI gating both publish workflows, and the dependency diet (runtime 12 → 6, with keyed-db / cache / mutex now internal). Also restored on the new base: recovery from `405` / `clientTooOld`, the `newsletter.status` event, and sticker packs. Existing v6 auth state loads with no re-pairing.
+- **1.0.89 — README refresh; the v6 line closes.** README-only release — no library code changes. The 1.0.x line on the 6.7.24 base ends there; 2.0.0 is the next step.
+- **1.0.74–1.0.88 — the hardening programme.** Fifteen themed fix releases that closed the entire verified bug queue on the v6 base. Every finding was re-verified against the tree before it was patched; claims that did not reproduce were recorded as disproven, not patched. **The verified bug queue reached zero on v6 — and was then re-verified on the v7 base for 2.0.0.**
 
 Full changelog for every version since 1.0.2: **[docs](https://docsjs.aunucore.eu.cc)** · **[GitHub Releases](https://github.com/AunuCore/AunuBaileys-lib/releases)**.
 
@@ -140,39 +161,3 @@ Built on [WhiskeySockets/Baileys](https://github.com/WhiskeySockets/Baileys) (MI
 ### 📄 License
 
 MIT — primary copyright **AunuCore Creative Network**, upstream WhiskeySockets attribution retained in [LICENSE](./LICENSE).
-
----
-
-## 🇮🇩 Bahasa Indonesia
-
-**AunuBaileys** adalah fork dari [WhiskeySockets/Baileys](https://github.com/WhiskeySockets/Baileys) yang dirawat oleh **AunuCore Creative Network**: inti 6.7.24 yang sudah teruji, ditambah lapisan patch kecil yang bisa diaudit.
-
-### 💎 Kenapa AunuBaileys
-
-- 🩹 **Sesi sembuh sendiri** — Bad MAC dan error sesi tak-terpulihkan (termasuk banjir *"Over 2000 messages into the future"*) langsung memicu reset sesi E2E, bukan gagal selamanya.
-- 🪪 **Lapisan identitas LID** — memetakan nomor telepon ⇄ LID dari trafik langsung (`sock.aunuLid`), melengkapi atribusi grup, dan memigrasi sesi secara otomatis.
-- 🧠 **`makeInMemoryStore` kembali** — store in-memory lengkap yang dihapus upstream, plus ekspor legacy (`processedMessages`, `initInMemoryKeyStore()`, `PHONENUMBER_MCC`).
-- 🛡️ **AunuAntiBan bawaan** — rate limit per-chat & global dengan jitter Gaussian, ramp warmup 7 hari, guard operasi grup, simulasi mengetik, dan saran pemulihan disconnect. Tanpa telemetri.
-- 🧨 **Guard payload crash** — `attachAunuBugGuard(sock)` mendeteksi pesan force-close sebelum sempat membunuh client.
-- 🧪 **34 metode eksperimental** — manipulasi pesan yang mustahil di WhatsApp biasa: watermark tak terlihat, tag-all personal (setiap anggota melihat foto + namanya sendiri), fake doc/video/VN/location/album, ghost mention, pesan hantu, spoiler, status grup, widget A2UI, dan lainnya. Batas jujurnya: *tampilannya yang berbohong, isinya tidak*.
-- ✅ **Setiap rilis terverifikasi tarball** — install bersih + import + audit permukaan API sebelum diumumkan. Tanpa lompat versi.
-
-### 🚀 Mulai cepat
-
-```bash
-npm i @aunucore/baileys
-```
-
-```ts
-import makeWASocket, { useMultiFileAuthState, makeInMemoryStore } from '@aunucore/baileys'
-
-const { state, saveCreds } = await useMultiFileAuthState('auth')
-const sock = makeWASocket({ auth: state })
-sock.ev.on('creds.update', saveCreds)
-```
-
-Dokumentasi lengkap: **[docsjs.aunucore.eu.cc](https://docsjs.aunucore.eu.cc)** — panduan mulai, koneksi & pairing, builders, AunuAntiBan, peta event lengkap, resep, dan tabel troubleshooting kode disconnect.
-
-> ⚠️ Tidak berafiliasi dengan WhatsApp Inc. Gunakan dengan risiko sendiri — akun otomatis bisa diblokir. `AunuAntiBan` mengurangi risiko, bukan menghilangkannya.
-
-📄 **Lisensi:** MIT — copyright utama **AunuCore Creative Network**, atribusi upstream WhiskeySockets dipertahankan.

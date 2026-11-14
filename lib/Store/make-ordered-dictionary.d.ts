@@ -1,7 +1,7 @@
 declare function makeOrderedDictionary<T>(idGetter: (item: T) => string): {
     array: T[];
     get: (id: string) => T | undefined;
-    upsert: (item: T, mode: 'append' | 'prepend') => void;
+    upsert: (item: T, mode: "append" | "prepend") => void;
     update: (item: T) => boolean;
     remove: (item: T) => boolean;
     updateAssign: (id: string, update: Partial<T>) => boolean;
@@ -11,3 +11,4 @@ declare function makeOrderedDictionary<T>(idGetter: (item: T) => string): {
     fromJSON: (newItems: T[]) => void;
 };
 export default makeOrderedDictionary;
+//# sourceMappingURL=make-ordered-dictionary.d.ts.map

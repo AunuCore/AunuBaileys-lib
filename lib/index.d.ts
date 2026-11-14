@@ -9,12 +9,12 @@ export * from './WAUSync/index.js';
 export type WASocket = ReturnType<typeof makeWASocket>;
 export { makeWASocket };
 export default makeWASocket;
-//# sourceMappingURL=index.d.ts.map
 export * from './Store/index.js';
+export * from './Utils/builders.js';
 export { processedMessages, initInMemoryKeyStore } from './Utils/fork-compat.js';
 export { PHONENUMBER_MCC } from './Utils/phonenumber-mcc.js';
-export * from './Utils/aunu-handler';
-export * from './Utils/builders';
-export * from './Utils/antiban';
+export * from './Utils/antiban.js';
 export * from './Utils/lid-store.js';
 export * from './Utils/sent-message-cache.js';
+export * from './Utils/aunu-handler.js';
+//# sourceMappingURL=index.d.ts.map

@@ -1,0 +1,1 @@
+{"version":3,"file":"fork-compat.d.ts","sourceRoot":"","sources":["../../src/Utils/fork-compat.ts"],"names":[],"mappings":"AAGA;;;GAGG;AACH,eAAO,MAAM,iBAAiB,sBAA6B,CAAA;AAE3D;;;;GAIG;AACH,eAAO,MAAM,oBAAoB;gBAIb,MAAM,OAAO,MAAM,EAAE;;;mBAWlB;QAAE,CAAC,IAAI,EAAE,MAAM,GAAG;YAAE,CAAC,EAAE,EAAE,MAAM,GAAG,GAAG,CAAA;SAAE,CAAA;KAAE;;CAgB/D,CAAA"}

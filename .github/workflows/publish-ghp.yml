@@ -21,7 +21,29 @@ permissions:
   packages: write
 
 jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Enable Corepack (Yarn 4)
+        run: corepack enable
+
+      - name: Install dependencies
+        run: yarn install
+
+      - name: Build
+        run: yarn build
+
+      - name: Run regression suite (P8)
+        run: npm test
+
   publish-ghp:
+    needs: test
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

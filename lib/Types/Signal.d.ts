@@ -1,4 +1,5 @@
 import { proto } from '../../WAProto/index.js';
+import type { LIDMappingStore } from '../Signal/lid-mapping.js';
 type DecryptGroupSignalOpts = {
     group: string;
     authorJid: string;
@@ -22,6 +23,10 @@ type EncryptGroupMessageOpts = {
     data: Uint8Array;
     meId: string;
 };
+type GetSenderKeyDistributionMessageOpts = {
+    group: string;
+    meId: string;
+};
 type PreKey = {
     keyId: number;
     publicKey: Uint8Array;
@@ -33,7 +38,7 @@ type E2ESession = {
     registrationId: number;
     identityKey: Uint8Array;
     signedPreKey: SignedPreKey;
-    preKey: PreKey;
+    preKey?: PreKey;
 };
 type E2ESessionOpts = {
     jid: string;
@@ -51,13 +56,33 @@ export type SignalRepository = {
         senderKeyDistributionMessage: Uint8Array;
         ciphertext: Uint8Array;
     }>;
+    getSenderKeyDistributionMessage(opts: GetSenderKeyDistributionMessageOpts): Promise<Uint8Array>;
+    hasSenderKey(opts: GetSenderKeyDistributionMessageOpts): Promise<boolean>;
+    getSessionInfo(jid: string): Promise<{
+        baseKey: Uint8Array;
+        registrationId: number;
+    } | null>;
     injectE2ESession(opts: E2ESessionOpts): Promise<void>;
-    /** AunuBaileys: delete the stored E2E session for a JID (used by the Bad MAC self-heal). */
-    deleteSession(jid: string): Promise<void>;
-    migrateSession(fromJid: string, toJid: string): Promise<boolean>;
-    /** AunuBaileys: delete the stored sender-key record for a group author (stale group session heal). */
-    deleteSenderKey(group: string, authorJid: string): Promise<void>;
+    validateSession(jid: string): Promise<{
+        exists: boolean;
+        reason?: string;
+    }>;
     jidToSignalProtocolAddress(jid: string): string;
+    migrateSession(fromJid: string, toJid: string): Promise<{
+        migrated: number;
+        skipped: number;
+        total: number;
+    }>;
+    validateSession(jid: string): Promise<{
+        exists: boolean;
+        reason?: string;
+    }>;
+    deleteSession(jids: string[]): Promise<void>;
+    deleteSenderKey(group: string, authorJid: string): Promise<void>;
 };
+export interface SignalRepositoryWithLIDStore extends SignalRepository {
+    lidMapping: LIDMappingStore;
+    close?: () => void;
+}
 export {};
 //# sourceMappingURL=Signal.d.ts.map

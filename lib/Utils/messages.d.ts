@@ -1,8 +1,9 @@
 import { type Transform } from 'stream';
 import { proto } from '../../WAProto/index.js';
-import type { AnyMediaMessageContent, AnyMessageContent, MessageContentGenerationOptions, MessageGenerationOptions, MessageGenerationOptionsFromContent, MessageUserReceipt, WAMessage, WAMessageContent } from '../Types/index.js';
+import type { AnyMediaMessageContent, AnyMessageContent, MessageContentGenerationOptions, MessageGenerationOptions, MessageGenerationOptionsFromContent, MessageUserReceipt, StickerPackInfo, WAMessage, WAMessageContent, WAMessageKey } from '../Types/index.js';
 import type { ILogger } from './logger.js';
 import { type MediaDownloadOptions } from './messages-media.js';
+type ExtractByKey<T, K extends PropertyKey> = T extends Record<K, any> ? T : never;
 /**
  * Uses a regex to test whether the string contains a URL, and returns the URL if it does.
  * @param text eg. hello https://google.com
@@ -10,11 +11,6 @@ import { type MediaDownloadOptions } from './messages-media.js';
  */
 export declare const extractUrlFromText: (text: string) => string | undefined;
 export declare const generateLinkPreviewIfRequired: (text: string, getUrlInfo: MessageGenerationOptions["getUrlInfo"], logger: MessageGenerationOptions["logger"]) => Promise<import("../Types/index.js").WAUrlInfo | undefined>;
-/**
- * Option identifier for an image poll: `sha256(hex(sha256(name)) + base64(fileSha256))`.
- * A vote carries this hash, not the name, so it has to match byte for byte.
- */
-export declare const hashImagePollOption: (optionName: string, fileSha256?: Uint8Array | null) => string;
 export declare const prepareWAMessageMedia: (message: AnyMediaMessageContent, options: MessageContentGenerationOptions) => Promise<proto.Message>;
 export declare const prepareDisappearingMessageSettingContent: (ephemeralExpiration?: number) => proto.Message;
 /**
@@ -23,10 +19,13 @@ export declare const prepareDisappearingMessageSettingContent: (ephemeralExpirat
  * @param options.forceForward will show the message as forwarded even if it is from you
  */
 export declare const generateForwardMessageContent: (message: WAMessage, forceForward?: boolean) => proto.IMessage;
-export declare const shouldIncludeBizBinaryNode: (message: any) => boolean;
+export declare const hasNonNullishProperty: <K extends PropertyKey>(message: AnyMessageContent, key: K) => message is ExtractByKey<AnyMessageContent, K>;
+export declare const prepareStickerPackMessage: (stickerPack: StickerPackInfo, options: MessageContentGenerationOptions) => Promise<{
+    stickerPackMessage: proto.Message.IStickerPackMessage;
+}>;
 export declare const generateWAMessageContent: (message: AnyMessageContent, options: MessageContentGenerationOptions) => Promise<proto.Message>;
-export declare const generateWAMessageFromContent: (jid: string, message: WAMessageContent, options: MessageGenerationOptionsFromContent) => proto.WebMessageInfo;
-export declare const generateWAMessage: (jid: string, content: AnyMessageContent, options: MessageGenerationOptions) => Promise<proto.WebMessageInfo>;
+export declare const generateWAMessageFromContent: (jid: string, message: WAMessageContent, options: MessageGenerationOptionsFromContent) => WAMessage;
+export declare const generateWAMessage: (jid: string, content: AnyMessageContent, options: MessageGenerationOptions) => Promise<WAMessage>;
 /** Get the key to access the true type of content */
 export declare const getContentType: (content: proto.IMessage | undefined) => keyof proto.IMessage | undefined;
 /**
@@ -49,22 +48,35 @@ export declare const getDevice: (id: string) => "web" | "unknown" | "android" | 
 export declare const updateMessageWithReceipt: (msg: Pick<WAMessage, "userReceipt">, receipt: MessageUserReceipt) => void;
 /** Update the message with a new reaction */
 export declare const updateMessageWithReaction: (msg: Pick<WAMessage, "reactions">, reaction: proto.IReaction) => void;
+export interface PollLIDOptions {
+    lidStore?: {
+        getPNForLID(jid: string): string | undefined;
+    };
+}
 /** Update the message with a new poll update */
 export declare const updateMessageWithPollUpdate: (msg: Pick<WAMessage, "pollUpdates">, update: proto.IPollUpdate, options?: PollLIDOptions) => void;
-type VoteAggregation = {
-    name: string;
-    voters: string[];
-};
+/** Update the message with a new event response */
+export declare const updateMessageWithEventResponse: (msg: Pick<WAMessage, "eventResponses">, update: proto.IEventResponse) => void;
 /**
  * Aggregates all poll updates in a poll.
  * @param msg the poll creation message
  * @param meId your jid
  * @returns A list of options & their voters
  */
-export interface PollLIDOptions { lidStore?: { getPNForLID(jid: string): string | undefined }; }
-export declare function getAggregateVotesInPollMessage({ message, pollUpdates }: Pick<WAMessage, 'pollUpdates' | 'message'>, meId?: string, options?: PollLIDOptions): VoteAggregation[];
+export declare function getAggregateVotesInPollMessage({ message, pollUpdates }: Pick<WAMessage, 'pollUpdates' | 'message'>, meId?: string, options?: PollLIDOptions): unknown[];
+type ResponseAggregation = {
+    response: string;
+    responders: string[];
+};
+/**
+ * Aggregates all event responses in an event message.
+ * @param msg the event creation message
+ * @param meId your jid
+ * @returns A list of response types & their responders
+ */
+export declare function getAggregateResponsesInEventMessage({ eventResponses }: Pick<WAMessage, 'eventResponses'>, meId?: string): ResponseAggregation[];
 /** Given a list of message keys, aggregates them by chat & sender. Useful for sending read receipts in bulk */
-export declare const aggregateMessageKeysNotFromMe: (keys: proto.IMessageKey[]) => {
+export declare const aggregateMessageKeysNotFromMe: (keys: WAMessageKey[]) => {
     jid: string;
     participant: string | undefined;
     messageIds: string[];

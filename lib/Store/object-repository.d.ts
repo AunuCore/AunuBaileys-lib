@@ -8,3 +8,4 @@ export declare class ObjectRepository<T extends object> {
     count(): number;
     toJSON(): T[];
 }
+//# sourceMappingURL=object-repository.d.ts.map

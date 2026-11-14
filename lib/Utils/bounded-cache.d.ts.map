@@ -1,0 +1,1 @@
+{"version":3,"file":"bounded-cache.d.ts","sourceRoot":"","sources":["../../src/Utils/bounded-cache.ts"],"names":[],"mappings":"AAAA;;;;;;;;;;;;;GAaG;AACH,eAAO,MAAM,mBAAmB,GAAI,6BAA0C;IAAE,UAAU,CAAC,EAAE,MAAM,CAAC;IAAC,UAAU,CAAC,EAAE,MAAM,CAAA;CAAO;aAYpH,GAAG;aAaH,GAAG,SAAS,GAAG;aAoBf,GAAG;;;CAUb,CAAA"}

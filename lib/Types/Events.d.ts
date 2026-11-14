@@ -1,14 +1,14 @@
 import type { Boom } from '@hapi/boom';
 import { proto } from '../../WAProto/index.js';
-import type { AuthenticationCreds } from './Auth.js';
+import type { AuthenticationCreds, LIDMapping } from './Auth.js';
 import type { WACallEvent } from './Call.js';
 import type { Chat, ChatUpdate, PresenceData } from './Chat.js';
 import type { Contact } from './Contact.js';
-import type { GroupMetadata, ParticipantAction, RequestJoinAction, RequestJoinMethod } from './GroupMetadata.js';
+import type { GroupMetadata, GroupParticipant, ParticipantAction, RequestJoinAction, RequestJoinMethod } from './GroupMetadata.js';
 import type { Label } from './Label.js';
 import type { LabelAssociation } from './LabelAssociation.js';
 import type { MessageUpsertType, MessageUserReceiptUpdate, WAMessage, WAMessageKey, WAMessageUpdate } from './Message.js';
-import type { ConnectionState } from './State.js';
+import type { ConnectionState, NewChatMessageCapInfo } from './State.js';
 export type BaileysEventMap = {
     /** connection state has been updated -- WS closed, opened, connecting etc. */
     'connection.update': Partial<ConnectionState>;
@@ -19,19 +19,31 @@ export type BaileysEventMap = {
         chats: Chat[];
         contacts: Contact[];
         messages: WAMessage[];
+        lidPnMappings?: LIDMapping[];
         isLatest?: boolean;
         progress?: number | null;
-        syncType?: proto.HistorySync.HistorySyncType;
+        syncType?: proto.HistorySync.HistorySyncType | null;
+        pastParticipants?: proto.IPastParticipants[] | null;
+        chunkOrder?: number | null;
         peerDataRequestSessionId?: string | null;
+    };
+    /** signals history sync milestones (completion or stall) per sync type */
+    'messaging-history.status': {
+        /** which sync phase this status refers to */
+        syncType: proto.HistorySync.HistorySyncType;
+        /** the status of this sync phase */
+        status: 'complete' | 'paused';
+        /**
+         * progress === 100 was received from the server.
+         * when false, completion was inferred via timeout (no more chunks arriving).
+         */
+        explicit: boolean;
     };
     /** upsert chats */
     'chats.upsert': Chat[];
     /** update the given chats */
     'chats.update': ChatUpdate[];
-    'chats.phoneNumberShare': {
-        lid: string;
-        jid: string;
-    };
+    'lid-mapping.update': LIDMapping;
     /** delete chats with given ID */
     'chats.delete': string[];
     /** presence of contact in a chat updated */
@@ -55,8 +67,16 @@ export type BaileysEventMap = {
         failures: number;
         /** true when this failure tripped the session/sender-key reset */
         healed: boolean;
+        /** failure class of the stub parameter text (present in the v6 runtime emit) */
+        errorClass: 'session' | 'bad-mac' | 'other';
         messageId: string;
         timestamp: number;
+    };
+    /** AunuBaileys (1.0.71, ported P2d): a decrypted msmsg (Meta AI) reply, surfaced alongside messages.upsert */
+    'messages.meta-ai': {
+        key: WAMessageKey;
+        text: string;
+        remoteJid: string;
     };
     'messages.delete': {
         keys: WAMessageKey[];
@@ -95,15 +115,27 @@ export type BaileysEventMap = {
     'group-participants.update': {
         id: string;
         author: string;
-        participants: string[];
+        authorPn?: string;
+        authorUsername?: string;
+        participants: GroupParticipant[];
         action: ParticipantAction;
     };
     'group.join-request': {
         id: string;
         author: string;
+        authorPn?: string;
+        authorUsername?: string;
         participant: string;
+        participantPn?: string;
         action: RequestJoinAction;
         method: RequestJoinMethod;
+    };
+    'group.member-tag.update': {
+        groupId: string;
+        participant: string;
+        participantAlt?: string;
+        label: string;
+        messageTimestamp?: number;
     };
     'blocklist.set': {
         blocklist: string[];
@@ -145,6 +177,78 @@ export type BaileysEventMap = {
         id: string;
         update: any;
     };
+    /**
+     * AunuBaileys (P2e port from v6): a <status> stanza pushed by the server
+     * for a newsletter post — carries the decoded plaintext (or a raw
+     * fallback), view/response counts and reaction tallies.
+     */
+    'newsletter.status': {
+        id: string;
+        messageId: string;
+        serverId?: number;
+        timestamp?: number;
+        isSender: boolean;
+        offlineIndex?: number;
+        meta?: {
+            editedAt?: number;
+            originalTimestamp?: number;
+            interactionType?: string;
+            parentServerId?: number;
+            responseServerId?: number;
+        };
+        viewsCount?: number;
+        responsesCount?: number;
+        reactionCounts?: {
+            code?: string;
+            count: number;
+        }[];
+        content: {
+            type: 'reaction';
+            code?: string;
+        } | {
+            type: 'revoke';
+            edit: string;
+        } | {
+            type: string;
+            message: any;
+            mediaType?: string;
+        } | {
+            type: string;
+            raw: true;
+            mediaType?: string;
+        } | null;
+    };
+    'message-capping.update': NewChatMessageCapInfo;
+    /** Settings and actions sync events */
+    'chats.lock': {
+        id: string;
+        locked: boolean;
+    };
+    'settings.update': {
+        setting: 'unarchiveChats';
+        value: boolean;
+    } | {
+        setting: 'locale';
+        value: string;
+    } | {
+        setting: 'disableLinkPreviews';
+        value: proto.SyncActionValue.IPrivacySettingDisableLinkPreviewsAction;
+    } | {
+        setting: 'timeFormat';
+        value: proto.SyncActionValue.ITimeFormatAction;
+    } | {
+        setting: 'privacySettingRelayAllCalls';
+        value: proto.SyncActionValue.IPrivacySettingRelayAllCalls;
+    } | {
+        setting: 'statusPrivacy';
+        value: proto.SyncActionValue.IStatusPrivacyAction;
+    } | {
+        setting: 'notificationActivitySetting';
+        value: proto.SyncActionValue.NotificationActivitySettingAction.NotificationActivitySetting;
+    } | {
+        setting: 'channelsPersonalisedRecommendation';
+        value: proto.SyncActionValue.IPrivacySettingChannelsPersonalisedRecommendationAction;
+    };
 };
 export type BufferedEventData = {
     historySets: {
@@ -161,6 +265,8 @@ export type BufferedEventData = {
         isLatest: boolean;
         progress?: number | null;
         syncType?: proto.HistorySync.HistorySyncType;
+        pastParticipants?: proto.IPastParticipants[];
+        chunkOrder?: number | null;
         peerDataRequestSessionId?: string;
     };
     chatUpserts: {
@@ -187,6 +293,12 @@ export type BufferedEventData = {
     };
     messageDeletes: {
         [key: string]: WAMessageKey;
+    };
+    messageDeleteAll: {
+        [jid: string]: {
+            jid: string;
+            all: true;
+        };
     };
     messageReactions: {
         [key: string]: {

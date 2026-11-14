@@ -1,7 +1,8 @@
-import type { SignalRepository } from '../Types/index.js';
+import type { SignalRepositoryWithLIDStore } from '../Types/index.js';
 import type { AuthenticationCreds, AuthenticationState, KeyPair, SignalIdentity, SignalKeyStore, SignedKeyPair } from '../Types/Auth.js';
-import { type BinaryNode, type JidWithDevice } from '../WABinary/index.js';
+import { type BinaryNode, type FullJid } from '../WABinary/index.js';
 import type { USyncQueryResultList } from '../WAUSync/index.js';
+import type { ILogger } from './logger.js';
 export declare const createSignalIdentity: (wid: string, accountSignatureKey: Uint8Array) => SignalIdentity;
 export declare const getPreKeys: ({ get }: SignalKeyStore, min: number, limit: number) => Promise<{
     [id: string]: KeyPair;
@@ -15,10 +16,21 @@ export declare const generateOrGetPreKeys: (creds: AuthenticationCreds, range: n
 };
 export declare const xmppSignedPreKey: (key: SignedKeyPair) => BinaryNode;
 export declare const xmppPreKey: (pair: KeyPair, id: number) => BinaryNode;
-export declare const parseAndInjectE2ESessions: (node: BinaryNode, repository: SignalRepository) => Promise<void>;
-/** AunuBaileys: session parsed from a retry receipt's embedded key bundle, or undefined when absent. */
-export declare const parseRetryReceiptSession: (node: BinaryNode) => { registrationId: number; identityKey: Buffer; signedPreKey?: { keyId: number; publicKey: Buffer; signature?: Buffer }; preKey?: { keyId: number; publicKey: Buffer } } | undefined;
-export declare const extractDeviceJids: (result: USyncQueryResultList[], myJid: string, myLid: string | undefined, excludeZeroDevices: boolean) => JidWithDevice[];
+export declare const extractE2ESessionFromRetryReceipt: (receipt: BinaryNode) => {
+    registrationId: number;
+    identityKey: Buffer<ArrayBufferLike>;
+    signedPreKey: {
+        keyId: number;
+        publicKey: Buffer<ArrayBufferLike>;
+        signature: Uint8Array<ArrayBufferLike> | Buffer<ArrayBufferLike>;
+    };
+    preKey: {
+        keyId: number;
+        publicKey: Uint8Array;
+    } | undefined;
+} | null;
+export declare const parseAndInjectE2ESessions: (node: BinaryNode, repository: SignalRepositoryWithLIDStore, logger?: ILogger) => Promise<void>;
+export declare const extractDeviceJids: (result: USyncQueryResultList[], myJid: string, myLid: string, excludeZeroDevices: boolean) => FullJid[];
 /**
  * get the next N keys for upload or processing
  * @param count number of pre-keys to get or generate
@@ -26,7 +38,7 @@ export declare const extractDeviceJids: (result: USyncQueryResultList[], myJid: 
 export declare const getNextPreKeys: ({ creds, keys }: AuthenticationState, count: number) => Promise<{
     update: Partial<AuthenticationCreds>;
     preKeys: {
-        [id: string]: KeyPair;
+        [keyId: string]: KeyPair;
     };
 }>;
 export declare const getNextPreKeysNode: (state: AuthenticationState, count: number) => Promise<{
