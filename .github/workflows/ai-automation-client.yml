@@ -7,11 +7,17 @@ on:
   issue_comment:
     types: [created]
 
-  # 2. Cron — 00:00 UTC = 07:00 WIB
+  # 2. Pemicu Pull Request (review + auto-accept / auto-tolak)
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+
+  # 3. Cron — 00:00 UTC = 07:00 WIB (scan penuh harian)
+  #    + tiap 30 menit (sweep ringan: CI gagal & triase issue)
   schedule:
     - cron: '0 0 * * *'
+    - cron: '*/30 * * * *'
 
-  # 3. Manual (+ input instruksi opsional)
+  # 4. Manual (+ input instruksi opsional)
   workflow_dispatch:
     inputs:
       instruction:
@@ -19,21 +25,27 @@ on:
         required: false
         default: ''
 
-# Mencegah dua job jalan barengan (tabrakan push)
+# Mencegah dua job untuk target yang sama jalan barengan (tabrakan push)
 concurrency:
-  group: ai-automation-saas-client
+  group: ai-automation-saas-client-${{ github.event.pull_request.number || github.event.issue.number || 'sweep' }}
   cancel-in-progress: false
 
-# GITHUB_TOKEN hanya untuk checkout (read). Semua write (commit/issue/release)
-# dikerjakan worker server-side via /v1/agent/* memakai PAT bot.
+# GITHUB_TOKEN hanya untuk BACA (checkout, gh pr/run/issue). Semua write
+# (commit/issue/release/merge) dikerjakan worker server-side via /v1/agent/*
+# memakai GitHub App — workflow tidak pernah memegang kredensial tulis.
 permissions:
   contents: read
+  pull-requests: read
+  actions: read
+  issues: read
 
 jobs:
   ai-process:
     # Cegah loop via tipe Bot; balasan bot sendiri (akun User) ditangani di script
     # via deteksi awalan "### 🤖" agar perintah user dari akun mana pun tetap jalan.
-    if: "github.event.sender.type != 'Bot'"
+    # Pengecualian: komentar dari app Sourcery di PR memicu review ulang yang
+    # membaca temuan bug & fix-nya (hanya bila integrasi Sourcery repo aktif).
+    if: "github.event.sender.type != 'Bot' || github.event.sender.login == 'sourcery-ai[bot]'"
     runs-on: ubuntu-latest
     timeout-minutes: 20
 
@@ -45,6 +57,7 @@ jobs:
       AI_MODEL: 'mold'
       AI_MAX_TOKENS: '16000'
       GITHUB_REPO: ${{ github.repository }}  # dipakai untuk header X-Repo (whitelist SaaS)
+      GH_TOKEN: ${{ github.token }}  # hanya BACA: gh pr diff/checks, gh run list/log, gh issue list
 
     steps:
       - name: Checkout Repository
@@ -182,8 +195,9 @@ jobs:
           }
 
           // Panggil Worker Agent API — SEMUA mutasi GitHub (commit, release,
-          // komentar issue, tutup issue) dikerjakan server SaaS dengan PAT
-          // IKBAL-rgb. Workflow ini TIDAK PERNAH memegang token GitHub.
+          // komentar issue, tutup issue, merge/tutup PR, laporan CI) dikerjakan
+          // server SaaS dengan GitHub App. Workflow ini TIDAK PERNAH memegang
+          // kredensial tulis GitHub.
           // Auth: license key + header X-Repo (sama seperti proxy AI).
           async function agentCall(apiPath, body, method = 'POST') {
             const base = String(process.env.AI_ENDPOINT).replace(/\/v1\/chat\/completions$/, '');
@@ -338,6 +352,240 @@ jobs:
               }
             }
 
+            // ===== FITUR: review PR (auto-accept / auto-tolak), sweep CI gagal, triase issue =====
+            // Ketiganya menghormati toggle owner yang dibaca dari pre-flight
+            // (features.pr_review / features.ci_check di /v1/agent/check-access).
+            async function handlePR(xBot, prNumber, sourceryOn, fromSourcery) {
+              const payloadPr = context.payload.pull_request || null;
+              const repoFull = process.env.GITHUB_REPO || '';
+              let view;
+              try {
+                view = JSON.parse(sh(`gh pr view ${prNumber} --json title,body,additions,deletions,changedFiles,files,headRefOid,baseRefName,headRefName,isDraft,author,state`));
+              } catch (e) {
+                console.log('gh pr view gagal (akses baca PR?): ' + e.message); return;
+              }
+              if (view.state && view.state !== 'OPEN') { console.log('PR tidak terbuka — skip.'); return; }
+              const isDraft = payloadPr ? !!payloadPr.draft : !!view.isDraft;
+              if (isDraft) { console.log('PR masih draft — skip.'); return; }
+              const authorLogin = payloadPr ? String((payloadPr.user || {}).login || '') : String((view.author || {}).login || '');
+              const authorBot = payloadPr ? (payloadPr.user || {}).type === 'Bot' : !!(view.author && view.author.is_bot);
+              if (authorBot || /\[bot\]$/i.test(authorLogin)) { console.log('PR dibuat bot — skip.'); return; }
+              const files = (view.files || []).map((f) => f.path).filter(Boolean);
+              let diff = '';
+              try { diff = sh(`gh pr diff ${prNumber}`); } catch { diff = ''; }
+              if (diff.length > 60000) diff = diff.slice(0, 60000) + '\n…(diff dipotong)';
+              let checksState = 'none';
+              let checksLines = 'Tidak ada check yang terdaftar.';
+              try {
+                const cr = JSON.parse(sh(`gh api "repos/${repoFull}/commits/${view.headRefOid}/check-runs?per_page=100"`));
+                const runs = Array.isArray(cr.check_runs) ? cr.check_runs : [];
+                if (runs.length) {
+                  const FAIL = ['failure', 'timed_out', 'cancelled', 'action_required', 'startup_failure'];
+                  if (runs.some((r) => r.status !== 'completed')) checksState = 'pending';
+                  else if (runs.some((r) => FAIL.includes(r.conclusion))) checksState = 'failure';
+                  else checksState = 'success';
+                  checksLines = runs.map((r) => `- ${r.name}: ${r.status === 'completed' ? r.conclusion : r.status}`).join('\n');
+                }
+              } catch { /* check-runs tidak terbaca — anggap none */ }
+              const touchesWorkflow = files.some((f) => f.startsWith('.github/workflows/'));
+              const totalChanges = (Number(view.additions) || 0) + (Number(view.deletions) || 0);
+              const tooBig = totalChanges > 2000;
+
+              // Temuan Sourcery (hanya bila integrasi repo ini aktif): bug & fix
+              // dari app Sourcery menjadi bukti tambahan bagi reviewer. Hasil
+              // review Sourcery hanya muncul per PR di GitHub (daftar bug
+              // repo-wide hanya ada di web dashboard Sourcery) — dan PR yang
+              // terlewat tidak di-review otomatis, jadi bila belum ada temuan
+              // bot MEMICU review-nya (komentar perintah + label).
+              let sourceryItems = [];
+              let sourceryText = '';
+              let sf = null;
+              if (sourceryOn) {
+                try {
+                  sf = await agentCall(`/v1/agent/sourcery?issue_number=${prNumber}&head_sha=${view.headRefOid}`, {}, 'GET');
+                } catch (e) { console.log('Baca temuan Sourcery gagal: ' + e.message); }
+                // Run ini dipicu komentar Sourcery, tapi verdict untuk commit
+                // ini sudah pernah diposting → jangan bakar kuota AI lagi.
+                if (fromSourcery && sf && sf.verdict_posted) {
+                  console.log('Verdict untuk commit ini sudah diposting — skip review ulang.');
+                  return;
+                }
+                if (sf && sf.enabled && sf.found && Array.isArray(sf.items)) {
+                  sourceryItems = sf.items;
+                  sourceryText = sourceryItems.map((it, i) => `[${i + 1}] (${it.kind}${it.path ? ' ' + it.path : ''}) ${String(it.body || '').slice(0, 1200)}${(it.suggestions || []).length ? '\nSaran fix Sourcery:\n' + it.suggestions.join('\n---\n') : ''}`).join('\n\n').slice(0, 20000);
+                  console.log(`Temuan Sourcery terbaca: ${sourceryItems.length} item.`);
+                } else if (sf && sf.enabled) {
+                  try {
+                    const tr = await agentCall('/v1/agent/sourcery-trigger', { issue_number: prNumber, head_sha: view.headRefOid });
+                    if (tr) console.log(`Trigger Sourcery: komentar=${tr.commented || '-'} label=${tr.label ? 'ok' : 'tidak'} — temuannya dipakai pada review berikutnya.`);
+                  } catch (e) { console.log('Trigger Sourcery gagal: ' + e.message); }
+                }
+              }
+
+              const prSystem = `Anda adalah reviewer Pull Request senior yang KETAT tapi adil untuk repo ini.
+              Balas HANYA JSON valid: {"verdict":"accept|reject|hold","confidence":0-100,"summary":"ringkasan (Indonesia)","findings":[{"severity":"critical|major|minor","file":"path","note":"..."}]}
+              Aturan verdict:
+              - "reject" HANYA bila jelas: kode berbahaya/merusak (hapus data, celah keamanan, secret ter-hardcode, backdoor), bug kritis yang pasti, PR spam/kosong/tidak terkait repo, atau perubahan yang pasti merusak build.
+              - "accept" HANYA bila perubahan fokus, aman, konsisten dengan repo, dan tidak ada temuan critical/major.
+              - Selain itu "hold" — manusia yang memutuskan.
+              - confidence harus jujur; di bawah 80 berarti tindakan otomatis tidak akan dijalankan.
+              - Bila prompt memuat TEMUAN SOURCERY: bug kritis dari Sourcery yang cocok dengan diff adalah alasan kuat untuk hold/reject; sebutkan saran fix Sourcery yang relevan di findings.`;
+              const prUser = `Pull Request #${prNumber}: ${view.title}\nBranch: ${view.headRefName} -> ${view.baseRefName}\nDeskripsi: ${String(view.body || '(kosong)').slice(0, 3000)}\n\nFile berubah (${files.length}):\n${files.join('\n')}\n\nStatus CI/checks: ${checksState}\n${checksLines}\n\nDiff:\n${diff || '(diff tidak terbaca)'}${sourceryText ? `\n\nTEMUAN SOURCERY (dari app review Sourcery — bukti tambahan, verifikasi ke diff):\n${sourceryText}` : ''}`;
+              const v = await callAI([{ role: 'system', content: prSystem }, { role: 'user', content: prUser }]);
+              const verdict = ['accept', 'reject', 'hold'].includes(v.verdict) ? v.verdict : 'hold';
+              const conf = Math.max(0, Math.min(100, Number(v.confidence) || 0));
+
+              let action = 'none';
+              let actionNote = '';
+              if (verdict === 'accept') {
+                if (conf < 80) actionNote = `Keyakinan AI ${conf}% (< 80) — tidak di-merge otomatis.`;
+                else if (touchesWorkflow) actionNote = 'PR menyentuh .github/workflows/ — wajib review manusia, tidak pernah auto-merge.';
+                else if (tooBig) actionNote = `Perubahan terlalu besar (${totalChanges} baris) — wajib review manusia.`;
+                else if (checksState === 'failure') actionNote = 'Ada CI/check yang GAGAL — tidak di-merge.';
+                else if (checksState === 'pending') actionNote = 'CI/check masih berjalan — merge menunggu hijau.';
+                else {
+                  const mr = await agentCall('/v1/agent/pr-merge', { pr_number: prNumber, head_sha: view.headRefOid, commit_title: `Merge PR #${prNumber}: ${String(view.title).slice(0, 120)}` });
+                  if (mr && mr.ok) action = 'merged';
+                  else {
+                    action = 'merge-failed';
+                    actionNote = `Merge otomatis gagal: ${(mr && mr.message) || 'tidak diketahui'}${mr && mr.status === 403 ? ' — kemungkinan permission "Pull requests: Read & write" pada GitHub App belum disetujui instalasi.' : ''}`;
+                  }
+                }
+              } else if (verdict === 'reject') {
+                if (conf < 80) actionNote = `Keyakinan AI ${conf}% (< 80) — tidak ditutup otomatis.`;
+                else {
+                  const cl = await agentCall('/v1/agent/pr-close', { pr_number: prNumber });
+                  if (cl && cl.ok) action = 'closed';
+                  else {
+                    action = 'close-failed';
+                    actionNote = `Tutup PR otomatis gagal: ${(cl && cl.message) || 'tidak diketahui'}${cl && cl.status === 403 ? ' — kemungkinan permission "Pull requests: Read & write" pada GitHub App belum disetujui instalasi.' : ''}`;
+                  }
+                }
+              }
+              const emoji = verdict === 'accept' ? '✅' : verdict === 'reject' ? '❌' : '⏸️';
+              const actionLine = action === 'merged' ? '🚀 **PR ini sudah di-merge otomatis oleh bot.**'
+                : action === 'closed' ? '🔒 **PR ini sudah ditutup otomatis oleh bot (ditolak).**'
+                : actionNote ? `ℹ️ Tidak ada aksi otomatis: ${actionNote}` : 'ℹ️ Tidak ada aksi otomatis — menunggu keputusan manusia.';
+              const findings = Array.isArray(v.findings) ? v.findings.slice(0, 15) : [];
+              const srcSection = sourceryItems.length
+                ? `**Temuan Sourcery (${sourceryItems.length}):**\n${sourceryItems.slice(0, 6).map((it) => `- (${it.kind}${it.path ? ' `' + it.path + '`' : ''}) ${String(it.body || '').replace(/\s+/g, ' ').slice(0, 160)}${(it.suggestions || []).length ? ' — 💡 ada saran fix' : ''}`).join('\n')}\n\n`
+                : '';
+              const body = `### 🤖 ${xBot} PR Check\n\n${emoji} **Verdict: ${verdict.toUpperCase()}** — keyakinan ${conf}%\n\n${String(v.summary || 'Tidak ada ringkasan.').slice(0, 4000)}\n\n`
+                + (findings.length ? `**Temuan:**\n${findings.map((f) => `- [${f.severity || 'minor'}] \`${f.file || '-'}\` — ${String(f.note || '').slice(0, 300)}`).join('\n')}\n\n` : '')
+                + srcSection
+                + `**CI/checks:** ${checksState}\n\n${actionLine}\n\n---\n*🤖 Ditenagai ${xBot} — AunuCore*`;
+              try {
+                const cm = await agentCall('/v1/agent/comment', { issue_number: prNumber, body, marker: `pr-check:${view.headRefOid}` });
+                console.log(cm && cm.deduped ? 'Komentar PR untuk commit ini sudah ada (dedupe).' : 'Komentar PR terkirim.');
+              } catch (e) { console.log('Komentar PR gagal: ' + e.message); }
+              console.log(`PR #${prNumber}: verdict=${verdict} conf=${conf} action=${action}`);
+            }
+
+            async function sweepCI(xBot) {
+              const repoFull = process.env.GITHUB_REPO || '';
+              let runs;
+              try {
+                runs = JSON.parse(sh('gh run list --status failure --limit 10 --json databaseId,workflowName,headBranch,headSha,url,createdAt'));
+              } catch { console.log('gh run list gagal — sweep CI dilewati.'); return; }
+              if (!Array.isArray(runs) || !runs.length) return;
+              const ownWorkflow = String(context.workflow || '');
+              const freq = String((context.payload || {}).schedule || '').includes('*/30');
+              const windowMs = freq ? 40 * 60 * 1000 : 25 * 3600 * 1000;
+              for (const r of runs) {
+                if (!r || r.workflowName === ownWorkflow) continue; // jangan laporkan workflow bot sendiri
+                if (Date.now() - new Date(r.createdAt).getTime() > windowMs) continue;
+                const slug = String(r.workflowName || 'workflow').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 40) || 'workflow';
+                const branchSlug = String(r.headBranch || 'main').replace(/[^a-zA-Z0-9_\-.]+/g, '-').slice(0, 60);
+                const issueMarker = `ci:${slug}:${branchSlug}`;
+                const runMarker = `ci-run:${r.databaseId}`;
+                let seen;
+                try { seen = await agentCall('/v1/agent/ci-seen', { issue_marker: issueMarker, run_marker: runMarker }); } catch { continue; }
+                if (seen && seen.disabled) { console.log('Fitur cek CI dimatikan owner — sweep berhenti.'); return; }
+                if (seen && seen.seen) continue;
+                let logs = '';
+                try { logs = sh(`gh run view ${r.databaseId} --log-failed`); } catch { logs = ''; }
+                const logTail = logs ? logs.slice(-12000) : '(log gagal tidak terbaca)';
+                let prNumber = null;
+                try {
+                  const prs = JSON.parse(sh(`gh api "repos/${repoFull}/commits/${r.headSha}/pulls"`));
+                  if (Array.isArray(prs) && prs.length && prs[0].state === 'open') prNumber = prs[0].number;
+                } catch { /* tanpa PR terkait */ }
+                let diag;
+                try {
+                  diag = await callAI([
+                    { role: 'system', content: 'Anda adalah engineer CI/CD senior. Analisis log kegagalan CI berikut dan balas HANYA JSON valid: {"diagnosis":"penyebab dalam 1-3 kalimat (Indonesia)","likely_cause":"akar masalah paling mungkin","suggested_fix":"langkah perbaikan konkret"}' },
+                    { role: 'user', content: `Workflow "${r.workflowName}" gagal di branch ${r.headBranch} (${r.url}).\n\nLog bagian gagal (ekor):\n${logTail}` },
+                  ]);
+                } catch (e) { console.log('Diagnosis CI gagal: ' + e.message); continue; }
+                const bodyCi = `### 🤖 ${xBot} CI Check\n\n❌ Workflow **${r.workflowName}** gagal di branch \`${r.headBranch}\` — [lihat run](${r.url})\n\n**Diagnosis:** ${String(diag.diagnosis || '-').slice(0, 1500)}\n\n**Kemungkinan penyebab:** ${String(diag.likely_cause || '-').slice(0, 1500)}\n\n**Saran perbaikan:** ${String(diag.suggested_fix || '-').slice(0, 2000)}\n\n<details><summary>Cuplikan log yang gagal</summary>\n\n\`\`\`\n${logTail.slice(-3500)}\n\`\`\`\n</details>\n\n---\n*🤖 Ditenagai ${xBot} — AunuCore*`;
+                try {
+                  const rep = await agentCall('/v1/agent/ci-report', { issue_marker: issueMarker, run_marker: runMarker, title: `❌ CI gagal: ${r.workflowName} (${r.headBranch})`, body: bodyCi, ...(prNumber ? { pr_number: prNumber } : {}) });
+                  console.log(`CI ${r.workflowName} run ${r.databaseId}: ${rep && rep.action}`);
+                } catch (e) { console.log('ci-report gagal: ' + e.message); }
+              }
+            }
+
+            async function sweepIssues(xBot) {
+              let list;
+              try {
+                list = JSON.parse(sh('gh issue list --state open --limit 30 --json number,title,author,createdAt'));
+              } catch { return; }
+              if (!Array.isArray(list)) return;
+              let done = 0;
+              for (const it of list) {
+                if (done >= 2) break;
+                if (!it || !it.author || it.author.is_bot) continue;
+                let view;
+                try { view = JSON.parse(sh(`gh issue view ${it.number} --json body,comments`)); } catch { continue; }
+                const comments = Array.isArray(view.comments) ? view.comments : [];
+                if (comments.some((c) => String(c.body || '').startsWith('### 🤖'))) continue;
+                let tri;
+                try {
+                  tri = await callAI([
+                    { role: 'system', content: 'Anda adalah triage engineer. Baca issue berikut dan balas HANYA JSON valid: {"analysis":"analisis singkat masalah & kemungkinan lokasi di repo (Indonesia)","needs":"info tambahan yang perlu diminta dari pelapor, atau string kosong bila cukup jelas"}' },
+                    { role: 'user', content: `Issue #${it.number}: ${it.title}\n\n${String(view.body || '(kosong)').slice(0, 4000)}\n\nStruktur repo:\n${String(buildRepoContext().tree).slice(0, 6000)}` },
+                  ]);
+                } catch { continue; }
+                const bodyT = `### 🤖 ${xBot} Triage\n\n${String(tri.analysis || 'Issue diterima dan dicatat.').slice(0, 3000)}\n\n`
+                  + (tri.needs ? `**Info yang dibutuhkan:** ${String(tri.needs).slice(0, 800)}\n\n` : '')
+                  + `Komentar ini triase berkala agar tidak ada issue yang terlewat tanpa tanggapan. Auto-fix penuh berjalan saat issue dibuat atau saat ada komentar baru.\n\n---\n*🤖 Ditenagai ${xBot} — AunuCore*`;
+                try {
+                  await agentCall('/v1/agent/comment', { issue_number: it.number, body: bodyT, marker: `issue-triage:${it.number}` });
+                  done++;
+                  console.log(`Triase issue #${it.number} terkirim.`);
+                } catch { /* lanjut ke issue berikutnya */ }
+              }
+            }
+
+            const isPREvent = context.eventName === 'pull_request';
+            const isSourceryPRComment = context.eventName === 'issue_comment'
+              && !!(context.payload.issue && context.payload.issue.pull_request)
+              && String(((context.payload.comment || {}).user || {}).login || '') === 'sourcery-ai[bot]';
+            const isFrequentCron = String((context.payload || {}).schedule || '').includes('*/30');
+            if (isPREvent || isSourceryPRComment || context.eventName === 'schedule' || context.eventName === 'workflow_dispatch') {
+              let pf;
+              try {
+                pf = await agentCall('/v1/agent/check-access', {}, 'GET');
+              } catch (e) {
+                const msg = (e.response && e.response.data && e.response.data.error) || e.message;
+                throw new Error(`Pre-flight gagal, AI tidak dipanggil (hemat token): ${msg}`);
+              }
+              const xBot = (pf && pf.bot && pf.bot.display_name) || 'AunuWise';
+              if (pf && pf.upstream_timeout_s) aiTimeoutMs = (Number(pf.upstream_timeout_s) + 60) * 1000;
+              const feats = (pf && pf.features) || { pr_review: true, ci_check: true };
+              if (isPREvent || isSourceryPRComment) {
+                const prNum = isPREvent ? context.payload.pull_request.number : context.payload.issue.number;
+                if (feats.pr_review) await handlePR(xBot, prNum, !!(pf && pf.sourcery), isSourceryPRComment);
+                else console.log('Fitur review PR dimatikan owner — skip.');
+                return;
+              }
+              if (feats.ci_check) await sweepCI(xBot);
+              else console.log('Fitur cek CI dimatikan owner — sweep CI dilewati.');
+              await sweepIssues(xBot);
+              if (isFrequentCron) { console.log('Sweep selesai (cron 30 menit) — scan penuh hanya di cron harian.'); return; }
+              console.log('Sweep selesai — lanjut scan reguler.');
+            }
+
             // Pre-flight: pastikan bot punya akses tulis SEBELUM panggil AI.
             // Gagal di sini = gagal cepat tanpa membuang token/kuota AI.
             let botName = 'AunuWise';
@@ -377,7 +625,7 @@ jobs:
             console.log('AI response parsed OK:', aiData.explanation);
 
             // 1. Tulis file + CHANGELOG, lalu commit VIA WORKER (dilewati untuk komentar PR).
-            //    Tidak ada git push / token GitHub di sini — worker yang commit pakai PAT IKBAL-rgb.
+            //    Tidak ada git push / token tulis GitHub di sini — worker yang commit pakai GitHub App.
             let didCommit = false;
             const updates = (aiData.files_to_update || []).filter(f => f && f.path && typeof f.content === 'string');
             if (updates.length > 0 && !isPR) {
@@ -442,7 +690,7 @@ jobs:
               console.log('AI tidak meminta perubahan file.');
             }
 
-            // 2. Balas issue/komentar + tandai closed jika sudah selesai (via worker, identitas IKBAL-rgb)
+            // 2. Balas issue/komentar + tandai closed jika sudah selesai (via worker, identitas bot App)
             if (isIssueEvent) {
               const issue_number = context.payload.issue.number;
               let ibody = `### 🤖 ${botName} Bot Report\n\n${aiData.explanation || 'Dianalisis.'}\n\n`;
