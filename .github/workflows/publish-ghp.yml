@@ -54,6 +54,12 @@ jobs:
           registry-url: https://npm.pkg.github.com
           scope: '@aunucore'
 
+      - name: Enable Corepack (Yarn 4)
+        run: corepack enable
+
+      - name: Install dependencies
+        run: yarn install
+
       - name: Guard - release tag must match package.json version
         if: github.event_name == 'release'
         run: |
