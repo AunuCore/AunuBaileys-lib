@@ -1779,6 +1779,7 @@ message Message {
     optional StickerPackMessage stickerPackMessage = 86;
     optional FutureProofMessage statusMentionMessage = 87;
     optional PollResultSnapshotMessage pollResultSnapshotMessage = 88;
+    optional PollResultSnapshotMessage pollResultSnapshotMessageV3 = 115;
     optional FutureProofMessage pollCreationOptionImageMessage = 90;
     optional FutureProofMessage associatedChildMessage = 91;
     optional FutureProofMessage groupStatusMentionMessage = 92;

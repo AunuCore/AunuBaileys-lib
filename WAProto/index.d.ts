@@ -18838,6 +18838,9 @@ export namespace proto {
         /** Message pollResultSnapshotMessage */
         pollResultSnapshotMessage?: (proto.Message.IPollResultSnapshotMessage|null);
 
+        /** Message pollResultSnapshotMessageV3 */
+        pollResultSnapshotMessageV3?: (proto.Message.IPollResultSnapshotMessage|null);
+
         /** Message pollCreationOptionImageMessage */
         pollCreationOptionImageMessage?: (proto.Message.IFutureProofMessage|null);
 
@@ -19117,6 +19120,9 @@ export namespace proto {
 
         /** Message pollResultSnapshotMessage. */
         public pollResultSnapshotMessage?: (proto.Message.IPollResultSnapshotMessage|null);
+
+        /** Message pollResultSnapshotMessageV3. */
+        public pollResultSnapshotMessageV3?: (proto.Message.IPollResultSnapshotMessage|null);
 
         /** Message pollCreationOptionImageMessage. */
         public pollCreationOptionImageMessage?: (proto.Message.IFutureProofMessage|null);

@@ -57492,6 +57492,7 @@ export const proto = $root.proto = (() => {
          * @property {proto.Message.IStickerPackMessage|null} [stickerPackMessage] Message stickerPackMessage
          * @property {proto.Message.IFutureProofMessage|null} [statusMentionMessage] Message statusMentionMessage
          * @property {proto.Message.IPollResultSnapshotMessage|null} [pollResultSnapshotMessage] Message pollResultSnapshotMessage
+         * @property {proto.Message.IPollResultSnapshotMessage|null} [pollResultSnapshotMessageV3] Message pollResultSnapshotMessageV3
          * @property {proto.Message.IFutureProofMessage|null} [pollCreationOptionImageMessage] Message pollCreationOptionImageMessage
          * @property {proto.Message.IFutureProofMessage|null} [associatedChildMessage] Message associatedChildMessage
          * @property {proto.Message.IFutureProofMessage|null} [groupStatusMentionMessage] Message groupStatusMentionMessage
@@ -58113,7 +58114,13 @@ export const proto = $root.proto = (() => {
          * @memberof proto.Message
          * @instance
          */
-        Message.prototype.pollResultSnapshotMessage = null;
+        Message.prototype.pollResultSnapshotMessage = null;        /**
+         * Message pollResultSnapshotMessageV3.
+         * @member {proto.Message.IPollResultSnapshotMessage|null|undefined} pollResultSnapshotMessageV3
+         * @memberof proto.Message
+         * @instance
+         */
+        Message.prototype.pollResultSnapshotMessageV3 = null;
 
         /**
          * Message pollCreationOptionImageMessage.
@@ -58685,6 +58692,9 @@ export const proto = $root.proto = (() => {
         Object.defineProperty(Message.prototype, "_pollResultSnapshotMessage", {
             get: $util.oneOfGetter($oneOfFields = ["pollResultSnapshotMessage"]),
             set: $util.oneOfSetter($oneOfFields)
+        });        Object.defineProperty(Message.prototype, "_pollResultSnapshotMessageV3", {
+            get: $util.oneOfGetter($oneOfFields = ["pollResultSnapshotMessageV3"]),
+            set: $util.oneOfSetter($oneOfFields)
         });
 
         // Virtual OneOf for proto3 optional field
@@ -58953,7 +58963,8 @@ export const proto = $root.proto = (() => {
             if (message.statusMentionMessage != null && Object.hasOwnProperty.call(message, "statusMentionMessage"))
                 $root.proto.Message.FutureProofMessage.encode(message.statusMentionMessage, writer.uint32(/* id 87, wireType 2 =*/698).fork()).ldelim();
             if (message.pollResultSnapshotMessage != null && Object.hasOwnProperty.call(message, "pollResultSnapshotMessage"))
-                $root.proto.Message.PollResultSnapshotMessage.encode(message.pollResultSnapshotMessage, writer.uint32(/* id 88, wireType 2 =*/706).fork()).ldelim();
+                $root.proto.Message.PollResultSnapshotMessage.encode(message.pollResultSnapshotMessage, writer.uint32(/* id 88, wireType 2 =*/706).fork()).ldelim();            if (message.pollResultSnapshotMessageV3 != null && Object.hasOwnProperty.call(message, "pollResultSnapshotMessageV3"))
+                $root.proto.Message.PollResultSnapshotMessage.encode(message.pollResultSnapshotMessageV3, writer.uint32(/* id 115, wireType 2 =*/922).fork()).ldelim();
             if (message.pollCreationOptionImageMessage != null && Object.hasOwnProperty.call(message, "pollCreationOptionImageMessage"))
                 $root.proto.Message.FutureProofMessage.encode(message.pollCreationOptionImageMessage, writer.uint32(/* id 90, wireType 2 =*/722).fork()).ldelim();
             if (message.associatedChildMessage != null && Object.hasOwnProperty.call(message, "associatedChildMessage"))
@@ -59313,6 +59324,9 @@ export const proto = $root.proto = (() => {
                     }
                 case 88: {
                         message.pollResultSnapshotMessage = $root.proto.Message.PollResultSnapshotMessage.decode(reader, reader.uint32());
+                        break;
+                    }                case 115: {
+                        message.pollResultSnapshotMessageV3 = $root.proto.Message.PollResultSnapshotMessage.decode(reader, reader.uint32());
                         break;
                     }
                 case 90: {
@@ -60002,6 +60016,13 @@ export const proto = $root.proto = (() => {
                     if (error)
                         return "pollResultSnapshotMessage." + error;
                 }
+            }            if (message.pollResultSnapshotMessageV3 != null && message.hasOwnProperty("pollResultSnapshotMessageV3")) {
+                properties._pollResultSnapshotMessageV3 = 1;
+                {
+                    let error = $root.proto.Message.PollResultSnapshotMessage.verify(message.pollResultSnapshotMessageV3);
+                    if (error)
+                        return "pollResultSnapshotMessageV3." + error;
+                }
             }
             if (message.pollCreationOptionImageMessage != null && message.hasOwnProperty("pollCreationOptionImageMessage")) {
                 properties._pollCreationOptionImageMessage = 1;
@@ -60511,6 +60532,10 @@ export const proto = $root.proto = (() => {
                 if (typeof object.pollResultSnapshotMessage !== "object")
                     throw TypeError(".proto.Message.pollResultSnapshotMessage: object expected");
                 message.pollResultSnapshotMessage = $root.proto.Message.PollResultSnapshotMessage.fromObject(object.pollResultSnapshotMessage);
+            }            if (object.pollResultSnapshotMessageV3 != null) {
+                if (typeof object.pollResultSnapshotMessageV3 !== "object")
+                    throw TypeError(".proto.Message.pollResultSnapshotMessageV3: object expected");
+                message.pollResultSnapshotMessageV3 = $root.proto.Message.PollResultSnapshotMessage.fromObject(object.pollResultSnapshotMessageV3);
             }
             if (object.pollCreationOptionImageMessage != null) {
                 if (typeof object.pollCreationOptionImageMessage !== "object")
@@ -60976,6 +61001,10 @@ export const proto = $root.proto = (() => {
                 object.pollResultSnapshotMessage = $root.proto.Message.PollResultSnapshotMessage.toObject(message.pollResultSnapshotMessage, options);
                 if (options.oneofs)
                     object._pollResultSnapshotMessage = "pollResultSnapshotMessage";
+            }            if (message.pollResultSnapshotMessageV3 != null && message.hasOwnProperty("pollResultSnapshotMessageV3")) {
+                object.pollResultSnapshotMessageV3 = $root.proto.Message.PollResultSnapshotMessage.toObject(message.pollResultSnapshotMessageV3, options);
+                if (options.oneofs)
+                    object._pollResultSnapshotMessageV3 = "pollResultSnapshotMessageV3";
             }
             if (message.pollCreationOptionImageMessage != null && message.hasOwnProperty("pollCreationOptionImageMessage")) {
                 object.pollCreationOptionImageMessage = $root.proto.Message.FutureProofMessage.toObject(message.pollCreationOptionImageMessage, options);
