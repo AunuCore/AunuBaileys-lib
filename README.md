@@ -14,7 +14,7 @@
 **Bad MAC repairs itself. "2000 messages into the future" repairs itself. LID and phone-number identities stay in sync.**
 Plus **29 experimental message tricks no other Baileys fork ships** — and the store everyone thought was gone forever.
 
-📚 **[Full documentation — docsjs.aunucore.eu.cc](https://docsjs.aunucore.eu.cc)** · [Quick start](#-quick-start) · [Experimental API](#-the-experimental-api--29-socket-methods) · [Bahasa Indonesia](#-bahasa-indonesia)
+📚 **[Full documentation — docsjs.aunucore.eu.cc](https://docsjs.aunucore.eu.cc)** · [Quick start](#-quick-start) · [Experimental API](#-the-experimental-api--34-socket-methods) · [Bahasa Indonesia](#-bahasa-indonesia)
 
 > 📦 This package was previously published as `aunubaileys` — that name is frozen at v1.0.73. Same code, new canonical name.
 
@@ -38,9 +38,9 @@ Plus **29 experimental message tricks no other Baileys fork ships** — and the 
 - 🔑 **Pairing that just works** — custom pairing codes, single-flight requests, readiness waits, and failure messages that carry the real disconnect reason.
 - ✅ **Every release is tarball-verified** — each published version passes a clean-room install + import + API-surface audit before it is announced. No exceptions, no skipped versions.
 
-### 🧪 The experimental API — 29 socket methods
+### 🧪 The experimental API — 34 socket methods
 
-Message manipulations that are **impossible in stock WhatsApp**, attached automatically to every socket from `makeWASocket`. All experimental: semantics may change in any release. Honest limit: *the display lies, the content doesn't* — opening a faked item still reveals the real file.
+Message manipulations that are **impossible in stock WhatsApp**, attached automatically to every socket from `makeWASocket`: 29 feature families, 34 methods in total counting the companion helpers (`aunuReadWatermark` / `aunuStripWatermark`, `aunuCancelScheduled` / `aunuListScheduled`, `aunuCancelSelfDestruct`). All experimental: semantics may change in any release. Honest limit: *the display lies, the content doesn't* — opening a faked item still reveals the real file.
 
 | Method | What it does |
 |---|---|
@@ -116,7 +116,7 @@ const { default: makeWASocket, useMultiFileAuthState } = require('@aunucore/bail
 | Piece | Where |
 |---|---|
 | In-memory store | `lib/Store/` |
-| Experimental socket API (29 methods) | `lib/Socket/aunu-experimental.js` |
+| Experimental socket API (34 methods) | `lib/Socket/aunu-experimental.js` |
 | LID identity store (`sock.aunuLid`, `makeLIDStore()`) | `lib/Utils/lid-store.js` |
 | AunuAntiBan | `lib/Utils/antiban.js` |
 | Crash-payload guard | `lib/Utils/aunu-bug-guard.js` |
@@ -128,9 +128,9 @@ Everything else is the upstream core. The patch layer stays small and deliberate
 
 ### 📰 Recent releases
 
-- **1.0.76 — Hunt round 3: the decoder + trust-boundary batch.** Every claim in an external deep-audit was verified against the tree (with repros) before anything was patched. The WABinary decoder gets a 512-level nesting cap (a ~100 KB stanza previously recursed 20,000 deep into a raw stack-overflow RangeError) and a 128 MiB zlib output cap (a max-size frame could inflate ~1000× toward OOM). Media downloads now verify the WhatsApp HMAC on full downloads — tampered or truncated media errors out instead of decrypting silently — and download hosts are allowlisted to WhatsApp/Facebook CDN domains, closing a sender-driven SSRF (foreign hosts fall back to `mmg.whatsapp.net`). Auth files are written `0600` (they hold private keys; old `0644` files self-heal on next save), GraphQL error bodies are drained instead of pinning keep-alive sockets, `link_code_companion_reg` key material is length-validated before any pairing secret is derived, the session watchdog also hears raw WebSocket frames (buffered-event delays no longer read as a false deaf session), and a dead `taskTimeout` in the mutex factory is removed. Deliberately untouched, with recorded reasoning: `isTrustedIdentity` (upstream TOFU), unbounded host store arrays, and the app-state transaction design.
-- **1.0.75 — Partial-config safety + watchdog cleanup.** A partial `transactionOpts` in the socket config can no longer kill every key-store transaction: the config is deep-merged over the defaults and the transaction layer falls back per-field (`maxCommitRetries` 10, `delayBetweenTriesMs` 3000, retries clamped to at least 1 so an explicit `0` means exactly one attempt) — previously the shallow config spread replaced the whole default object, `maxCommitRetries` came out `undefined`, and every transaction threw `failed to commit transaction mutations` without a single commit attempt. The session watchdog's interval is now stopped when the socket ends (its `stop()` existed but was never called anywhere), closing a one-timer-and-socket-graph leak per reconnect cycle.
-- **1.0.74 — Fix-all batch.** The entire 1.0.74 heartbeat queue, closed in one version: `resyncAppState` can no longer spin forever holding the key-store transaction mutex (server-omitted collections finish with a warning, plus a 25-round cap), `startByte`-only media downloads no longer silently return an empty stream, an all-failed sticker pack throws Boom 400 instead of uploading empty, key-material guards now check TYPES (Buffer/string only) at six sites so wrong-typed creds fail descriptively instead of as raw TypeErrors, the noise handshake guards a missing `noiseKey` up front, the pre-login `creds.me` dereference family is closed (acks for `<unavailable>` stanzas survive fresh pairing), and two per-entity maps (`RateLimiter.hits`, bug-guard `recentBySender`) evict stale keys with a lazy sweep.
+- **1.0.89 — README refresh; the v6 line closes.** README-only release (the latest) — no library code changes. This README now reflects the finished state below, with the current feature table above. The 1.0.x line on the 6.7.24 base ends here; the next step is 2.0.0 on the v7 base.
+- **1.0.74–1.0.88 — the hardening programme.** Fifteen themed fix releases that closed the entire verified bug queue: the fix-all batch and the partial-config / watchdog cleanup (1.0.74–1.0.75), the auditor series (1.0.76), socket & pairing (1.0.77), signal & sender-key (1.0.78), credentials & auth state (1.0.79), numeric-config sanitisation at the boundary (1.0.80), emit & listener guards (1.0.81), the receive path — decryption & retry (1.0.82), send & relay (1.0.83), store, event-buffer & file persistence (1.0.84), media with SSRF-safe link previews (1.0.85), groups & chats (1.0.86), newsletters, MEX & app state (1.0.87), and the mixed leftovers that finished the queue (1.0.88). Every finding was re-verified against the tree before it was patched; claims that did not reproduce were recorded as disproven, not patched. **The verified bug queue is now zero.**
+
 Full changelog for every version since 1.0.2: **[docs](https://docsjs.aunucore.eu.cc)** · **[GitHub Releases](https://github.com/AunuCore/AunuBaileys-lib/releases)**.
 
 ### 🙏 Credits
@@ -154,7 +154,7 @@ MIT — primary copyright **AunuCore Creative Network**, upstream WhiskeySockets
 - 🧠 **`makeInMemoryStore` kembali** — store in-memory lengkap yang dihapus upstream, plus ekspor legacy (`processedMessages`, `initInMemoryKeyStore()`, `PHONENUMBER_MCC`).
 - 🛡️ **AunuAntiBan bawaan** — rate limit per-chat & global dengan jitter Gaussian, ramp warmup 7 hari, guard operasi grup, simulasi mengetik, dan saran pemulihan disconnect. Tanpa telemetri.
 - 🧨 **Guard payload crash** — `attachAunuBugGuard(sock)` mendeteksi pesan force-close sebelum sempat membunuh client.
-- 🧪 **29 metode eksperimental** — manipulasi pesan yang mustahil di WhatsApp biasa: watermark tak terlihat, tag-all personal (setiap anggota melihat foto + namanya sendiri), fake doc/video/VN/location/album, ghost mention, pesan hantu, spoiler, status grup, widget A2UI, dan lainnya. Batas jujurnya: *tampilannya yang berbohong, isinya tidak*.
+- 🧪 **34 metode eksperimental** — manipulasi pesan yang mustahil di WhatsApp biasa: watermark tak terlihat, tag-all personal (setiap anggota melihat foto + namanya sendiri), fake doc/video/VN/location/album, ghost mention, pesan hantu, spoiler, status grup, widget A2UI, dan lainnya. Batas jujurnya: *tampilannya yang berbohong, isinya tidak*.
 - ✅ **Setiap rilis terverifikasi tarball** — install bersih + import + audit permukaan API sebelum diumumkan. Tanpa lompat versi.
 
 ### 🚀 Mulai cepat
