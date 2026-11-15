@@ -8,11 +8,32 @@ import type { DownloadableMessage, MediaConnInfo, MediaDecryptionKeyInfo, Socket
 import { type BinaryNode } from '../WABinary/index.js';
 import type { ILogger } from './logger.js';
 export declare const getImageProcessingLibrary: () => Promise<{
-    sharp: any;
+    sharp: typeof import("sharp");
     image?: undefined;
     jimp?: undefined;
 } | {
-    image: any;
+    image: {
+        default: typeof import("@napi-rs/image");
+        compressJpeg(input: Uint8Array, options?: import("@napi-rs/image").JpegCompressOptions | undefined | null, signal?: AbortSignal | undefined | null): Promise<Buffer>;
+        compressJpegSync(input: Uint8Array, options?: import("@napi-rs/image").JpegCompressOptions | undefined | null): Buffer;
+        losslessCompressPng(input: Uint8Array, options?: import("@napi-rs/image").PNGLosslessOptions | undefined | null, signal?: AbortSignal | undefined | null): Promise<Buffer>;
+        losslessCompressPngSync(input: Buffer, options?: import("@napi-rs/image").PNGLosslessOptions | undefined | null): Buffer;
+        pngQuantize(input: Uint8Array, options?: import("@napi-rs/image").PngQuantOptions | undefined | null, signal?: AbortSignal | undefined | null): Promise<Buffer>;
+        pngQuantizeSync(input: Uint8Array, options?: import("@napi-rs/image").PngQuantOptions | undefined | null): Buffer;
+        __napiBindingTarget: "native" | "wasm32-wasi" | "wasm32-wasip1";
+        Transformer: typeof import("@napi-rs/image").Transformer;
+        BlendMode: typeof import("@napi-rs/image").BlendMode;
+        ChromaSubsampling: typeof import("@napi-rs/image").ChromaSubsampling;
+        CompressionType: typeof import("@napi-rs/image").CompressionType;
+        FastResizeFilter: typeof import("@napi-rs/image").FastResizeFilter;
+        FilterType: typeof import("@napi-rs/image").FilterType;
+        Gravity: typeof import("@napi-rs/image").Gravity;
+        JsColorType: typeof import("@napi-rs/image").JsColorType;
+        Orientation: typeof import("@napi-rs/image").Orientation;
+        PngRowFilter: typeof import("@napi-rs/image").PngRowFilter;
+        ResizeFilterType: typeof import("@napi-rs/image").ResizeFilterType;
+        ResizeFit: typeof import("@napi-rs/image").ResizeFit;
+    };
     sharp?: undefined;
     jimp?: undefined;
 } | {
