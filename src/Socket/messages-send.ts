@@ -130,7 +130,19 @@ export const makeMessagesSocket = (config: SocketConfig) => {
 	/** Per-socket media host; updated whenever media_conn is fetched. Defaults to the public WhatsApp host. */
 	let mediaHost: string = DEF_MEDIA_HOST
 	const refreshMediaConn = async (forceGet = false): Promise<MediaConnInfo> => {
-		const media = await mediaConn
+		// AunuBaileys (2.0.5, addendum HB-2026-1112-19; v6 1.0.68 fix
+		// lost in the v7 rebase): a cached mediaConn promise that
+		// rejected used to re-throw here forever, wedging ALL media
+		// uploads until restart. A rejected cache is discarded so the
+		// refresh below can run again.
+		let media: MediaConnInfo | undefined
+		try {
+			media = await mediaConn
+		} catch {
+			media = undefined
+			mediaConn = undefined
+		}
+
 		if (!media || forceGet || new Date().getTime() - media.fetchDate.getTime() > media.ttl * 1000) {
 			mediaConn = (async () => {
 				const result = await query({
@@ -609,9 +621,25 @@ export const makeMessagesSocket = (config: SocketConfig) => {
 		const meLidUser = meLid ? jidDecode(meLid)?.user : null
 
 		const encryptionPromises = (patchedMessages as any).map(
-			async ({ recipientJid: jid, message: patchedMessage }: any) => {
+			async (patchedEntry: any) => {
+				// AunuBaileys (2.0.5, addendum HB-269): the entry used
+				// to be destructured in the parameter list — a
+				// null/undefined entry in the array returned by
+				// patchMessageBeforeSending threw a raw TypeError
+				// during destructuring, BEFORE the per-recipient
+				// try/catch below, so one bad entry rejected the
+				// whole Promise.all and destroyed the entire group
+				// send (defeating the HB-2026-1111-3 isolation).
+				// Destructure inside the guarded body instead; a bad
+				// entry skips only its own recipient.
+				let jid: string | undefined
+				let patchedMessage: any
 				try {
+					;({ recipientJid: jid, message: patchedMessage } = patchedEntry ?? {})
 					if (!jid) return null
+
+					// narrowed copy for the encryption closure below
+					const recipientJid = jid
 
 					// AunuBaileys (HB-269, P4): a per-jid patch entry
 					// whose message is not a valid object would encode
@@ -645,10 +673,10 @@ export const makeMessagesSocket = (config: SocketConfig) => {
 					}
 
 					const bytes = encodeWAMessage(msgToEncrypt)
-					const mutexKey = jid
+					const mutexKey = recipientJid
 
 					const node = await encryptionMutex.mutex(mutexKey, async () => {
-						const { type, ciphertext } = await signalRepository.encryptMessage({ jid, data: bytes })
+						const { type, ciphertext } = await signalRepository.encryptMessage({ jid: recipientJid, data: bytes })
 
 						if (type === 'pkmsg') {
 							shouldIncludeDeviceIdentity = true
@@ -656,7 +684,7 @@ export const makeMessagesSocket = (config: SocketConfig) => {
 
 						return {
 							tag: 'to',
-							attrs: { jid },
+							attrs: { jid: recipientJid },
 							content: [
 								{
 									tag: 'enc',

@@ -248,15 +248,12 @@ export const prepareWAMessageMedia = async (
 	// ptt URL send could drop the original and produce no waveform.
 	const requiresOriginalForSomeProcessing =
 		requiresDurationComputation || requiresThumbnailComputation || requiresWaveformProcessing
-	const { mediaKey, encFilePath, originalFilePath, fileEncSha256, fileSha256, fileLength } = await encryptedStream(
-		uploadData.media,
-		options.mediaTypeOverride || mediaType,
-		{
+	const { mediaKey, encFilePath, originalFilePath, fileEncSha256, fileSha256, fileLength, streamingSidecar } =
+		await encryptedStream(uploadData.media, options.mediaTypeOverride || mediaType, {
 			logger,
 			saveOriginalFileIfRequired: requiresOriginalForSomeProcessing,
 			opts: options.options
-		}
-	)
+		})
 
 	const fileEncSha256B64 = fileEncSha256.toString('base64')
 	const [{ mediaUrl, directPath }] = await Promise.all([
@@ -328,6 +325,10 @@ export const prepareWAMessageMedia = async (
 			fileLength,
 			mediaKeyTimestamp: unixTimestampSeconds(),
 			...uploadData,
+			// AunuBaileys (2.0.5, HB-331): the computed sidecar wins
+			// over anything in uploadData — it is derived from the
+			// actual ciphertext just produced.
+			...(streamingSidecar ? { streamingSidecar } : {}),
 			media: undefined
 		} as any)
 	})
@@ -375,7 +376,18 @@ export const generateForwardMessageContent = (message: WAMessage, forceForward?:
 	content = normalizeMessageContent(content)
 	content = proto.Message.decode(proto.Message.encode(content!).finish())
 
-	let key = Object.keys(content)[0] as keyof proto.IMessage
+	// AunuBaileys (2.0.5, HB-324): the content key used to be
+	// Object.keys(content)[0], unvalidated — an empty message threw a
+	// raw TypeError when contextInfo was assigned, a messageContextInfo-
+	// only message "forwarded" to zero content keys (a silent empty
+	// send), and a senderKeyDistributionMessage could be picked as the
+	// forwardable content. getContentType applies the house rule
+	// (conversation or a *Message key, never the SKDM); no such key
+	// means there is nothing to forward — Boom 400, matching HB-253.
+	let key = getContentType(content)
+	if (!key) {
+		throw new Boom('no forwardable content in message', { statusCode: 400 })
+	}
 
 	let score = (content?.[key] as { contextInfo: proto.IContextInfo })?.contextInfo?.forwardingScore || 0
 	score += message.key.fromMe && !forceForward ? 0 : 1
@@ -977,7 +989,20 @@ export const generateWAMessageContent = async (
 		m.listResponseMessage = { ...message.listReply }
 	} else if (hasNonNullishProperty(message, 'event')) {
 		m.eventMessage = {}
-		const startTime = Math.floor(message.event.startDate.getTime() / 1000)
+		// AunuBaileys (2.0.5, HB-325): startDate used to be dereferenced
+		// unvalidated — a missing or non-Date startDate threw a raw
+		// TypeError where sibling content types throw Boom 400. An
+		// invalid Date (NaN time) is equally unusable on the wire.
+		const { startDate, endDate } = message.event
+		if (!(startDate instanceof Date) || !Number.isFinite(startDate.getTime())) {
+			throw new Boom('event.startDate must be a valid Date', { statusCode: 400 })
+		}
+
+		if (typeof endDate !== 'undefined' && (!(endDate instanceof Date) || !Number.isFinite(endDate.getTime()))) {
+			throw new Boom('event.endDate must be a valid Date', { statusCode: 400 })
+		}
+
+		const startTime = Math.floor(startDate.getTime() / 1000)
 
 		if (message.event.call && options.getCallLink) {
 			const token = await options.getCallLink(message.event.call, { startTime })
@@ -992,7 +1017,10 @@ export const generateWAMessageContent = async (
 		m.eventMessage.name = message.event.name
 		m.eventMessage.description = message.event.description
 		m.eventMessage.startTime = startTime
-		m.eventMessage.endTime = message.event.endDate ? message.event.endDate.getTime() / 1000 : undefined
+		// HB-325 (cont.): endTime is floored like startTime — the wire
+		// field is whole seconds; the unfloored division shipped a
+		// fractional endTime whenever endDate carried milliseconds.
+		m.eventMessage.endTime = endDate ? Math.floor(endDate.getTime() / 1000) : undefined
 		m.eventMessage.isCanceled = message.event.isCancelled ?? false
 		m.eventMessage.extraGuestsAllowed = message.event.extraGuestsAllowed
 		m.eventMessage.isScheduleCall = message.event.isScheduleCall ?? false
@@ -1760,10 +1788,16 @@ export const downloadMediaMessage = async <Type extends 'buffer' | 'stream'>(
 	ctx?: DownloadMediaMessageContext
 ) => {
 	const result = await downloadMsg().catch(async error => {
+		// AunuBaileys (2.0.5, HB-323): Boom carries the HTTP status at
+		// .output.statusCode, never at .status — the old predicate read
+		// .status, was therefore always false, and the reupload branch
+		// was dead: a 404/410 from the CDN failed the download outright
+		// instead of triggering a reupload request.
+		const errorStatus = error?.output?.statusCode ?? error?.status
 		if (
 			ctx &&
-			typeof error?.status === 'number' && // treat errors with status as HTTP failures requiring reupload
-			REUPLOAD_REQUIRED_STATUS.includes(error.status as number)
+			typeof errorStatus === 'number' && // treat errors with status as HTTP failures requiring reupload
+			REUPLOAD_REQUIRED_STATUS.includes(errorStatus)
 		) {
 			ctx.logger.info({ key: message.key }, 'sending reupload media request...')
 			// request reupload

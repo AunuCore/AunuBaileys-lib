@@ -1827,7 +1827,15 @@ export const makeMessagesRecvSocket = (config: SocketConfig) => {
 						if (eligibleIds.length && key.participant) {
 							if (key.fromMe) {
 								try {
-									await updateSendMessageAgainCount(eligibleIds[0]!, key.participant)
+									// AunuBaileys (2.0.5, HB-326): no
+									// pre-increment here — sendMessagesAgain
+									// counts each id inside its loop, gated
+									// per id by willSendMessageAgain. The
+									// extra increment that used to sit here
+									// double-counted eligibleIds[0], so the
+									// first id in every retry receipt burned
+									// its maxMsgRetryCount budget twice as
+									// fast as the rest.
 									logger.debug({ attrs, key }, 'recv retry request')
 									await sendMessagesAgain(key, eligibleIds, retryNode!, node)
 								} catch (error: unknown) {

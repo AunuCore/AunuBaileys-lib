@@ -82,6 +82,13 @@ export declare function generateThumbnail(file: string, mediaType: 'video' | 'im
 export declare const getHttpStream: (url: string | URL, options?: RequestInit & {
     isStream?: true;
 }) => Promise<Readable>;
+/**
+ * Walks the top-level ISO-BMFF boxes (mp4/mov/3gp/m4a) in the leading
+ * bytes. Streamable only when `moov` precedes `mdat`; non-ISO-BMFF
+ * payloads (ogg/opus voice notes) are streamable. Returns true / false,
+ * or null while the head is too short to decide.
+ */
+export declare const aunuScanStreamable: (head: Buffer) => boolean | null;
 type EncryptedStreamOptions = {
     saveOriginalFileIfRequired?: boolean;
     logger?: ILogger;
@@ -97,6 +104,7 @@ export declare const encryptedStream: (media: WAMediaUpload, mediaType: MediaTyp
     fileEncSha256: Buffer<ArrayBufferLike>;
     fileSha256: Buffer<ArrayBufferLike>;
     fileLength: number;
+    streamingSidecar: Buffer<ArrayBufferLike> | undefined;
 }>;
 export declare const DEF_MEDIA_HOST = "mmg.whatsapp.net";
 export type MediaDownloadOptions = {

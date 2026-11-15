@@ -592,6 +592,126 @@ export const getHttpStream = async (url: string | URL, options: RequestInit & { 
 	return response.body instanceof Readable ? response.body : Readable.fromWeb(response.body as any)
 }
 
+// AunuBaileys (1.0.71, restored 2.0.5 HB-331): streaming sidecar —
+// WhatsApp Web's seekable-play sidecar for video/audio: HMAC-SHA256
+// (macKey), truncated to 10 bytes, over each 64 KiB window of
+// iv+ciphertext+mac, with the last 16 bytes of the previous window
+// prepended, so a recipient can verify and play a range without the
+// whole file. Only attached when the container is streamable — a
+// non-faststart mp4 (mdat before moov) must not advertise seekability,
+// or the recipient's player fails instead of falling back to a plain
+// download. The v6 implementation was lost in the v7 rebase; this is
+// a faithful port.
+const AUNU_SIDECAR_CHUNK_SIZE = 65536
+const AUNU_SIDECAR_HMAC_SIZE = 10
+const AUNU_SIDECAR_IV_SIZE = 16
+const AUNU_SIDECAR_SCAN_MAX_BYTES = 1024
+const AUNU_SIDECAR_MEDIA_TYPES = new Set<string>(['video', 'audio', 'ptt', 'gif'])
+
+const aunuReadU32 = (bytes: Buffer, offset: number): number =>
+	(((bytes[offset]! << 24) | (bytes[offset + 1]! << 16) | (bytes[offset + 2]! << 8) | bytes[offset + 3]!) >>> 0) as number
+
+/**
+ * Walks the top-level ISO-BMFF boxes (mp4/mov/3gp/m4a) in the leading
+ * bytes. Streamable only when `moov` precedes `mdat`; non-ISO-BMFF
+ * payloads (ogg/opus voice notes) are streamable. Returns true / false,
+ * or null while the head is too short to decide.
+ */
+export const aunuScanStreamable = (head: Buffer): boolean | null => {
+	if (head.length < 8) {
+		return null
+	}
+
+	if (aunuReadU32(head, 4) !== 0x66747970 /* ftyp */) {
+		return true
+	}
+
+	let offset = 0
+	while (offset + 8 <= head.length) {
+		const type = aunuReadU32(head, offset + 4)
+		if (type === 0x6d6f6f76 /* moov */) {
+			return true
+		}
+
+		if (type === 0x6d646174 /* mdat */) {
+			return false
+		}
+
+		let size = aunuReadU32(head, offset)
+		let headerSize = 8
+		if (size === 1) {
+			if (offset + 16 > head.length) {
+				return null
+			}
+
+			if (aunuReadU32(head, offset + 8) !== 0) {
+				return true
+			}
+
+			size = aunuReadU32(head, offset + 12)
+			headerSize = 16
+		} else if (size === 0) {
+			return true
+		}
+
+		if (size < headerSize) {
+			return true
+		}
+
+		offset += size
+		if (offset > AUNU_SIDECAR_SCAN_MAX_BYTES) {
+			return true
+		}
+	}
+
+	return offset > AUNU_SIDECAR_SCAN_MAX_BYTES ? true : null
+}
+
+class AunuSidecarAccumulator {
+	private readonly macKey: Uint8Array
+	private readonly window: Buffer
+	private windowOffset = 0
+	private totalPushed = 0
+	private nextChunkStart = 0
+	private readonly digests: Buffer[] = []
+
+	constructor(macKey: Uint8Array) {
+		this.macKey = macKey
+		this.window = Buffer.alloc(AUNU_SIDECAR_IV_SIZE + AUNU_SIDECAR_CHUNK_SIZE)
+	}
+
+	push(data: Uint8Array): void {
+		let srcOffset = 0
+		while (srcOffset < data.length) {
+			const windowEnd = this.nextChunkStart + AUNU_SIDECAR_IV_SIZE + AUNU_SIDECAR_CHUNK_SIZE
+			const toCopy = Math.min(windowEnd - this.totalPushed, data.length - srcOffset)
+			this.window.set(data.subarray(srcOffset, srcOffset + toCopy), this.windowOffset)
+			this.windowOffset += toCopy
+			this.totalPushed += toCopy
+			srcOffset += toCopy
+			if (this.totalPushed === windowEnd) {
+				this.flushChunk()
+			}
+		}
+	}
+
+	finish(): Buffer {
+		if (this.windowOffset > 0) {
+			this.flushChunk()
+		}
+
+		return Buffer.concat(this.digests)
+	}
+
+	private flushChunk(): void {
+		const digest = Crypto.createHmac('sha256', this.macKey).update(this.window.subarray(0, this.windowOffset)).digest()
+		this.digests.push(digest.subarray(0, AUNU_SIDECAR_HMAC_SIZE))
+		this.nextChunkStart += AUNU_SIDECAR_CHUNK_SIZE
+		this.window.copyWithin(0, this.windowOffset - AUNU_SIDECAR_IV_SIZE, this.windowOffset)
+		this.windowOffset = AUNU_SIDECAR_IV_SIZE
+	}
+}
+
 type EncryptedStreamOptions = {
 	saveOriginalFileIfRequired?: boolean
 	logger?: ILogger
@@ -656,9 +776,15 @@ export const encryptedStream = async (
 	const sha256Plain = Crypto.createHash('sha256')
 	const sha256Enc = Crypto.createHash('sha256')
 
+	const sidecar = AUNU_SIDECAR_MEDIA_TYPES.has(mediaType) ? new AunuSidecarAccumulator(macKey!) : undefined
+	sidecar?.push(iv)
+	let streamableVerdict: boolean | null = sidecar ? null : false
+	let head = Buffer.alloc(0)
+
 	const onChunk = async (buff: Buffer) => {
 		sha256Enc.update(buff)
 		hmac.update(buff)
+		sidecar?.push(buff)
 		// Handle backpressure: if write returns false, wait for drain
 		if (!encFileWriteStream.write(buff)) {
 			await Promise.race([once(encFileWriteStream, 'drain'), writeErrorPromise])
@@ -692,6 +818,24 @@ export const encryptedStream = async (
 				}
 			}
 
+			if (streamableVerdict === null) {
+				// AunuBaileys (1.0.85, HB-220): the scan only ever
+				// reads the leading ~1 KiB (it decides from box
+				// headers/sizes in that prefix and forces a verdict
+				// past AUNU_SIDECAR_SCAN_MAX_BYTES), but the WHOLE
+				// chunk used to be concatenated into `head` and held
+				// for the entire call — and for Buffer input the
+				// whole media arrives as ONE chunk, so `head` was a
+				// full second copy of the media. Retain only the
+				// prefix the scan can consume; its verdicts are
+				// unchanged.
+				head = Buffer.concat([head, data]).subarray(0, AUNU_SIDECAR_SCAN_MAX_BYTES + 32)
+				streamableVerdict = aunuScanStreamable(head)
+				if (streamableVerdict === null && head.length > AUNU_SIDECAR_SCAN_MAX_BYTES) {
+					streamableVerdict = true
+				}
+			}
+
 			sha256Plain.update(data)
 			await onChunk(aes.update(data))
 		}
@@ -706,6 +850,11 @@ export const encryptedStream = async (
 
 		const mac = hmac.digest().slice(0, 10)
 		sha256Enc.update(mac)
+		sidecar?.push(mac)
+
+		// HB-331: a non-faststart mp4 (mdat before moov) must not
+		// advertise seekability — see aunuScanStreamable.
+		const streamingSidecar = sidecar && streamableVerdict !== false ? sidecar.finish() : undefined
 
 		const fileSha256 = sha256Plain.digest()
 		const fileEncSha256 = sha256Enc.digest()
@@ -739,7 +888,8 @@ export const encryptedStream = async (
 			mac,
 			fileEncSha256,
 			fileSha256,
-			fileLength
+			fileLength,
+			streamingSidecar
 		}
 	} catch (error) {
 		// destroy all streams with error
