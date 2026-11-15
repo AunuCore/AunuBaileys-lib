@@ -75,13 +75,20 @@ export const makeGroupsSocket = (config: SocketConfig) => {
 	}
 
 	sock.ws.on('CB:ib,,dirty', async (node: BinaryNode) => {
-		const { attrs } = getBinaryNodeChild(node, 'dirty')!
-		if (attrs.type !== 'groups') {
-			return
-		}
+		// AunuBaileys (HB-287, donor v6 HB-2026-1112-4): a rejected
+		// fetch/cleanDirtyBits here (e.g. the socket closes mid-sync)
+		// used to be an unhandled rejection = process crash.
+		try {
+			const { attrs } = getBinaryNodeChild(node, 'dirty')!
+			if (attrs.type !== 'groups') {
+				return
+			}
 
-		await groupFetchAllParticipating()
-		await sock.cleanDirtyBits('groups')
+			await groupFetchAllParticipating()
+			await sock.cleanDirtyBits('groups')
+		} catch (err) {
+			sock.onUnexpectedError(err as Error, 'dirty bits (groups)')
+		}
 	})
 
 	return {

@@ -1496,6 +1496,10 @@ export const makeMessagesSocket = (config: SocketConfig) => {
 			let error: Error | undefined = undefined
 			await Promise.all([
 				sendNode(node),
+				// AunuBaileys (HB-294, donor v6 HB-20): this wait used to
+				// be unbounded — a peer that never sends a media-update
+				// hung the caller forever and leaked the wait's two
+				// listeners per call. Bound it to 120s.
 				waitForMsgMediaUpdate(async update => {
 					const result = update.find(c => c.key.id === message.key.id)
 					if (result) {
@@ -1523,7 +1527,7 @@ export const makeMessagesSocket = (config: SocketConfig) => {
 
 						return true
 					}
-				})
+				}, 120_000)
 			])
 
 			if (error) {

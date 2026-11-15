@@ -1280,7 +1280,10 @@ export const makeMessagesRecvSocket = (config: SocketConfig) => {
 				break
 			case 'mediaretry':
 				const event = decodeMediaRetryNode(node)
-				ev.emit('messages.media-update', [event])
+				if (event) {
+					ev.emit('messages.media-update', [event])
+				}
+
 				break
 			case 'encrypt':
 				await handleEncryptNotification(node)

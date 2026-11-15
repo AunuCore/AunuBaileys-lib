@@ -39,7 +39,7 @@ Plus **34 experimental message methods no other Baileys fork ships** — and the
 - 🚨 **BanSentinel (new in 2.0.0)** — a persistent anti-ban guard, **on by default**. It watches for ban signals — ban keywords in errors, dangerous disconnect codes (401 / 403 / 440), and bursts of failures — and, once tripped, blocks new connections for a cooldown period with a `Boom` 503 from its gate. The guard state persists in a guard file (`.baileys-ban-guard.json` by default) so a restart does not silently reset a tripped guard; a corrupt or unwritable guard file degrades to in-memory-only mode and never crashes the host. Disable it with `banSentinel: false` in the socket config, or pass an options object to tune it. The active sentinel is exposed as `sock.aunuBanSentinel` and the `AunuBanSentinel` class, `createBanSentinel`, and its guard stores are exported for direct use.
 - 🧨 **Crash-payload guard** — `attachAunuBugGuard(sock)` detects force-close payloads (invisible-char floods, nesting bombs, mention floods) in incoming and outgoing messages before they can kill a client.
 - 🔑 **Pairing that just works** — custom pairing codes, single-flight requests, readiness waits, and failure messages that carry the real disconnect reason.
-- 🧪 **A real test suite, in the repo** — 2.0.0 ships a regression suite under `test/` (Node's built-in test runner, no extra test dependencies) covering the export surface, the 34 experimental methods, BanSentinel, auth-state compatibility, the event buffer and store, internal caches and mutexes, and the re-applied hardening fixes. CI runs the build and the suite on every push and pull request, and both publish workflows (npm and GitHub Packages) run the suite as a test job that must pass before the publish job is allowed to run.
+- 🧪 **A real test suite, in the repo** — a regression suite under `test/` (Node's built-in test runner, no extra test dependencies), now **94 tests**, covering the export surface, the 34 experimental methods, BanSentinel, auth-state compatibility, the event buffer and store, internal caches and mutexes, and the re-applied hardening fixes. Every fix in 2.0.4 ships with a regression test that was mutation-checked (revert the fix and its test fails). CI runs the build and the suite on every push and pull request, and both publish workflows (npm and GitHub Packages) run the suite as a test job that must pass before the publish job is allowed to run.
 - 📦 **Dependency diet** — runtime dependencies are down from 12 to **6**: `@hapi/boom`, `libsignal`, `pino`, `protobufjs`, `whatsapp-rust-bridge`, and `ws`. The small utilities that used to be external packages — the keyed database, the bounded caches, and the mutexes — are now internal modules, covered by the test suite.
 - ✅ **Every release is tarball-verified** — each published version passes a clean-room install + import + API-surface audit before it is announced. No exceptions, no skipped versions.
 
@@ -127,7 +127,7 @@ sock.ev.on('creds.update', saveCreds)
 await sock.aunuGhostMention(groupJid, { text: 'meeting in 5' })
 ```
 
-**Requirements:** Node.js ≥ 20. **ESM only** — 2.0.0 is an ESM package with complete TypeScript types; there is no CommonJS entry point on the v7 base.
+**Requirements:** Node.js ≥ 20. **ESM only** — the 2.x line is an ESM package with complete TypeScript types; there is no CommonJS entry point on the v7 base.
 
 ### 🛠️ The patch layer
 
@@ -148,6 +148,19 @@ Everything else is the upstream v7 core, frozen at the snapshot commit above. Th
 
 ### 📰 Recent releases
 
+- **2.0.4 — nine v6 hardening fixes restored on the v7 base.** A batch of verified regressions from the rebase — each re-verified against the tree before patching, and locked in with a mutation-checked regression test (the suite is now 94 tests):
+  - The three `CB:ib,,dirty` sync listeners (groups, communities, chats) can no longer crash the process with an unhandled rejection when the socket drops mid-sync — a failed dirty-bits sync is logged and life goes on.
+  - Creating a newsletter channel without a picture or description no longer throws a raw `TypeError`; the missing fields come back as `undefined`.
+  - A CDN drop in the middle of a media download now surfaces as a stream error to the consumer, instead of an uncaught exception in the process plus a download that hangs forever.
+  - An empty download (a 200 response with no body) fails with a typed `Boom` 502 instead of a bare `TypeError`.
+  - A media-retry receipt without its `<rmr>` node is skipped quietly instead of throwing and losing the `messages.media-update` event.
+  - A malformed data URL with no comma separator is rejected with `Boom` 400, like every other unusable media shape.
+  - `extensionForMediaMessage` returns `undefined` for missing or empty content instead of throwing.
+  - `updateMediaMessage` gives up after 120 seconds when the companion device never answers, instead of waiting forever and leaking two listeners per call.
+  - A malformed verified-name certificate riding on a message is ignored, so the message itself still decrypts and is delivered — previously the whole message was thrown away and the server kept redelivering it into the same failure.
+- **2.0.3 — repository cleanup (metadata only).** The inherited upstream leftovers that are not part of AunuBaileys (demo media, the upstream example, dead Jest tooling, proto-extract, Yarn leftovers, archived upstream docs) were removed, the changelog became AunuBaileys' own, and the `whiskeysockets` package keyword was dropped. Library code identical to 2.0.2.
+- **2.0.2 — three v6 hardening fixes restored.** The `CB:ib,,offline_preview` handler can no longer crash the process when the socket closes mid-send (HB-283); a malformed pre-key count from the server no longer silently skips the pre-key upload (HB-284); a malformed stream-error code can no longer make the `CB:stream:error` handler throw instead of disconnecting cleanly (HB-285).
+- **2.0.1 — metadata release.** The npm tarball ships the canonical AunuCore LICENSE (AunuCore Creative Network first, upstream attribution retained). Library code identical to 2.0.0.
 - **2.0.0 — the v7 base.** AunuBaileys rebased onto a frozen snapshot of WhiskeySockets Baileys v7 master (`bb0a87e0326ca8f882fe716c7ee42da362f73fc0`), TypeScript / ESM only. The full hardening programme from the 1.0.x line was re-applied and re-verified on the new base, together with the remaining queue. New: BanSentinel (on by default), the in-repo test suite with CI gating both publish workflows, and the dependency diet (runtime 12 → 6, with keyed-db / cache / mutex now internal). Also restored on the new base: recovery from `405` / `clientTooOld`, the `newsletter.status` event, and sticker packs. Existing v6 auth state loads with no re-pairing.
 - **1.0.89 — README refresh; the v6 line closes.** README-only release — no library code changes. The 1.0.x line on the 6.7.24 base ends there; 2.0.0 is the next step.
 - **1.0.74–1.0.88 — the hardening programme.** Fifteen themed fix releases that closed the entire verified bug queue on the v6 base. Every finding was re-verified against the tree before it was patched; claims that did not reproduce were recorded as disproven, not patched. **The verified bug queue reached zero on v6 — and was then re-verified on the v7 base for 2.0.0.**

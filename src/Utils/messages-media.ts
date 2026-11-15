@@ -519,7 +519,16 @@ export const getStream = async (item: WAMediaUpload, opts?: RequestInit & { maxC
 	const urlStr = item.url.toString()
 
 	if (urlStr.startsWith('data:')) {
-		const buffer = Buffer.from(urlStr.split(',')[1]!, 'base64')
+		// AunuBaileys (HB-292, donor v6 HB-32): a data URL without the
+		// comma separator used to explode as a raw TypeError from
+		// Buffer.from(undefined) — reject it like the other unusable
+		// media shapes above, with a Boom 400.
+		const comma = urlStr.indexOf(',')
+		if (comma === -1) {
+			throw new Boom('Invalid data URL: missing comma separator', { statusCode: 400 })
+		}
+
+		const buffer = Buffer.from(urlStr.slice(comma + 1), 'base64')
 		return { stream: toReadable(buffer), type: 'buffer' } as const
 	}
 
@@ -986,6 +995,14 @@ export const downloadEncryptedContent = async (
 			}
 		},
 		final(callback) {
+			// AunuBaileys (HB-290, donor v6 HB-12): a 200 response with
+			// zero chunks leaves `aes` undefined, so final() threw a
+			// bare TypeError. Fail with a meaningful error instead.
+			if (!aes) {
+				callback(new Boom('Empty media download: server returned no data to decrypt', { statusCode: 502 }))
+				return
+			}
+
 			try {
 				pushBytes(aes.final(), b => this.push(b))
 			} catch (error: any) {
@@ -1012,18 +1029,32 @@ export const downloadEncryptedContent = async (
 			callback()
 		}
 	})
+	// AunuBaileys (HB-289, donor v6 HB-52): stream.pipe() does NOT
+	// forward source errors to the destination — a CDN drop
+	// mid-download left the source 'error' unhandled (crashing the
+	// process) and the consumer hanging forever. Destroy the
+	// Transform with the source error instead.
+	fetched.on('error', err => output.destroy(err))
 	return fetched.pipe(output, { end: true })
 }
 
 export function extensionForMediaMessage(message: WAMessageContent) {
-	const getExtension = (mimetype: string) => mimetype.split(';')[0]?.split('/')[1]
+	const getExtension = (mimetype: string | null | undefined) => mimetype?.split(';')[0]?.split('/')[1]
+	// AunuBaileys (HB-293, donor v6 HB-33 + 1.0.71 extension): the
+	// media-content object itself can be undefined/null
+	// ({imageMessage: undefined}, {}) — guard that too, not just the
+	// mimetype deref.
+	if (!message || typeof message !== 'object') {
+		return undefined
+	}
+
 	const type = Object.keys(message)[0] as Exclude<MessageType, 'toJSON'>
-	let extension: string
+	let extension: string | undefined
 	if (type === 'locationMessage' || type === 'liveLocationMessage' || type === 'productMessage') {
 		extension = '.jpeg'
 	} else {
 		const messageContent = message[type] as WAGenericMediaMessage
-		extension = getExtension(messageContent.mimetype!)!
+		extension = getExtension(messageContent?.mimetype)
 	}
 
 	return extension
@@ -1327,7 +1358,14 @@ export const encryptMediaRetryRequest = (key: WAMessageKey, mediaKey: Buffer | U
 }
 
 export const decodeMediaRetryNode = (node: BinaryNode) => {
-	const rmrNode = getBinaryNodeChild(node, 'rmr')!
+	const rmrNode = getBinaryNodeChild(node, 'rmr')
+
+	// AunuBaileys (HB-291, donor v6 HB-11): a mediaretry receipt
+	// without an <rmr> child used to throw here, silently stalling
+	// the re-upload flow.
+	if (!rmrNode) {
+		return null
+	}
 
 	const event: BaileysEventMap['messages.media-update'][number] = {
 		key: {

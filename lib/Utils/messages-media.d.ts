@@ -113,7 +113,7 @@ export declare const downloadContentFromMessage: ({ mediaKey, directPath, url }:
  * Assumes the SHA256 of the plaintext is appended to the end of the ciphertext
  * */
 export declare const downloadEncryptedContent: (downloadUrl: string, { cipherKey, iv, macKey }: MediaDecryptionKeyInfo, { startByte, endByte, options }?: MediaDownloadOptions) => Promise<Transform>;
-export declare function extensionForMediaMessage(message: WAMessageContent): string;
+export declare function extensionForMediaMessage(message: WAMessageContent): string | undefined;
 type MediaUploadResult = {
     url?: string;
     direct_path?: string;
@@ -141,7 +141,7 @@ export declare const decodeMediaRetryNode: (node: BinaryNode) => {
         iv: Uint8Array;
     };
     error?: Boom;
-};
+} | null;
 export declare const decryptMediaRetryData: ({ ciphertext, iv }: {
     ciphertext: Uint8Array;
     iv: Uint8Array;

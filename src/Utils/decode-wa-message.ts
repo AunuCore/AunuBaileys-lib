@@ -391,9 +391,16 @@ export const decryptMessageNode = (
 
 				for (const { tag, attrs, content } of stanza.content) {
 					if (tag === 'verified_name' && content instanceof Uint8Array) {
-						const cert = proto.VerifiedNameCertificate.decode(content)
-						const details = proto.VerifiedNameCertificate.Details.decode(cert.details!)
-						fullMessage.verifiedBizName = details.verifiedName
+						// AunuBaileys (HB-314, donor v6 HB-2026-1112-2): a
+						// malformed certificate (missing details /
+						// truncated bytes) must not kill decryption of
+						// the actual message — skip the certificate and
+						// carry on.
+						try {
+							const cert = proto.VerifiedNameCertificate.decode(content)
+							const details = proto.VerifiedNameCertificate.Details.decode(cert.details!)
+							fullMessage.verifiedBizName = details.verifiedName
+						} catch {}
 					}
 
 					if (tag === 'unavailable' && attrs.type === 'view_once') {
