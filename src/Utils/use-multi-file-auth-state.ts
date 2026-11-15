@@ -1,5 +1,6 @@
 import { Mutex } from './mutex'
-import { chmod, mkdir, readFile, stat, unlink, writeFile } from 'fs/promises'
+import { mkdir, readFile, rename, stat, unlink, writeFile } from 'fs/promises'
+import type { ILogger } from './logger'
 import { join } from 'path'
 import { proto } from '../../WAProto/index.js'
 import type { AuthenticationCreds, AuthenticationState, SignalDataTypeMap } from '../Types'
@@ -13,11 +14,22 @@ import { BufferJSON } from './generics'
 const fileLocks = new Map<string, Mutex>()
 
 // Get or create a mutex for a specific file path
+const MAX_FILE_LOCKS = 1000
+
 const getFileLock = (path: string): Mutex => {
 	let mutex = fileLocks.get(path)
 	if (!mutex) {
 		mutex = new Mutex()
 		fileLocks.set(path, mutex)
+		// AunuBaileys (2.1.0, HB-296, donor v6): one Mutex per auth file forever grew this map without bound — evict the oldest UNLOCKED entry past the cap (a locked one is in use and must stay).
+		if (fileLocks.size > MAX_FILE_LOCKS) {
+			for (const [key, m] of fileLocks) {
+				if (key !== path && !m.isLocked()) {
+					fileLocks.delete(key)
+					break
+				}
+			}
+		}
 	}
 
 	return mutex
@@ -52,7 +64,8 @@ const isValidCredsShape = (creds: any) =>
 	isCredsKeyPair(creds.pairingEphemeralKeyPair)
 
 export const useMultiFileAuthState = async (
-	folder: string
+	folder: string,
+	logger?: ILogger
 ): Promise<{ state: AuthenticationState; saveCreds: () => Promise<void> }> => {
 	// eslint-disable-next-line @typescript-eslint/no-explicit-any
 	const writeData = async (data: any, file: string) => {
@@ -61,13 +74,14 @@ export const useMultiFileAuthState = async (
 
 		return mutex.acquire().then(async release => {
 			try {
-				// AunuBaileys (HB-116, re-applied P3): auth files hold
-				// credential material \u2014 write them owner-only (0600),
-				// never with the process-default mode.
-				await writeFile(filePath, JSON.stringify(data, BufferJSON.replacer), { mode: 0o600 })
-				// mode only applies at creation \u2014 chmod so a pre-existing
-				// looser file self-heals to 0600 on its next save (v6 parity).
-				await chmod(filePath, 0o600).catch(() => {})
+				// AunuBaileys (2.1.0, HB-303, donor v6): atomic tmp+rename — a crash mid-write used to leave a truncated auth file behind (a lost WhatsApp identity). Write the tmp file 0600; the rename carries the mode onto the target, so pre-existing looser files also self-heal to 0600 on their next save.
+				const tmpPath = `${filePath}.tmp-${process.pid}`
+				await writeFile(tmpPath, JSON.stringify(data, BufferJSON.replacer), { mode: 0o600 })
+				await rename(tmpPath, filePath)
+			} catch (err) {
+				// AunuBaileys (2.1.0, HB-318, donor v6): a failed persist (full disk, permissions) must be visible where it happens — it otherwise surfaces one boot later as a random logout. Still thrown.
+				logger?.error({ file, err: (err as Error)?.message || String(err) }, 'aunu: failed to persist auth file')
+				throw err
 			} finally {
 				release()
 			}
@@ -88,6 +102,10 @@ export const useMultiFileAuthState = async (
 				}
 			})
 		} catch (error) {
+			// AunuBaileys (2.1.0, HB-318, donor v6): a missing file is a normal first run and stays silent; anything else (corrupt JSON, unreadable file) means stored state is being silently discarded — say so, loudly.
+			if ((error as NodeJS.ErrnoException)?.code !== 'ENOENT') {
+				logger?.error({ file, err: (error as Error)?.message || String(error) }, 'aunu: auth file unreadable or corrupt — treating as missing')
+			}
 			return null
 		}
 	}
@@ -130,7 +148,18 @@ export const useMultiFileAuthState = async (
 	// present-but-invalid creds is discarded, exactly like corrupt
 	// JSON. Key material follows the HB-98 test (Buffer or base64
 	// string); ids must be finite numbers.
-	const creds: AuthenticationCreds = isValidCredsShape(storedCreds) ? storedCreds : initAuthCreds()
+	const creds: AuthenticationCreds = isValidCredsShape(storedCreds)
+		? storedCreds
+		: (() => {
+				// AunuBaileys (2.1.0, HB-318, donor v6): a present-but-invalid creds.json used to be discarded silently — say so, loudly.
+				if (storedCreds) {
+					logger?.error(
+						{ file: 'creds.json' },
+						'aunu: creds.json does not have the shape of a complete auth state — discarding it and starting fresh; restore a full backup or pair again'
+					)
+				}
+				return initAuthCreds()
+			})()
 
 	return {
 		state: {

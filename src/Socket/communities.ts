@@ -1,3 +1,4 @@
+import { Boom } from '@hapi/boom'
 import { proto } from '../../WAProto/index.js'
 import {
 	type GroupMetadata,
@@ -63,12 +64,17 @@ export const makeCommunitiesSocket = (config: SocketConfig) => {
 		if (communitiesChild) {
 			const communities = getBinaryNodeChildren(communitiesChild, 'community')
 			for (const communityNode of communities) {
-				const meta = extractCommunityMetadata({
-					tag: 'result',
-					attrs: {},
-					content: [communityNode]
-				})
-				data[meta.id] = meta
+				// AunuBaileys (2.1.0, HB-126): isolate per-node failures — one malformed community node must not kill the whole fetch.
+				try {
+					const meta = extractCommunityMetadata({
+						tag: 'result',
+						attrs: {},
+						content: [communityNode]
+					})
+					data[meta.id] = meta
+				} catch (err) {
+					logger.warn({ err, communityNode }, 'skipping malformed community in communityFetchAllParticipating')
+				}
 			}
 		}
 
@@ -360,12 +366,19 @@ export const makeCommunitiesSocket = (config: SocketConfig) => {
 		communityAcceptInviteV4: ev.createBufferedFunction(
 			async (key: string | WAMessageKey, inviteMessage: proto.Message.IGroupInviteMessage) => {
 				key = typeof key === 'string' ? { remoteJid: key } : key
-				const results = await communityQuery(inviteMessage.groupJid!, 'set', [
+				// AunuBaileys (2.1.0, HB-21/22): an invite message missing its fields used to throw a raw TypeError from .toString() — reject it as a caller-visible Boom 400 instead.
+				const { groupJid, inviteCode, inviteExpiration } = inviteMessage
+				if (!groupJid || !inviteCode || typeof inviteExpiration !== 'number') {
+					throw new Boom('communityAcceptInviteV4: invite message is missing groupJid, inviteCode or inviteExpiration', {
+						statusCode: 400
+					})
+				}
+				const results = await communityQuery(groupJid, 'set', [
 					{
 						tag: 'accept',
 						attrs: {
-							code: inviteMessage.inviteCode!,
-							expiration: inviteMessage.inviteExpiration!.toString(),
+							code: inviteCode,
+							expiration: inviteExpiration.toString(),
 							admin: key.remoteJid!
 						}
 					}
@@ -439,7 +452,18 @@ export const makeCommunitiesSocket = (config: SocketConfig) => {
 }
 
 export const extractCommunityMetadata = (result: BinaryNode) => {
-	const community = getBinaryNodeChild(result, 'community')!
+	const community = getBinaryNodeChild(result, 'community')
+	if (!community) {
+		// AunuBaileys (2.1.0, HB-301): mirror extractGroupMetadata's guard — surface server/client errors instead of a bare TypeError.
+		const errorNode = getBinaryNodeChild(result, 'error')
+		if (errorNode) {
+			const rawCode = errorNode.attrs.code ? +errorNode.attrs.code : 500
+			const code = Number.isInteger(rawCode) && rawCode >= 400 && rawCode <= 599 ? rawCode : 500
+			const text = errorNode.attrs.text || 'community metadata query failed'
+			throw new Boom(text, { statusCode: code, data: errorNode })
+		}
+		throw new Boom('Invalid community metadata response: missing <community> node', { data: result })
+	}
 	const descChild = getBinaryNodeChild(community, 'description')
 	let desc: string | undefined
 	let descId: string | undefined

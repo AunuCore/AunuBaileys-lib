@@ -275,17 +275,38 @@ export const decodeSyncdMutations = async (
 			continue
 		}
 
-		const syncAction = proto.SyncActionData.decode(result)
+		// AunuBaileys (2.1.0, sweep): a record whose payload is not a
+		// SyncActionData must not abort the whole patch — skip it per-item,
+		// like the decrypt-failure path above.
+		let syncAction: proto.SyncActionData
+		try {
+			syncAction = proto.SyncActionData.decode(result)
+		} catch {
+			continue
+		}
 
 		if (validateMacs) {
-			const hmac = hmacSign(syncAction.index!, key.indexKey)
-			if (Buffer.compare(hmac, record.index!.blob!) !== 0) {
+			// A record without an index cannot be HMAC-verified — skip it
+			// per-item instead of dying on a raw deref and aborting the
+			// patch. The deliberate throw below still parks the collection
+			// when the HMAC itself mismatches.
+			if (!syncAction.index || !record.index?.blob) {
+				continue
+			}
+			const hmac = hmacSign(syncAction.index, key.indexKey)
+			if (Buffer.compare(hmac, record.index.blob) !== 0) {
 				throw new Boom('HMAC index verification failed')
 			}
 		}
 
-		const indexStr = Buffer.from(syncAction.index!).toString()
-		onMutation({ syncAction, index: JSON.parse(indexStr) })
+		try {
+			// A missing index (validateMacs off) or an unparseable index
+			// string, or a throwing host callback — skip this record
+			// per-item instead of aborting the patch.
+			onMutation({ syncAction, index: JSON.parse(Buffer.from(syncAction.index!).toString()) })
+		} catch {
+			continue
+		}
 
 		ltGenerator.mix({
 			indexMac: record.index!.blob!,

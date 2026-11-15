@@ -86,6 +86,8 @@ export const makeSessionWatchdog = (sock, options = {}) => {
 		if (timer) {
 			return watchdog
 		}
+		// AunuBaileys (2.1.0, HB-322): stop() removes all listeners, so start() must re-attach them — otherwise the watchdog kept firing false deaf alerts while traffic flowed.
+		attachListeners()
 		timer = setInterval(check, checkIntervalMs)
 		if (typeof timer.unref === 'function') {
 			timer.unref()
@@ -106,6 +108,7 @@ export const makeSessionWatchdog = (sock, options = {}) => {
 				rawWs.removeListener('message', markInbound)
 			}
 		}
+		listenersAttached = false
 		return watchdog
 	}
 	const getState = () => ({
@@ -114,22 +117,30 @@ export const makeSessionWatchdog = (sock, options = {}) => {
 		running: !!timer,
 		firedForEpisode
 	})
-	ev.on('messages.upsert', markInbound)
-	ev.on('messages.update', markInbound)
-	ev.on('connection.update', onConnectionUpdate)
-	// AunuBaileys (1.0.76): Hunt-ronde-3 — ALSO observe the raw WebSocket
-	// frame stream when available. messages.upsert/update travel through
-	// the event buffer, which DEFERS delivery to listeners while a
-	// buffered function runs (app-state resync, history processing): real
-	// inbound messages then fail to re-arm the watchdog for the whole
-	// buffering window and a long sync reads as a deaf session — a false
-	// alert. Raw frames are never buffered, and for a deaf-session
-	// detector any inbound frame (message, receipt, IQ, keep-alive reply)
-	// is the truer liveness signal anyway. Detached again in stop().
 	const rawWs = sock.ws && typeof sock.ws.on === 'function' ? sock.ws : null
-	if (rawWs) {
-		rawWs.on('message', markInbound)
+	let listenersAttached = false
+	const attachListeners = () => {
+		if (listenersAttached) {
+			return
+		}
+		listenersAttached = true
+		ev.on('messages.upsert', markInbound)
+		ev.on('messages.update', markInbound)
+		ev.on('connection.update', onConnectionUpdate)
+		// AunuBaileys (1.0.76): Hunt-ronde-3 — ALSO observe the raw WebSocket
+		// frame stream when available. messages.upsert/update travel through
+		// the event buffer, which DEFERS delivery to listeners while a
+		// buffered function runs (app-state resync, history processing): real
+		// inbound messages then fail to re-arm the watchdog for the whole
+		// buffering window and a long sync reads as a deaf session — a false
+		// alert. Raw frames are never buffered, and for a deaf-session
+		// detector any inbound frame (message, receipt, IQ, keep-alive reply)
+		// is the truer liveness signal anyway. Detached again in stop().
+		if (rawWs) {
+			rawWs.on('message', markInbound)
+		}
 	}
+	attachListeners()
 	const watchdog = {
 		markInbound,
 		noteInbound: markInbound,

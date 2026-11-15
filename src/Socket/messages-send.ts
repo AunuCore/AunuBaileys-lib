@@ -741,7 +741,12 @@ export const makeMessagesSocket = (config: SocketConfig) => {
 		let shouldIncludeDeviceIdentity = isRetryResend
 		const statusJid = 'status@broadcast'
 
-		const { user, server } = jidDecode(jid)!
+		// AunuBaileys (2.1.0, HB-282 facet c + HB-329): a jid without '@' used to throw a raw TypeError here — reject it as a caller-visible Boom 400 instead.
+		const decodedJid = jidDecode(jid)
+		if (!decodedJid) {
+			throw new Boom(`Invalid jid: ${jid}`, { statusCode: 400 })
+		}
+		const { user, server } = decodedJid
 		const isGroup = server === 'g.us'
 		const isStatus = jid === statusJid
 		const isLid = server === 'lid'
@@ -774,7 +779,11 @@ export const makeMessagesSocket = (config: SocketConfig) => {
 				additionalAttributes = { ...additionalAttributes, device_fanout: 'false' }
 			}
 
-			const { user, device } = jidDecode(participant.jid)!
+			const decodedParticipantJid = jidDecode(participant.jid)
+			if (!decodedParticipantJid) {
+				throw new Boom(`Invalid participant jid: ${participant.jid}`, { statusCode: 400 })
+			}
+			const { user, device } = decodedParticipantJid
 			devices.push({
 				user,
 				device,
@@ -859,7 +868,10 @@ export const makeMessagesSocket = (config: SocketConfig) => {
 					})()
 				])
 
-				const participantsList = groupData ? groupData.participants.map(p => p.id) : []
+				// AunuBaileys (2.1.0, HB-282 facet d + addendum): groupData.participants may hold null or id-less entries — a null entry threw here and an id-less one leaked an '' JID into the USync query.
+				const participantsList = Array.isArray(groupData?.participants)
+					? groupData.participants.filter(p => p?.id).map(p => p.id)
+					: []
 
 				if (groupData?.ephemeralDuration && groupData.ephemeralDuration > 0) {
 					additionalAttributes = {
@@ -1050,6 +1062,14 @@ export const makeMessagesSocket = (config: SocketConfig) => {
 							'Device enumeration complete with unified addressing'
 						)
 					}
+				}
+
+				// AunuBaileys (2.1.0, HB-299): mirror the HB-266 group/status guard — when device enumeration resolves nothing, the stanza below would go out with no recipients and relayMessage would still resolve as if sent.
+				if (!participant && !devices.length) {
+					throw new Boom(
+						'relayMessage: no recipient devices resolved for this direct message (empty device enumeration); refusing to send an undeliverable message',
+						{ statusCode: 400 }
+					)
 				}
 
 				const allRecipients: string[] = []

@@ -16,6 +16,7 @@ import {
 import { makeChatsSocket } from './chats'
 
 export const makeGroupsSocket = (config: SocketConfig) => {
+	const { logger } = config
 	const sock = makeChatsSocket(config)
 	const { authState, ev, query, upsertMessage } = sock
 
@@ -59,12 +60,17 @@ export const makeGroupsSocket = (config: SocketConfig) => {
 		if (groupsChild) {
 			const groups = getBinaryNodeChildren(groupsChild, 'group')
 			for (const groupNode of groups) {
-				const meta = extractGroupMetadata({
-					tag: 'result',
-					attrs: {},
-					content: [groupNode]
-				})
-				data[meta.id] = meta
+				// AunuBaileys (2.1.0, HB-126): isolate per-node failures — one malformed group node must not kill the whole fetch.
+				try {
+					const meta = extractGroupMetadata({
+						tag: 'result',
+						attrs: {},
+						content: [groupNode]
+					})
+					data[meta.id] = meta
+				} catch (err) {
+					logger.warn({ err, groupNode }, 'skipping malformed group in groupFetchAllParticipating')
+				}
 			}
 		}
 
@@ -233,12 +239,19 @@ export const makeGroupsSocket = (config: SocketConfig) => {
 		groupAcceptInviteV4: ev.createBufferedFunction(
 			async (key: string | WAMessageKey, inviteMessage: proto.Message.IGroupInviteMessage) => {
 				key = typeof key === 'string' ? { remoteJid: key } : key
-				const results = await groupQuery(inviteMessage.groupJid!, 'set', [
+				// AunuBaileys (2.1.0, HB-21/22): an invite message missing its fields used to throw a raw TypeError from .toString() — reject it as a caller-visible Boom 400 instead.
+				const { groupJid, inviteCode, inviteExpiration } = inviteMessage
+				if (!groupJid || !inviteCode || typeof inviteExpiration !== 'number') {
+					throw new Boom('groupAcceptInviteV4: invite message is missing groupJid, inviteCode or inviteExpiration', {
+						statusCode: 400
+					})
+				}
+				const results = await groupQuery(groupJid, 'set', [
 					{
 						tag: 'accept',
 						attrs: {
-							code: inviteMessage.inviteCode!,
-							expiration: inviteMessage.inviteExpiration!.toString(),
+							code: inviteCode,
+							expiration: inviteExpiration.toString(),
 							admin: key.remoteJid!
 						}
 					}
@@ -380,7 +393,16 @@ export const extractGroupMetadata = (result: BinaryNode) => {
 		participants: getBinaryNodeChildren(group, 'participant').map(({ attrs }) => {
 			// TODO: Store LID MAPPINGS
 			return {
-				id: attrs.jid!,
+				// AunuBaileys (2.1.0, HB-282 facet e + HB-40 addendum): same id fallback as extractCommunityMetadata — a participant stanza carrying only phone_number (or only lid) produced id: undefined, a participant the host cannot address.
+				id: (attrs.jid ||
+					(attrs.phone_number
+						? jidNormalizedUser(
+								attrs.phone_number.includes('@')
+									? attrs.phone_number
+									: attrs.phone_number + '@s.whatsapp.net'
+							)
+						: attrs.lid) ||
+					undefined) as unknown as string,
 				phoneNumber: isLidUser(attrs.jid) && isPnUser(attrs.phone_number) ? attrs.phone_number : undefined,
 				lid: isPnUser(attrs.jid) && isLidUser(attrs.lid) ? attrs.lid : undefined,
 				username: attrs.participant_username || attrs.username || undefined,

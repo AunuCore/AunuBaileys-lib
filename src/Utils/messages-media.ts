@@ -89,7 +89,12 @@ export const hkdfInfoKey = (type: MediaType) => {
 	return `WhatsApp ${hkdfInfo} Keys`
 }
 
-export const getRawMediaUploadData = async (media: WAMediaUpload, mediaType: MediaType, logger?: ILogger) => {
+export const getRawMediaUploadData = async (
+	media: WAMediaUpload,
+	mediaType: MediaType,
+	logger?: ILogger,
+	opts?: RequestInit & { maxContentLength?: number }
+) => {
 	const { stream } = await getStream(media)
 	logger?.debug('got stream for raw upload')
 
@@ -122,6 +127,10 @@ export const getRawMediaUploadData = async (media: WAMediaUpload, mediaType: Med
 	let fileLength = 0
 	try {
 		for await (const data of stream) {
+			// AunuBaileys (2.1.0, HB-2026-1112-50 addendum): enforce the host-configured maxContentLength here, like encryptedStream does — the raw newsletter path used to ignore it entirely. Check first, before counting the chunk.
+			if (opts?.maxContentLength && fileLength + data.length > opts.maxContentLength) {
+				throw new Boom(`content length exceeded when reading raw media for upload`, { data: { mediaType } })
+			}
 			fileLength += data.length
 			hasher.update(data)
 			if (!fileWriteStream.write(data)) {
@@ -1235,6 +1244,9 @@ export type UploadParams = {
 	agent?: Agent
 }
 
+// AunuBaileys (2.1.0, HB-302): cap for one media-upload response body.
+const MAX_UPLOAD_RESPONSE_BYTES = 1_048_576
+
 export const uploadWithNodeHttp = async (
 	{ url, filePath, headers, timeoutMs, agent }: UploadParams,
 	redirectCount = 0
@@ -1265,9 +1277,30 @@ export const uploadWithNodeHttp = async (
 				timeout: timeoutMs
 			},
 			res => {
+				// AunuBaileys (2.1.0, HB-302): the response body used to accumulate without a cap and without error/close handlers — a trickling response hung the upload forever and grew memory without bound. Cap the body, fail on error/close, and bound the whole response phase by a total deadline (the socket timeout above only fires on inactivity).
+				let body = ''
+				let bodyBytes = 0
+				let settled = false
+				const deadline = setTimeout(() => {
+					if (!settled) {
+						settled = true
+						res.destroy()
+						reject(new Boom('Media upload response timed out', { statusCode: 408 }))
+					}
+				}, timeoutMs || 120_000)
+				const settle = (fn: () => void) => {
+					if (settled) {
+						return
+					}
+					settled = true
+					clearTimeout(deadline)
+					fn()
+				}
+
 				// Handle redirects (3xx)
 				if (res.statusCode && res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
 					res.resume() // Consume response to free resources
+					clearTimeout(deadline)
 					const newUrl = new URL(res.headers.location, url).toString()
 					resolve(
 						uploadWithNodeHttp(
@@ -1284,15 +1317,29 @@ export const uploadWithNodeHttp = async (
 					return
 				}
 
-				let body = ''
-				res.on('data', chunk => (body += chunk))
-				res.on('end', () => {
-					try {
-						resolve(JSON.parse(body))
-					} catch {
-						resolve(undefined)
+				res.on('data', chunk => {
+					body += chunk
+					bodyBytes += chunk.length
+					if (bodyBytes > MAX_UPLOAD_RESPONSE_BYTES) {
+						settle(() => {
+							res.destroy()
+							reject(new Boom('Media upload response exceeded the size limit', { statusCode: 502 }))
+						})
 					}
 				})
+				res.on('error', err => settle(() => reject(err)))
+				res.on('close', () =>
+					settle(() => reject(new Boom('Media upload response closed before completing', { statusCode: 502 })))
+				)
+				res.on('end', () =>
+					settle(() => {
+						try {
+							resolve(JSON.parse(body))
+						} catch {
+							resolve(undefined)
+						}
+					})
+				)
 			}
 		)
 
@@ -1333,8 +1380,31 @@ const uploadWithFetch = async ({
 		signal: timeoutMs ? AbortSignal.timeout(timeoutMs) : undefined
 	})
 
+	// AunuBaileys (2.1.0, HB-302): same response-body cap as uploadWithNodeHttp — response.json() used to buffer the whole body unbounded. Read through a reader so the cap is enforced while streaming.
+	const reader = response.body?.getReader()
+	if (!reader) {
+		return undefined
+	}
+	const decoder = new TextDecoder()
+	let text = ''
+	let receivedBytes = 0
+	while (true) {
+		const { done, value } = await reader.read()
+		if (done) {
+			break
+		}
+		if (value) {
+			receivedBytes += value.byteLength
+			if (receivedBytes > MAX_UPLOAD_RESPONSE_BYTES) {
+				await reader.cancel()
+				throw new Boom('Media upload response exceeded the size limit', { statusCode: 502 })
+			}
+			text += decoder.decode(value, { stream: true })
+		}
+	}
+	text += decoder.decode()
 	try {
-		return (await response.json()) as MediaUploadResult
+		return JSON.parse(text) as MediaUploadResult
 	} catch {
 		return undefined
 	}

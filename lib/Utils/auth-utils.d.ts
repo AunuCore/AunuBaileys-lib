@@ -14,7 +14,7 @@ export declare function makeCacheableSignalKeyStore(store: SignalKeyStore, logge
  * @param logger logger to log events
  * @returns SignalKeyStore with transaction capability
  */
-export declare const addTransactionCapability: (state: SignalKeyStore, logger: ILogger, { maxCommitRetries, delayBetweenTriesMs }: TransactionCapabilityOptions) => SignalKeyStoreWithTransaction;
+export declare const addTransactionCapability: (state: SignalKeyStore, logger: ILogger, { maxCommitRetries, delayBetweenTriesMs }?: Partial<TransactionCapabilityOptions>) => SignalKeyStoreWithTransaction;
 /**
  * Returns the authenticated user's JID, or throws a Boom-401 if creds are not yet authenticated.
  * Use this anywhere we'd otherwise reach for `creds.me!.id` to fail fast with a descriptive error.

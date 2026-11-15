@@ -14,6 +14,8 @@ const ENDPOINTS = {
 	WAMO_PATH: '/api/wamo/graphql/'
 }
 const WAMO_APP_ID = '1015890928915437'
+// AunuBaileys (2.1.0, HB-211 addendum): bound for one GraphQL HTTPS call — the fetches below used to hang forever with no timeout.
+const GRAPHQL_TIMEOUT_MS = 30_000
 // Doc IDs used by this port, verbatim from the donor's WWW_GQL_IDS /
 // CLIENT_PERSIST_GQL_IDS tables (whatsapp-android-www_client_persist_ids.json
 // and whatsapp-android_client-persist.json).
@@ -83,7 +85,8 @@ export const executeWWWGraphQL = async (
 	const res = await fetch(endpoint, {
 		method: 'POST',
 		headers: { 'Content-Type': 'application/json' },
-		body
+		body,
+		signal: AbortSignal.timeout(GRAPHQL_TIMEOUT_MS)
 	})
 	if (!res.ok) {
 		// AunuBaileys (1.0.76): Hunt-ronde-3 — drain the error body before
@@ -95,7 +98,12 @@ export const executeWWWGraphQL = async (
 			statusCode: res.status
 		})
 	}
-	const json = await res.json()
+	let json
+	try {
+		json = await res.json()
+	} catch {
+		throw new Boom('GraphQL response was not valid JSON', { statusCode: 502 })
+	}
 	return parseGraphQLResponse(json, dataPath)
 }
 /**
@@ -133,7 +141,8 @@ export const executeWamoGraphQL = async (
 	const res = await fetch(url, {
 		method: 'POST',
 		headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-		body: params.toString()
+		body: params.toString(),
+		signal: AbortSignal.timeout(GRAPHQL_TIMEOUT_MS)
 	})
 	if (!res.ok) {
 		// AunuBaileys (1.0.76): drain the error body (see executeWWWGraphQL).
@@ -142,7 +151,12 @@ export const executeWamoGraphQL = async (
 			statusCode: res.status
 		})
 	}
-	const json = await res.json()
+	let json
+	try {
+		json = await res.json()
+	} catch {
+		throw new Boom('Wamo GraphQL response was not valid JSON', { statusCode: 502 })
+	}
 	return parseGraphQLResponse(json, dataPath)
 }
 export const makeGraphQLSocket = sock => {

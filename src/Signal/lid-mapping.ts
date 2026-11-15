@@ -1,7 +1,20 @@
 import { InternalCache } from '../Utils/internal-cache'
 import type { LIDMapping, SignalKeyStoreWithTransaction } from '../Types'
 import type { ILogger } from '../Utils/logger'
-import { isHostedPnUser, isLidUser, isPnUser, jidDecode, jidNormalizedUser, WAJIDDomains } from '../WABinary'
+import { isHostedLidUser, isHostedPnUser, isLidUser, isPnUser, jidDecode, jidNormalizedUser, WAJIDDomains } from '../WABinary'
+
+// AunuBaileys (2.1.0, HB-336): a hosted account's LID (@hosted.lid) and PN
+// (@hosted) are LID/PN users too - the store validation and the reverse
+// lookup below only accepted the plain @lid / @s.whatsapp.net forms, so
+// every hosted pair was dropped with a warn and never persisted, which
+// left updateBlockStatus and the tc-token reverse lookups unresolvable
+// for hosted accounts (and re-fetched the mapping via USync on every call).
+// Each side accepts plain-or-hosted independently: the USync round-trip
+// may echo a hosted LID against a plain PN (the query is normalised to
+// @s.whatsapp.net before it is sent), so the servers must not be
+// required to match - the stored mapping is user-to-user only.
+const isLidLike = (jid: string | undefined) => isLidUser(jid) || isHostedLidUser(jid)
+const isPnLike = (jid: string | undefined) => isPnUser(jid) || isHostedPnUser(jid)
 
 export class LIDMappingStore {
 	private readonly mappingCache = new InternalCache<string>({
@@ -33,7 +46,7 @@ export class LIDMappingStore {
 
 		const validatedPairs: Array<{ pnUser: string; lidUser: string }> = []
 		for (const { lid, pn } of pairs) {
-			if (!((isLidUser(lid) && isPnUser(pn)) || (isPnUser(lid) && isLidUser(pn)))) {
+			if (!((isLidLike(lid) && isPnLike(pn)) || (isPnLike(lid) && isLidLike(pn)))) {
 				this.logger.warn(`Invalid LID-PN mapping: ${lid}, ${pn}`)
 				continue
 			}
@@ -221,14 +234,25 @@ export class LIDMappingStore {
 					const lidUser = jidDecode(pair.lid)?.user
 					if (!lidUser) continue
 
-					for (const device of usyncFetch[pair.pn]!) {
-						const deviceSpecificLid = `${lidUser}${!!device ? `:${device}` : ``}@${device === 99 ? 'hosted.lid' : 'lid'}`
+					// AunuBaileys (2.1.0, HB-286): the server may echo a differently-shaped pn than the key we fetched under — skip such pairs instead of throwing.
+					const devices = usyncFetch[pair.pn]
+					if (!devices) {
+						continue
+					}
+					// AunuBaileys (2.1.0, HB-336 sub-facet): trust the pair the server
+					// returned - its LID/PN servers are the truth. The old device === 99
+					// heuristic disagreed with the cache path (addResolvedPair uses the
+					// PN's server) and labelled a hosted LID as @lid for device 0.
+					const lidServer = jidDecode(pair.lid)?.server === 'hosted.lid' ? 'hosted.lid' : 'lid'
+					const pnServer = pnDecoded?.server === 'hosted' ? 'hosted' : 's.whatsapp.net'
+					for (const device of devices) {
+						const deviceSpecificLid = `${lidUser}${!!device ? `:${device}` : ``}@${lidServer}`
 
 						this.logger.trace(
 							`getLIDForPN: USYNC success for ${pair.pn} → ${deviceSpecificLid} (user mapping with device ${device})`
 						)
 
-						const deviceSpecificPn = `${pnUser}${!!device ? `:${device}` : ``}@${device === 99 ? 'hosted' : 's.whatsapp.net'}`
+						const deviceSpecificPn = `${pnUser}${!!device ? `:${device}` : ``}@${pnServer}`
 
 						successfulPairs[deviceSpecificPn] = { lid: deviceSpecificLid, pn: deviceSpecificPn }
 					}
@@ -287,7 +311,7 @@ export class LIDMappingStore {
 		}
 
 		for (const lid of lids) {
-			if (!isLidUser(lid)) continue
+			if (!isLidLike(lid)) continue
 
 			const decoded = jidDecode(lid)
 			if (!decoded) continue

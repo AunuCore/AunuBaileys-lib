@@ -113,18 +113,21 @@ export const generateLinkPreviewIfRequired = async (
 }
 
 const assertColor = async (color: any) => {
-	let assertedColor
+	// AunuBaileys (2.1.0, HB-321): the number branch assigned but never returned (backgroundArgb silently undefined), and a non-string/non-number color threw a raw TypeError from .trim() that killed the whole text send.
 	if (typeof color === 'number') {
-		assertedColor = color > 0 ? color : 0xffffffff + Number(color) + 1
-	} else {
-		let hex = color.trim().replace('#', '')
-		if (hex.length <= 6) {
-			hex = 'FF' + hex.padStart(6, '0')
-		}
-
-		assertedColor = parseInt(hex, 16)
-		return assertedColor
+		return color > 0 ? color : 0xffffffff + Number(color) + 1
 	}
+
+	if (typeof color !== 'string') {
+		throw new Boom(`Invalid color: expected a string or number, got ${typeof color}`, { statusCode: 400 })
+	}
+
+	let hex = color.trim().replace('#', '')
+	if (hex.length <= 6) {
+		hex = 'FF' + hex.padStart(6, '0')
+	}
+
+	return parseInt(hex, 16)
 }
 
 export const prepareWAMessageMedia = async (
@@ -196,17 +199,23 @@ export const prepareWAMessageMedia = async (
 		const { filePath, fileSha256, fileLength } = await getRawMediaUploadData(
 			uploadData.media,
 			options.mediaTypeOverride || mediaType,
-			logger
+			logger,
+			options.options
 		)
 
 		const fileSha256B64 = fileSha256.toString('base64')
-		const { mediaUrl, directPath } = await options.upload(filePath, {
-			fileEncSha256B64: fileSha256B64,
-			mediaType: mediaType,
-			timeoutMs: options.mediaUploadTimeoutMs
-		})
-
-		await fs.unlink(filePath)
+		// AunuBaileys (2.1.0, HB-2026-1112-10 addendum): try/finally like the sticker-pack branches — a failed upload used to leak the full-size tmp file.
+		let newsletterUploadResult: Awaited<ReturnType<typeof options.upload>>
+		try {
+			newsletterUploadResult = await options.upload(filePath, {
+				fileEncSha256B64: fileSha256B64,
+				mediaType: mediaType,
+				timeoutMs: options.mediaUploadTimeoutMs
+			})
+		} finally {
+			await fs.unlink(filePath).catch(() => {})
+		}
+		const { mediaUrl, directPath } = newsletterUploadResult
 
 		const obj = WAProto.Message.fromObject({
 			// todo: add more support here

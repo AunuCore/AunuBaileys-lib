@@ -29,6 +29,41 @@ const makeWASocket = (config: UserFacingSocketConfig) => {
 		...(config?.transactionOpts ?? {})
 	}
 
+	// AunuBaileys (2.1.0, HB-333): transactionOpts needs the same boundary sanitisation as the HB-139 numerics below — a NaN/0/negative maxCommitRetries (classically Number('') from env) made commitWithRetry run zero attempts and silently drop the transaction's mutations.
+	newConfig.transactionOpts = {
+		maxCommitRetries:
+			typeof newConfig.transactionOpts.maxCommitRetries === 'number' &&
+			Number.isFinite(newConfig.transactionOpts.maxCommitRetries)
+				? Math.min(10, Math.max(1, Math.floor(newConfig.transactionOpts.maxCommitRetries)))
+				: (DEFAULT_CONNECTION_CONFIG.transactionOpts.maxCommitRetries ?? 10),
+		delayBetweenTriesMs:
+			typeof newConfig.transactionOpts.delayBetweenTriesMs === 'number' &&
+			Number.isFinite(newConfig.transactionOpts.delayBetweenTriesMs) &&
+			newConfig.transactionOpts.delayBetweenTriesMs >= 0
+				? newConfig.transactionOpts.delayBetweenTriesMs
+				: (DEFAULT_CONNECTION_CONFIG.transactionOpts.delayBetweenTriesMs ?? 3000)
+	}
+
+	// AunuBaileys (2.1.0, HB-335): browser/version passed through raw above -
+	// an explicit undefined (or a short/wrong-typed array) clobbered the
+	// defaults, and every consumer derefs [0..2] unguarded (socket.ts:138,
+	// validate-connection getUserAgent/getWebInfo/getClientPayload/
+	// generateRegistrationNode, requestPairingCode): browser=undefined threw
+	// synchronously at construction, version=undefined threw in the ws
+	// 'open' handler on every boot (reconnect loop, the HB-43 class).
+	// Sanitise once, here at the boundary, HB-139 style: browser must be a
+	// 3-string array and version a 3-number finite tuple, else the default.
+	// NOTE the HB-199 lesson: values are never coerced - a non-string
+	// browser element or a non-number version element falls back whole.
+	const isValidBrowser = (value: unknown): value is [string, string, string] =>
+		Array.isArray(value) && value.length === 3 && value.every(element => typeof element === 'string')
+	newConfig.browser = isValidBrowser(newConfig.browser) ? newConfig.browser : DEFAULT_CONNECTION_CONFIG.browser
+	const isValidVersion = (value: unknown): value is [number, number, number] =>
+		Array.isArray(value) &&
+		value.length === 3 &&
+		value.every(element => typeof element === 'number' && Number.isFinite(element))
+	newConfig.version = isValidVersion(newConfig.version) ? newConfig.version : DEFAULT_CONNECTION_CONFIG.version
+
 	// AunuBaileys (1.0.80, HB-139 + HB-174 + addendum HB-139,
 	// re-applied P3): the numeric connection config was spread raw
 	// above \u2014 an explicit undefined/NaN from the host (classically

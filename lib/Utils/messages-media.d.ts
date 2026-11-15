@@ -44,7 +44,9 @@ export declare const getImageProcessingLibrary: () => Promise<{
 export declare const MAX_IMAGE_PIXELS = 40000000;
 export declare const assertImageWithinPixelLimit: (buffer: Buffer, context: string) => void;
 export declare const hkdfInfoKey: (type: MediaType) => string;
-export declare const getRawMediaUploadData: (media: WAMediaUpload, mediaType: MediaType, logger?: ILogger) => Promise<{
+export declare const getRawMediaUploadData: (media: WAMediaUpload, mediaType: MediaType, logger?: ILogger, opts?: RequestInit & {
+    maxContentLength?: number;
+}) => Promise<{
     filePath: string;
     fileSha256: Buffer<ArrayBufferLike>;
     fileLength: number;

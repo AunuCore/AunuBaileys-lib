@@ -1,3 +1,4 @@
+import { Boom } from '@hapi/boom';
 import { proto } from '../../WAProto/index.js';
 import { type GroupMetadata, type ParticipantAction, type SocketConfig, type WAMessageKey } from '../Types/index.js';
 import { type BinaryNode } from '../WABinary/index.js';
@@ -238,7 +239,7 @@ export declare const makeCommunitiesSocket: (config: SocketConfig) => {
     logout: (msg?: string) => Promise<void>;
     end: (error: Error | undefined) => Promise<void>;
     registerSocketEndHandler: (handler: (error: Error | undefined) => void | Promise<void>) => void;
-    onUnexpectedError: (err: Error | import("@hapi/boom").Boom, msg: string) => void;
+    onUnexpectedError: (err: Error | Boom, msg: string) => void;
     uploadPreKeys: (count?: number) => Promise<void>;
     uploadPreKeysToServerIfRequired: () => Promise<void>;
     digestKeyBundle: () => Promise<void>;

@@ -55,12 +55,12 @@ export declare const extractAddressingContext: (stanza: BinaryNode) => {
  * Decode the received node as a message.
  * @note this will only parse the message, not decrypt it
  */
-export declare function decodeMessageNode(stanza: BinaryNode, meId: string, meLid: string): {
+export declare function decodeMessageNode(stanza: BinaryNode, meId: string | undefined, meLid: string | undefined): {
     fullMessage: WAMessage;
     author: string;
     sender: string;
 };
-export declare const decryptMessageNode: (stanza: BinaryNode, meId: string, meLid: string, repository: SignalRepositoryWithLIDStore, logger: ILogger) => {
+export declare const decryptMessageNode: (stanza: BinaryNode, meId: string | undefined, meLid: string | undefined, repository: SignalRepositoryWithLIDStore, logger: ILogger) => {
     fullMessage: WAMessage;
     category: string | undefined;
     author: string;

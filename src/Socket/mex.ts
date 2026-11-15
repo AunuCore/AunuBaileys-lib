@@ -36,11 +36,23 @@ export const executeWMexQuery = async <T>(
 	const result = await wMexQuery(variables, queryId, query, generateMessageTag)
 	const child = getBinaryNodeChild(result, 'result')
 	if (child?.content) {
-		const data = JSON.parse(child.content.toString())
+		// AunuBaileys (2.1.0, sweep): a non-JSON MEX body used to escape
+		// as a raw SyntaxError, and a non-array `errors` died on .map —
+		// both are server-shape failures, so they surface as Boom instead.
+		let data: {
+			errors?: Array<{ message?: string; extensions?: { error_code?: unknown } }>
+			data?: Record<string, unknown>
+		}
+		try {
+			data = JSON.parse(child.content.toString())
+		} catch {
+			throw new Boom('Failed to parse MEX response as JSON', { statusCode: 502, data: result })
+		}
 
-		if (data.errors && data.errors.length > 0) {
-			const errorMessages = data.errors.map((err: Error) => err.message || 'Unknown error').join(', ')
-			const firstError = data.errors[0]
+		if (Array.isArray(data.errors) && data.errors.length > 0) {
+			const errorMessages = data.errors.map(err => err.message || 'Unknown error').join(', ')
+			// length > 0 was just checked, so [0] exists — the `!` states that invariant.
+			const firstError = data.errors[0]!
 			// AunuBaileys (1.0.87, HB-211, re-applied P3): the server's
 			// error_code is wire data \u2014 a non-numeric or out-of-range
 			// value makes `new Boom` itself throw (verified empirically

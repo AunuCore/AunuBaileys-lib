@@ -116,7 +116,7 @@ async function storeTcTokensFromHistorySync(
 }
 
 /** Cleans a received message to further processing */
-export const cleanMessage = (message: WAMessage, meId: string, meLid: string) => {
+export const cleanMessage = (message: WAMessage, meId: string | undefined, meLid: string | undefined) => {
 	// ensure remoteJid and participant doesn't have device or agent in it
 	if (isHostedPnUser(message.key.remoteJid!) || isHostedLidUser(message.key.remoteJid!)) {
 		message.key.remoteJid = jidEncode(
@@ -398,8 +398,9 @@ const processMessage = async (
 						// the work that followed the emit. Log and continue.
 						try {
 							ev.emit('creds.update', {
+								// AunuBaileys (2.1.0, HB-306): v6 capped this list at 50 — restore the cap so a long history sync cannot grow creds without bound.
 								processedHistoryMessages: [
-									...(creds.processedHistoryMessages || []),
+									...(creds.processedHistoryMessages || []).slice(-49),
 									{ key: message.key, messageTimestamp: message.messageTimestamp }
 								]
 							})
@@ -484,11 +485,16 @@ const processMessage = async (
 
 				break
 			case proto.Message.ProtocolMessage.Type.REVOKE:
+				// AunuBaileys (2.1.0, HB-311): a REVOKE without a key used to throw here — skip the emit instead.
+				if (!protocolMsg.key?.id) {
+					logger?.warn({ protocolMsg }, 'recv REVOKE without a message key — skipping')
+					break
+				}
 				ev.emit('messages.update', [
 					{
 						key: {
 							...message.key,
-							id: protocolMsg.key!.id
+							id: protocolMsg.key.id
 						},
 						update: { message: null, messageStubType: WAMessageStubType.REVOKE, key: message.key }
 					}
@@ -717,7 +723,18 @@ const processMessage = async (
 
 		switch (message.messageStubType) {
 			case WAMessageStubType.GROUP_PARTICIPANT_CHANGE_NUMBER:
-				participants = message.messageStubParameters.map((a: any) => JSON.parse(a as string)) || []
+				// AunuBaileys (2.1.0, HB-320): the producer stores the old/new numbers here as RAW JID strings, so a bare JSON.parse threw on every 'modify' event. Parse when the entry is JSON, else use it raw.
+				participants =
+					message.messageStubParameters.map((a: any) => {
+						if (typeof a !== 'string') {
+							return a
+						}
+						try {
+							return JSON.parse(a)
+						} catch {
+							return a
+						}
+					}) || []
 				emitParticipantsUpdate('modify')
 				break
 			case WAMessageStubType.GROUP_PARTICIPANT_LEAVE:
@@ -779,7 +796,21 @@ const processMessage = async (
 				emitGroupUpdate({ joinApprovalMode: approvalMode === 'on' })
 				break
 			case WAMessageStubType.GROUP_MEMBERSHIP_JOIN_APPROVAL_REQUEST_NON_ADMIN_ADD: // TODO: Add other events
-				const participant = JSON.parse(message.messageStubParameters?.[0]) as LIDMapping
+				// AunuBaileys (2.1.0, sweep): JSON.parse(undefined) throws —
+				// a history-sync message of this stub type without parameters
+				// used to kill the whole message. Skip it per-message.
+				const rawParticipant = message.messageStubParameters?.[0]
+				if (typeof rawParticipant !== 'string') {
+					logger?.warn('skipping join-approval-request event without a participant parameter')
+					break
+				}
+				let participant: LIDMapping
+				try {
+					participant = JSON.parse(rawParticipant) as LIDMapping
+				} catch {
+					logger?.warn('skipping join-approval-request event with an unparseable participant parameter')
+					break
+				}
 				const action = message.messageStubParameters?.[1] as RequestJoinAction
 				const method = message.messageStubParameters?.[2] as RequestJoinMethod
 				emitGroupRequestJoin(participant, action, method)

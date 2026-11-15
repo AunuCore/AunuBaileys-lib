@@ -238,10 +238,17 @@ export const makeMessagesRecvSocket = (config: SocketConfig) => {
 			peerDataOperationRequestType: proto.Message.PeerDataOperationRequestType.PLACEHOLDER_MESSAGE_RESEND
 		}
 
+		// AunuBaileys (2.1.0, sweep): this timer callback is a floating
+		// promise — a rejecting retry cache used to surface as an unhandled
+		// rejection and crash the process.
 		setTimeout(async () => {
-			if (await placeholderResendCache.get(messageKey?.id!)) {
-				logger.debug({ messageKey }, 'PDO message without response after 8 seconds. Phone possibly offline')
-				await placeholderResendCache.del(messageKey?.id!)
+			try {
+				if (await placeholderResendCache.get(messageKey?.id!)) {
+					logger.debug({ messageKey }, 'PDO message without response after 8 seconds. Phone possibly offline')
+					await placeholderResendCache.del(messageKey?.id!)
+				}
+			} catch (err: any) {
+				logger.warn({ err: err?.message }, 'failed to check placeholder resend cache')
 			}
 		}, 8_000)
 
@@ -667,7 +674,8 @@ export const makeMessagesRecvSocket = (config: SocketConfig) => {
 	}
 
 	const sendMessageAck = async (node: BinaryNode, errorCode?: number) => {
-		const stanza = buildAckStanza(node, errorCode, authState.creds.me!.id)
+		// AunuBaileys (2.1.0, HB-307): buildAckStanza tolerates an undefined meId — pass it through instead of throwing before the ack.
+		const stanza = buildAckStanza(node, errorCode, authState.creds.me?.id)
 		logger.debug({ recv: { tag: node.tag, attrs: node.attrs }, sent: stanza.attrs }, 'sent ack')
 		await sendNode(stanza)
 	}
@@ -998,7 +1006,12 @@ export const makeMessagesRecvSocket = (config: SocketConfig) => {
 			}
 
 			const countChild = getBinaryNodeChild(node, 'count')
-			const count = +countChild!.attrs.value!
+			if (!countChild) {
+				// AunuBaileys (2.1.0, HB-284 addendum, donor v6): a malformed encrypt notification must not take the handler down with a TypeError.
+				logger.warn({ node }, 'encrypt notification without a count child; ignoring')
+				return
+			}
+			const count = +countChild.attrs.value!
 			const shouldUploadMorePreKeys = count < MIN_PREKEY_COUNT
 
 			logger.debug({ count, shouldUploadMorePreKeys }, 'recv pre-key count')
@@ -1179,7 +1192,7 @@ export const makeMessagesRecvSocket = (config: SocketConfig) => {
 		const deviceHash = child.attrs.device_hash
 		const devices = getBinaryNodeChildren(child, 'device')
 
-		if (areJidsSameUser(from, authState.creds.me!.id) || areJidsSameUser(from, authState.creds.me!.lid)) {
+		if (areJidsSameUser(from, authState.creds.me?.id) || areJidsSameUser(from, authState.creds.me?.lid)) {
 			const deviceJids = devices.map(d => d.attrs.jid)
 			logger.info({ deviceJids }, 'got my own devices')
 		}
@@ -1333,7 +1346,8 @@ export const makeMessagesRecvSocket = (config: SocketConfig) => {
 
 				break
 			case 'account_sync':
-				if (child!.tag === 'disappearing_mode') {
+				// AunuBaileys (2.1.0, HB-305): an empty account_sync notification has no child — a bare deref here threw and lost the stanza.
+			if (child?.tag === 'disappearing_mode') {
 					const newDuration = +child!.attrs.duration!
 					const timestamp = +child!.attrs.t!
 
@@ -1352,7 +1366,7 @@ export const makeMessagesRecvSocket = (config: SocketConfig) => {
 					} catch (err) {
 						logger.error({ err }, 'error in creds.update listener \u2014 continuing')
 					}
-				} else if (child!.tag === 'blocklist') {
+				} else if (child?.tag === 'blocklist') {
 					const blocklists = getBinaryNodeChildren(child, 'item')
 
 					for (const { attrs } of blocklists) {
@@ -1574,13 +1588,14 @@ export const makeMessagesRecvSocket = (config: SocketConfig) => {
 	const sendMessagesAgain = async (
 		key: WAMessageKey,
 		ids: string[],
-		retryNode: BinaryNode,
+		retryNode: BinaryNode | undefined,
 		receiptNode: BinaryNode
 	) => {
 		const remoteJid = key.remoteJid!
 		const participant = key.participant || remoteJid
 
-		const retryCount = +retryNode.attrs.count! || 1
+		// AunuBaileys (2.1.0, HB-298 + HB-282 facet f): retryNode arrives from getBinaryNodeChild(node, 'retry') and may be absent, and its count attr may be missing — both used to throw here (or send count="NaN" on the wire). Default to 1.
+		const retryCount = +(retryNode?.attrs?.count ?? '') || 1
 		const msgId = ids[0]
 
 		// Try to get messages from cache first, then fallback to getMessage
@@ -1722,7 +1737,7 @@ export const makeMessagesRecvSocket = (config: SocketConfig) => {
 				} else {
 					msgRelayOpts.participant = {
 						jid: participant,
-						count: +retryNode.attrs.count!
+						count: retryCount
 					}
 				}
 
@@ -1748,7 +1763,8 @@ export const makeMessagesRecvSocket = (config: SocketConfig) => {
 
 	const handleReceipt = async (node: BinaryNode) => {
 		const { attrs, content } = node
-		const isLid = attrs.from!.includes('lid')
+		// AunuBaileys (2.1.0, HB-281 facet b + HB-2026-1111-1 instance 3): this deref sat BEFORE the try/finally below — a receipt without `from` never got acked and the server redelivered it forever.
+		const isLid = attrs.from?.includes('lid') ?? false
 		const isNodeFromMe = areJidsSameUser(
 			attrs.participant || attrs.from,
 			isLid ? authState.creds.me?.lid : authState.creds.me?.id
@@ -1866,7 +1882,7 @@ export const makeMessagesRecvSocket = (config: SocketConfig) => {
 				notificationMutex.mutex(async () => {
 					const msg = await processNotification(node)
 					if (msg) {
-						const fromMe = areJidsSameUser(node.attrs.participant || remoteJid, authState.creds.me!.id)
+						const fromMe = areJidsSameUser(node.attrs.participant || remoteJid, authState.creds.me?.id)
 						const { senderAlt: participantAlt, addressingMode } = extractAddressingContext(node)
 						msg.key = {
 							remoteJid,
@@ -1923,7 +1939,8 @@ export const makeMessagesRecvSocket = (config: SocketConfig) => {
 				category,
 				author,
 				decrypt
-			} = decryptMessageNode(node, authState.creds.me!.id, authState.creds.me!.lid || '', signalRepository, logger)
+			// AunuBaileys (2.1.0, HB-308): me is undefined before CB:success — the throw here lost the message before decode could run.
+			} = decryptMessageNode(node, authState.creds.me?.id, authState.creds.me?.lid || '', signalRepository, logger)
 
 			const alt = msg.key.participantAlt || msg.key.remoteJidAlt
 			// store new mappings we didn't have before
@@ -2235,6 +2252,13 @@ export const makeMessagesRecvSocket = (config: SocketConfig) => {
 						} else if (msg.key.fromMe) {
 							// message was sent by us from a different device
 							type = 'sender'
+							// AunuBaileys (2.1.0, HB-334): a 1:1 key has no
+							// participant, so a fromMe `sender` receipt went out
+							// with no `to` attribute and the server could not
+							// route it to the sending phone. Fall back to the
+							// message author (the sending device), mirroring
+							// the LID branch below.
+							participant = participant ?? author
 							// need to specially handle this case
 							if (isLidUser(msg.key.remoteJid!) || isLidUser(msg.key.remoteJidAlt)) {
 								participant = author // TODO: investigate sending receipts to LIDs and not PNs
@@ -2259,7 +2283,8 @@ export const makeMessagesRecvSocket = (config: SocketConfig) => {
 					}
 				}
 
-				cleanMessage(msg, authState.creds.me!.id, authState.creds.me!.lid!)
+				// AunuBaileys (2.1.0, HB-309): me vanishing mid-decrypt lost an already-receipted message — cleanMessage tolerates undefined ids.
+				cleanMessage(msg, authState.creds.me?.id, authState.creds.me?.lid)
 
 				await upsertMessage(msg, node.attrs.offline ? 'append' : 'notify')
 			})

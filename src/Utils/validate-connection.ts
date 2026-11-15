@@ -20,13 +20,20 @@ const isKeyMaterial = (value: unknown): value is Uint8Array | string =>
 	value instanceof Uint8Array || typeof value === 'string'
 
 const getUserAgent = (config: SocketConfig): proto.ClientPayload.IUserAgent => {
+	// AunuBaileys (2.1.0, HB-335): restores the v6 1.0.70 guard (HB-65/HB-81),
+	// lost in the v7 rebase - a host overriding version/browser with
+	// undefined threw a raw TypeError here. The makeWASocket boundary
+	// sanitises first; this is the second layer for direct callers of
+	// these exported utils.
+	const version = Array.isArray(config.version) && config.version.length >= 3 ? config.version : [2, 3000, 1043857760]
+	const browserName = config.browser?.[1] ?? 'Chrome'
 	return {
 		appVersion: {
-			primary: config.version[0],
-			secondary: config.version[1],
-			tertiary: config.version[2]
+			primary: version[0],
+			secondary: version[1],
+			tertiary: version[2]
 		},
-		platform: config.browser[1].toLocaleLowerCase().includes('android')
+		platform: browserName.toLocaleLowerCase().includes('android')
 			? proto.ClientPayload.UserAgent.Platform.ANDROID
 			: proto.ClientPayload.UserAgent.Platform.WEB,
 		releaseChannel: proto.ClientPayload.UserAgent.ReleaseChannel.RELEASE,
@@ -50,10 +57,10 @@ const getWebInfo = (config: SocketConfig): proto.ClientPayload.IWebInfo => {
 	let webSubPlatform = proto.ClientPayload.WebInfo.WebSubPlatform.WEB_BROWSER
 	if (
 		config.syncFullHistory &&
-		PLATFORM_MAP[config.browser[0] as keyof typeof PLATFORM_MAP] &&
-		config.browser[1] === 'Desktop'
+		PLATFORM_MAP[config.browser?.[0] as keyof typeof PLATFORM_MAP] &&
+		config.browser?.[1] === 'Desktop'
 	) {
-		webSubPlatform = PLATFORM_MAP[config.browser[0] as keyof typeof PLATFORM_MAP]
+		webSubPlatform = PLATFORM_MAP[config.browser?.[0] as keyof typeof PLATFORM_MAP]
 	}
 
 	return { webSubPlatform }
@@ -66,7 +73,7 @@ const getClientPayload = (config: SocketConfig) => {
 		userAgent: getUserAgent(config)
 	}
 
-	if (!config.browser[1].toLocaleLowerCase().includes('android')) {
+	if (!config.browser?.[1]?.toLocaleLowerCase()?.includes('android')) {
 		payload.webInfo = getWebInfo(config)
 	}
 
@@ -161,13 +168,15 @@ export const generateRegistrationNode = (
 
 	// the app version needs to be md5 hashed
 	// and passed in
+	// AunuBaileys (2.1.0, HB-335): v6 1.0.70 guard, see getUserAgent above.
+	const safeVersion = Array.isArray(config.version) && config.version.length ? config.version : [2, 3000, 1043857760]
 	const appVersionBuf = createHash('md5')
-		.update(config.version.join('.')) // join as string
+		.update(safeVersion.join('.')) // join as string
 		.digest()
 
 	const companion: proto.IDeviceProps = {
-		os: config.browser[0],
-		platformType: getPlatformType(config.browser[1]),
+		os: config.browser?.[0] || 'Chrome',
+		platformType: getPlatformType(config.browser?.[1] || 'Chrome'),
 		requireFullSync: config.syncFullHistory,
 		historySyncConfig: {
 			storageQuotaMb: 10240,

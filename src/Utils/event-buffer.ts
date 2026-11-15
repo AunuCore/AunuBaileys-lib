@@ -70,6 +70,17 @@ type BaileysBufferableEventEmitter = BaileysEventEmitter & {
  * The event buffer logically consolidates different events into a single event
  * making the data processing more efficient.
  */
+const MAX_HISTORY_CACHE_SIZE = 10000 // Limit the history cache size to prevent memory bloat
+
+const addHistoryCacheKey = (historyCache: Set<string>, key: string) => {
+	// AunuBaileys (2.1.0, HB-310): the cap was declared but never enforced — a long history sync grew the dedup set without bound. Clearing only weakens dedup (a duplicate may be re-emitted once); no data is lost.
+	if (historyCache.size >= MAX_HISTORY_CACHE_SIZE) {
+		historyCache.clear()
+	}
+
+	historyCache.add(key)
+}
+
 export const makeEventBuffer = (logger: ILogger): BaileysBufferableEventEmitter => {
 	const ev = new EventEmitter()
 	const historyCache = new Set<string>()
@@ -79,7 +90,6 @@ export const makeEventBuffer = (logger: ILogger): BaileysBufferableEventEmitter 
 	let bufferTimeout: NodeJS.Timeout | null = null
 	let flushPendingTimeout: NodeJS.Timeout | null = null // Add a specific timer for the debounced flush to prevent leak
 	let bufferCount = 0
-	const MAX_HISTORY_CACHE_SIZE = 10000 // Limit the history cache size to prevent memory bloat
 	const BUFFER_TIMEOUT_MS = 30000 // 30 seconds
 
 	// take the generic event and fire it as a baileys event
@@ -355,7 +365,7 @@ function append<E extends BufferableEvent>(
 
 				if (!existingChat && !historyCache.has(id)) {
 					data.historySets.chats[id] = chat
-					historyCache.add(id)
+					addHistoryCacheKey(historyCache, id)
 
 					absorbingChatUpdate(chat)
 				}
@@ -370,7 +380,7 @@ function append<E extends BufferableEvent>(
 					const hasAnyName = contact.notify || contact.name || contact.verifiedName
 					if (!historyCache.has(historyContactId) || hasAnyName) {
 						data.historySets.contacts[contact.id] = contact
-						historyCache.add(historyContactId)
+						addHistoryCacheKey(historyCache, historyContactId)
 					}
 				}
 			}
@@ -380,7 +390,7 @@ function append<E extends BufferableEvent>(
 				const existingMsg = data.historySets.messages[key]
 				if (!existingMsg && !historyCache.has(key)) {
 					data.historySets.messages[key] = message
-					historyCache.add(key)
+					addHistoryCacheKey(historyCache, key)
 				}
 			}
 

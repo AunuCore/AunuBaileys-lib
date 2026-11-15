@@ -210,7 +210,7 @@ export const extractAddressingContext = (stanza: BinaryNode) => {
  * Decode the received node as a message.
  * @note this will only parse the message, not decrypt it
  */
-export function decodeMessageNode(stanza: BinaryNode, meId: string, meLid: string) {
+export function decodeMessageNode(stanza: BinaryNode, meId: string | undefined, meLid: string | undefined) {
 	let msgType: MessageType
 	let chatId: string
 	let author: string
@@ -343,8 +343,8 @@ export function decodeMessageNode(stanza: BinaryNode, meId: string, meLid: strin
 
 export const decryptMessageNode = (
 	stanza: BinaryNode,
-	meId: string,
-	meLid: string,
+	meId: string | undefined,
+	meLid: string | undefined,
 	repository: SignalRepositoryWithLIDStore,
 	logger: ILogger
 ) => {

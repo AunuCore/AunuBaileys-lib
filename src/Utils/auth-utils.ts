@@ -107,6 +107,8 @@ await cacheSet(getUniqueId(type, id), item as SignalDataTypeMap[keyof SignalData
 		},
 		async set(data) {
 			return cacheMutex.runExclusive(async () => {
+				// AunuBaileys (2.1.0, HB-295, donor v6): persist FIRST, then cache — the old order let a failed persist leave the cache claiming unsaved values (up to the 5-minute TTL).
+				await store.set(data)
 				let keys = 0
 				for (const type in data) {
 					for (const id in data[type as keyof SignalDataTypeMap]) {
@@ -116,7 +118,6 @@ await cacheSet(getUniqueId(type, id), data[type as keyof SignalDataTypeMap]![id]
 				}
 
 				logger?.trace({ keys }, 'updated cache')
-				await store.set(data)
 			})
 		},
 		async clear() {
@@ -136,8 +137,17 @@ await cacheSet(getUniqueId(type, id), data[type as keyof SignalDataTypeMap]![id]
 export const addTransactionCapability = (
 	state: SignalKeyStore,
 	logger: ILogger,
-	{ maxCommitRetries, delayBetweenTriesMs }: TransactionCapabilityOptions
+	{ maxCommitRetries, delayBetweenTriesMs }: Partial<TransactionCapabilityOptions> = {}
 ): SignalKeyStoreWithTransaction => {
+	// AunuBaileys (2.1.0, HB-104 addendum + HB-333, donor v6 1.0.89): sanitise the retry budget at the boundary — a NaN/0/negative maxCommitRetries (classically Number('') from env) made commitWithRetry run ZERO attempts and silently drop the transaction's mutations, and Infinity wedged the transaction mutex forever on a failing store. Retries clamp to 1..10; a non-finite or negative delay falls back to the default.
+	const commitRetries =
+		typeof maxCommitRetries === 'number' && Number.isFinite(maxCommitRetries)
+			? Math.min(10, Math.max(1, Math.floor(maxCommitRetries)))
+			: 10
+	const commitDelayMs =
+		typeof delayBetweenTriesMs === 'number' && Number.isFinite(delayBetweenTriesMs) && delayBetweenTriesMs >= 0
+			? delayBetweenTriesMs
+			: 3000
 	const txStorage = new AsyncLocalStorage<TransactionContext>()
 
 	// Queues for concurrency control (keyed by signal data type - bounded set)
@@ -254,7 +264,7 @@ export const addTransactionCapability = (
 
 		logger.trace('committing transaction')
 
-		for (let attempt = 0; attempt < maxCommitRetries; attempt++) {
+		for (let attempt = 0; attempt < commitRetries; attempt++) {
 			try {
 				// HB-94 (re-applied P3b): commits pass through the
 				// shared write mutex — see the note at writeMutex.
@@ -264,14 +274,14 @@ export const addTransactionCapability = (
 				logger.trace({ mutationCount: Object.keys(mutations).length }, 'committed transaction')
 				return
 			} catch (error) {
-				const retriesLeft = maxCommitRetries - attempt - 1
+				const retriesLeft = commitRetries - attempt - 1
 				logger.warn(`failed to commit mutations, retries left=${retriesLeft}`)
 
 				if (retriesLeft === 0) {
 					throw error
 				}
 
-				await delay(delayBetweenTriesMs)
+				await delay(commitDelayMs)
 			}
 		}
 	}

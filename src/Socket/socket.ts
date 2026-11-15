@@ -135,7 +135,7 @@ export const makeSocket = (config: SocketConfig) => {
 		)
 	}
 
-	if (browser[1].toLocaleLowerCase().includes('android')) {
+	if ((browser?.[1] ?? 'Chrome').toLocaleLowerCase().includes('android')) {
 		logger.warn(
 			'⚠️ Using the Android browser is experimental and may lead to unexpected behavior. Use at your own risk.'
 		)
@@ -986,32 +986,46 @@ export const makeSocket = (config: SocketConfig) => {
 
 	/** logout & invalidate connection */
 	const logout = async (msg?: string) => {
-		const jid = authState.creds.me?.id
-		if (jid) {
-			await sendNode({
-				tag: 'iq',
-				attrs: {
-					to: S_WHATSAPP_NET,
-					type: 'set',
-					id: generateMessageTag(),
-					xmlns: 'md'
-				},
-				content: [
-					{
-						tag: 'remove-companion-device',
-						attrs: {
-							jid,
-							reason: 'user_initiated'
+		// AunuBaileys (2.1.0, HB-300, donor v6): end() must run even when the remove-companion-device IQ throws — otherwise the socket stays open and the session stays valid.
+		try {
+			const jid = authState.creds.me?.id
+			if (jid) {
+				await sendNode({
+					tag: 'iq',
+					attrs: {
+						to: S_WHATSAPP_NET,
+						type: 'set',
+						id: generateMessageTag(),
+						xmlns: 'md'
+					},
+					content: [
+						{
+							tag: 'remove-companion-device',
+							attrs: {
+								jid,
+								reason: 'user_initiated'
+							}
 						}
-					}
-				]
-			})
+					]
+				})
+			}
+		} finally {
+			void end(new Boom(msg || 'Intentional Logout', { statusCode: DisconnectReason.loggedOut }))
 		}
-
-		void end(new Boom(msg || 'Intentional Logout', { statusCode: DisconnectReason.loggedOut }))
 	}
 
+	let pairingCodeRequestInFlight = false
+
 	const requestPairingCode = async (phoneNumber: string, customPairingCode?: string): Promise<string> => {
+		// AunuBaileys (2.1.0, HB-319, donor v6 1.0.89): pairing codes are only for new logins, and a second concurrent request invalidates the first code — reject both up front.
+		if (authState.creds.registered) {
+			throw new Boom('requestPairingCode: this session is already registered — pairing codes are only for new logins', { statusCode: 400 })
+		}
+		if (pairingCodeRequestInFlight) {
+			throw new Boom('requestPairingCode: a pairing code request is already in flight — wait for it to finish instead of firing another one (double requests invalidate the first code)', { statusCode: 409 })
+		}
+		pairingCodeRequestInFlight = true
+		try {
 		// AunuBaileys (1.0.77, HB-213, re-applied P3): the pairing IQ
 		// must not leave before the Noise handshake completes \u2014
 		// encodeFrame encrypts only once the handshake is finished,
@@ -1126,7 +1140,7 @@ export const makeSocket = (config: SocketConfig) => {
 						{
 							tag: 'companion_platform_display',
 							attrs: {},
-							content: `${browser[1]} (${browser[0]})`
+							content: `${browser?.[1] || 'Chrome'} (${browser?.[0] || 'Chrome'})`
 						},
 						{
 							tag: 'link_code_pairing_nonce',
@@ -1163,6 +1177,9 @@ export const makeSocket = (config: SocketConfig) => {
 			}
 
 			throw err
+		}
+		} finally {
+			pairingCodeRequestInFlight = false
 		}
 	}
 
@@ -1353,7 +1370,8 @@ ws.on('error', mapWebSocketError(end))
 		clearTimeout(qrTimer) // will never happen in all likelyhood -- but just in case WA sends success on first try
 
 		try {
-			ev.emit('creds.update', { me: { ...authState.creds.me!, lid: node.attrs.lid } })
+			// AunuBaileys (2.1.0, HB-315): a CB:success without a lid attr used to wipe a known me.lid to undefined — and persist the loss.
+			ev.emit('creds.update', { me: { ...authState.creds.me!, lid: node.attrs.lid ?? authState.creds.me?.lid } })
 		} catch (err) {
 			logger.error({ err }, 'error in creds.update listener \u2014 continuing')
 		}

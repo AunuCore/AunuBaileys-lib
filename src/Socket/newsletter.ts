@@ -211,7 +211,8 @@ export const makeNewsletterSocket = (config: SocketConfig) => {
 				QueryIds.ADMIN_COUNT,
 				XWAPaths.xwa2_newsletter_admin_count
 			)
-			return response.admin_count
+			// AunuBaileys (2.1.0, HB-313, donor v6 1.0.86): executeWMexQuery rejects only undefined — a GraphQL null passes through and threw here.
+			return response?.admin_count
 		},
 
 		newsletterChangeOwner: async (jid: string, newOwnerJid: string) => {

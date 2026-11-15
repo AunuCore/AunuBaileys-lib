@@ -123,6 +123,12 @@ export const jidNormalizedUser = (jid: string | undefined) => {
 export const transferDevice = (fromJid: string, toJid: string) => {
 	const fromDecoded = jidDecode(fromJid)
 	const deviceId = fromDecoded?.device || 0
-	const { server, user } = jidDecode(toJid)!
+	// AunuBaileys (2.1.0, sweep): a toJid without '@' made jidDecode
+	// return undefined, and the bare `!` died as a raw TypeError.
+	const toDecoded = jidDecode(toJid)
+	if (!toDecoded?.user || !toDecoded?.server) {
+		throw new Error(`transferDevice: invalid toJid "${toJid}"`)
+	}
+	const { server, user } = toDecoded
 	return jidEncode(user, server, deviceId)
 }

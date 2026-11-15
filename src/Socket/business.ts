@@ -1,3 +1,4 @@
+import { promises as fs } from 'fs'
 import type { GetCatalogOptions, ProductCreate, ProductUpdate, SocketConfig, WAMediaUpload } from '../Types'
 import type { UpdateBussinesProfileProps } from '../Types/Bussines'
 import { getRawMediaUploadData } from '../Utils'
@@ -96,34 +97,43 @@ export const makeBusinessSocket = (config: SocketConfig) => {
 		const { fileSha256, filePath } = await getRawMediaUploadData(photo, 'biz-cover-photo')
 		const fileSha256B64 = fileSha256.toString('base64')
 
-		const { meta_hmac, fbid, ts } = await waUploadToServer(filePath, {
-			fileEncSha256B64: fileSha256B64,
-			mediaType: 'biz-cover-photo'
-		})
+		// AunuBaileys (2.1.0, sweep, HB-2026-1112-10 class): try/finally
+		// like the newsletter branch — a failed upload used to leak the
+		// full-size tmp file.
+		let fbid: number | undefined
+		try {
+			const { meta_hmac, fbid: uploadedFbid, ts } = await waUploadToServer(filePath, {
+				fileEncSha256B64: fileSha256B64,
+				mediaType: 'biz-cover-photo'
+			})
+			fbid = uploadedFbid
 
-		await query({
-			tag: 'iq',
-			attrs: {
-				to: S_WHATSAPP_NET,
-				type: 'set',
-				xmlns: 'w:biz'
-			},
-			content: [
-				{
-					tag: 'business_profile',
-					attrs: {
-						v: '3',
-						mutation_type: 'delta'
-					},
-					content: [
-						{
-							tag: 'cover_photo',
-							attrs: { id: String(fbid), op: 'update', token: meta_hmac!, ts: String(ts) }
-						}
-					]
-				}
-			]
-		})
+			await query({
+				tag: 'iq',
+				attrs: {
+					to: S_WHATSAPP_NET,
+					type: 'set',
+					xmlns: 'w:biz'
+				},
+				content: [
+					{
+						tag: 'business_profile',
+						attrs: {
+							v: '3',
+							mutation_type: 'delta'
+						},
+						content: [
+							{
+								tag: 'cover_photo',
+								attrs: { id: String(fbid), op: 'update', token: meta_hmac!, ts: String(ts) }
+							}
+						]
+					}
+				]
+			})
+		} finally {
+			await fs.unlink(filePath).catch(() => {})
+		}
 
 		return fbid!
 	}

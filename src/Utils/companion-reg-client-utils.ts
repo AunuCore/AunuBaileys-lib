@@ -22,7 +22,10 @@ const BROWSER_TO_COMPANION_WEB_CLIENT: Record<string, CompanionWebClientType> = 
 	Safari: CompanionWebClientType.SAFARI
 }
 
-export const getCompanionWebClientType = ([os, browserName]: WABrowserDescription): CompanionWebClientType => {
+// AunuBaileys (2.1.0, HB-335): the tuple destructure threw a TypeError on
+// an undefined browser before any guard could run - default to the bundled
+// default browser (same tuple as DEFAULT_CONNECTION_CONFIG.browser).
+export const getCompanionWebClientType = ([os, browserName]: WABrowserDescription = ['Mac OS', 'Chrome', '14.4.1']): CompanionWebClientType => {
 	if (browserName === 'Desktop') {
 		return os === 'Windows' ? CompanionWebClientType.UWP : CompanionWebClientType.ELECTRON
 	}

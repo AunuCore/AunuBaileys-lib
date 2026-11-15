@@ -890,7 +890,11 @@ export const makeChatsSocket = (config: SocketConfig) => {
 				}
 			})
 		} else {
-			const { server } = jidDecode(toJid)!
+			// AunuBaileys (2.1.0, HB-21/22): a chatstate presence update without a target jid used to throw a raw TypeError from jidDecode(undefined).
+			if (!toJid) {
+				throw new Boom('sendPresenceUpdate: a target jid is required for chatstate presence types', { statusCode: 400 })
+			}
+			const { server } = jidDecode(toJid) || {}
 			const isLid = server === 'lid'
 
 			// AunuBaileys (HB-270, P4): me.lid is only learned from the
@@ -909,7 +913,7 @@ export const makeChatsSocket = (config: SocketConfig) => {
 				tag: 'chatstate',
 				attrs: {
 					from: fromJid,
-					to: toJid!
+					to: toJid
 				},
 				content: [
 					{

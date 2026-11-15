@@ -81,8 +81,20 @@ export const readAndEmitEventStream = (filename, delayIntervalMs = 0) => {
         // ('\r\n') in input.txt as a single line break.
         for await (const line of rl) {
             if (line) {
-                const { event, data } = JSON.parse(line);
-                ev.emit(event, data);
+                // AunuBaileys (2.1.0, sweep): one corrupt line — or one
+                // throwing replay listener — used to reject the floating
+                // task promise and crash the process. Isolate per line.
+                let parsed: { event: string; data: unknown };
+                try {
+                    parsed = JSON.parse(line);
+                } catch {
+                    continue;
+                }
+                try {
+                    ev.emit(parsed.event, parsed.data);
+                } catch {
+                    // a throwing replay listener must not abort the replay
+                }
                 delayIntervalMs && (await delay(delayIntervalMs));
             }
         }

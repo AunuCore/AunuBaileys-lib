@@ -232,8 +232,13 @@ export function bindWaitForEvent<T extends keyof BaileysEventMap>(ev: BaileysEve
 
 			ev.on('connection.update', closeListener)
 			listener = async update => {
-				if (await check(update)) {
-					resolve()
+				// AunuBaileys (2.1.0, HB-312, donor v6 1.0.67): a throwing check used to reject unhandled (process crash) and left the wait pending forever — reject the wait instead.
+				try {
+					if (await check(update)) {
+						resolve()
+					}
+				} catch (err) {
+					reject(err instanceof Error ? err : new Error(String(err)))
 				}
 			}
 
@@ -448,7 +453,11 @@ export const getCodeFromWSError = (error: Error) => {
 		}
 	} else if (
 		// eslint-disable-next-line @typescript-eslint/no-explicit-any
-		(error as any)?.code?.startsWith('E') ||
+		// AunuBaileys (2.1.0, addendum HB-2026-1112-23): error.code may be a
+		// NUMBER (e.g. {code: 1006} from a websocket close) - .startsWith is
+		// undefined on numbers, so the unguarded call threw a TypeError here
+		// instead of classifying the error as a timeout (408).
+		(typeof (error as any)?.code === 'string' && (error as any).code.startsWith('E')) ||
 		// AunuBaileys (1.0.83, HB-133, re-applied P3): case-insensitive \u2014
 		// our own Boom above says 'Timed Out', and the case-sensitive
 		// check never matched it, so timeouts fell through unclassified.
