@@ -161,3 +161,4 @@ Built on [WhiskeySockets/Baileys](https://github.com/WhiskeySockets/Baileys) (MI
 ### 📄 License
 
 MIT — primary copyright **AunuCore Creative Network**, upstream WhiskeySockets attribution retained in [LICENSE](./LICENSE).
+
