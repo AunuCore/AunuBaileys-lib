@@ -17,6 +17,6 @@ export declare class AunuHandler {
      */
     sendInteractive(jid: any, content: any, options?: {}): Promise<any>;
     /** ID numerik dari JID newsletter. */
-    newsletterId(jid: any): any;
+    newsletterId(jid: any): string | undefined;
 }
 //# sourceMappingURL=aunu-handler.d.ts.map

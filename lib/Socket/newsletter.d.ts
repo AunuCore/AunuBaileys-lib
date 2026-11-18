@@ -7,6 +7,7 @@ export declare const makeNewsletterSocket: (config: SocketConfig) => {
         subscribers: number;
     }>;
     newsletterMetadata: (type: "invite" | "jid", key: string) => Promise<NewsletterMetadata | null>;
+    newsletterSubscribed: () => Promise<unknown>;
     newsletterFollow: (jid: string) => Promise<unknown>;
     newsletterUnfollow: (jid: string) => Promise<unknown>;
     newsletterMute: (jid: string) => Promise<unknown>;
@@ -77,7 +78,7 @@ export declare const makeNewsletterSocket: (config: SocketConfig) => {
     };
     fetchPrivacySettings: (force?: boolean) => Promise<{
         [_: string]: string;
-    }>;
+    } | undefined>;
     upsertMessage: (msg: import("../index.js").WAMessage, type: import("../index.js").MessageUpsertType) => Promise<void>;
     appPatch: (patchCreate: import("../index.js").WAPatchCreate) => Promise<void>;
     sendPresenceUpdate: (type: import("../index.js").WAPresence, toJid?: string) => Promise<void>;

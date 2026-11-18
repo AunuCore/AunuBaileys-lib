@@ -1,5 +1,5 @@
 import { Mutex } from './mutex'
-import { mkdir, readFile, rename, stat, unlink, writeFile } from 'fs/promises'
+import { mkdir, open, readFile, readdir, rename, stat, unlink, writeFile } from 'fs/promises'
 import type { ILogger } from './logger'
 import { join } from 'path'
 import { proto } from '../../WAProto/index.js'
@@ -77,8 +77,41 @@ export const useMultiFileAuthState = async (
 				// AunuBaileys (2.1.0, HB-303, donor v6): atomic tmp+rename — a crash mid-write used to leave a truncated auth file behind (a lost WhatsApp identity). Write the tmp file 0600; the rename carries the mode onto the target, so pre-existing looser files also self-heal to 0600 on their next save.
 				const tmpPath = `${filePath}.tmp-${process.pid}`
 				await writeFile(tmpPath, JSON.stringify(data, BufferJSON.replacer), { mode: 0o600 })
+				// AunuBaileys (2.2.0, HB-365): tmp+rename is atomic but
+				// not DURABLE — without fsync, an OS crash / power loss
+				// can roll the renamed file back to the old (or no)
+				// contents even though the write 'succeeded'. fsync
+				// the file before the rename and the directory after
+				// it. Best-effort: a filesystem that cannot fsync must
+				// not brick auth writes, so failures only log.
+				try {
+					const tmpHandle = await open(tmpPath, 'r')
+					try {
+						await tmpHandle.sync()
+					} finally {
+						await tmpHandle.close()
+					}
+				} catch (syncErr) {
+					logger?.warn({ file, err: (syncErr as Error)?.message || String(syncErr) }, 'aunu: fsync of auth tmp file failed')
+				}
+
 				await rename(tmpPath, filePath)
+
+				try {
+					const dirHandle = await open(folder, 'r')
+					try {
+						await dirHandle.sync()
+					} finally {
+						await dirHandle.close()
+					}
+				} catch {
+					// directory fsync is unsupported on some platforms — the file fsync above is the critical half
+				}
 			} catch (err) {
+				// AunuBaileys (2.2.0, HB-2026-1112-14 addendum): a
+				// failed write used to leak its tmp file forever;
+				// remove it (the boot sweep below covers the rest).
+				await unlink(`${filePath}.tmp-${process.pid}`).catch(() => {})
 				// AunuBaileys (2.1.0, HB-318, donor v6): a failed persist (full disk, permissions) must be visible where it happens — it otherwise surfaces one boot later as a random logout. Still thrown.
 				logger?.error({ file, err: (err as Error)?.message || String(err) }, 'aunu: failed to persist auth file')
 				throw err
@@ -135,6 +168,21 @@ export const useMultiFileAuthState = async (
 		}
 	} else {
 		await mkdir(folder, { recursive: true })
+	}
+
+	// AunuBaileys (2.2.0, HB-2026-1112-14 addendum): sweep tmp
+	// files orphaned by crashed/killed writers (the per-write
+	// catch removes its own; a SIGKILLed process cannot). Only
+	// OUR tmp shape is touched.
+	try {
+		const entries = await readdir(folder)
+		await Promise.all(
+			entries
+				.filter(name => name.includes('.tmp-'))
+				.map(name => unlink(join(folder, name)).catch(() => {}))
+		)
+	} catch {
+		// a sweep failure must never block boot
 	}
 
 	const fixFileName = (file?: string) => file?.replace(/\//g, '__')?.replace(/:/g, '-')

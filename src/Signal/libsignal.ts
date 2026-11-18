@@ -140,15 +140,13 @@ export function makeLibSignalRepository(
 			const addr = jidToSignalProtocolAddress(jid)
 			const session = new libsignal.SessionCipher(storage, addr)
 
-			// Extract and save sender's identity key before decryption for identity change detection
+			// Extract the sender's identity key from the pkmsg, but do
+			// NOT save it yet (HB-350 below).
+			let pendingIdentity: { addrStr: string; identityKey: Uint8Array } | undefined
 			if (type === 'pkmsg') {
 				const identityKey = extractIdentityFromPkmsg(ciphertext)
 				if (identityKey) {
-					const addrStr = addr.toString()
-					const identityChanged = await storage.saveIdentity(addrStr, identityKey)
-					if (identityChanged) {
-						logger.info({ jid, addr: addrStr }, 'identity key changed or new contact, session will be re-established')
-					}
+					pendingIdentity = { addrStr: addr.toString(), identityKey }
 				}
 			}
 
@@ -168,9 +166,27 @@ export function makeLibSignalRepository(
 
 			// If it's not a sync message, we need to ensure atomicity
 			// For regular messages, we use a transaction to ensure atomicity
-			return parsedKeys.transaction(async () => {
+			const result = await parsedKeys.transaction(async () => {
 				return await doDecrypt()
 			}, jid)
+
+			// AunuBaileys (2.2.0, HB-350): saveIdentity clears the
+			// session when the identity changed — running it BEFORE
+			// decryption was verified meant any undecryptable pkmsg
+			// carrying a different identity key destroyed a healthy
+			// session. Only a successfully decrypted message may
+			// replace the identity (and the session with it).
+			if (pendingIdentity) {
+				const identityChanged = await storage.saveIdentity(pendingIdentity.addrStr, pendingIdentity.identityKey)
+				if (identityChanged) {
+					logger.info(
+						{ jid, addr: pendingIdentity.addrStr },
+						'identity key changed or new contact, session will be re-established'
+					)
+				}
+			}
+
+			return result
 		},
 
 		async encryptMessage({ jid, data }) {
@@ -285,7 +301,9 @@ export function makeLibSignalRepository(
 		},
 
 		close() {
-			migratedSessionCache.clear()
+			// AunuBaileys (2.2.0, HB-346): close(), not clear() —
+			// clear() left the 3-day-TTL cache's purge timer alive.
+			migratedSessionCache.close()
 			lidMapping.close()
 		},
 
@@ -402,8 +420,18 @@ export function makeLibSignalRepository(
 						const pnSession = pnSessions[pnAddrStr]
 						if (pnSession) {
 							// Session exists (guaranteed from device discovery)
-							const fromSession = libsignal.SessionRecord.deserialize(pnSession)
-							if (fromSession.haveOpenSession()) {
+							// AunuBaileys (2.2.0, HB-2026-1112-110 addendum): a
+							// corrupt stored record used to throw out of
+							// deserialize and abort the WHOLE migration —
+							// treat it as absent, like loadSession does.
+							let fromSession: libsignal.SessionRecord | undefined
+							try {
+								fromSession = libsignal.SessionRecord.deserialize(pnSession)
+							} catch {
+								fromSession = undefined
+							}
+
+							if (fromSession?.haveOpenSession()) {
 								// Queue for bulk update: copy to LID, delete from PN
 								sessionUpdates[lidAddrStr] = fromSession.serialize()
 								sessionUpdates[pnAddrStr] = null
@@ -486,7 +514,19 @@ function signalStorage(
 
 			const pnJid = `${user!}${device !== '0' ? `:${device}` : ''}@${domainType === WAJIDDomains.HOSTED ? 'hosted' : 's.whatsapp.net'}`
 
-			const lidForPN = await lidMapping.getLIDForPN(pnJid)
+			// AunuBaileys (2.2.0, HB-343 + HB-353): the mapping lookup
+			// can throw (USync/IQ failure) — that throw used to escape
+			// storeSession/saveIdentity/loadIdentityKey unguarded and,
+			// via loadSession's blanket catch, masquerade as "no
+			// session record". A failed lookup is a mapping MISS:
+			// fall back to the raw id, exactly like the timeout path.
+			let lidForPN: string | null = null
+			try {
+				lidForPN = await lidMapping.getLIDForPN(pnJid)
+			} catch {
+				lidForPN = null
+			}
+
 			if (lidForPN) {
 				const lidAddr = jidToSignalProtocolAddress(lidForPN)
 				return lidAddr.toString()

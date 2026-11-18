@@ -51,6 +51,18 @@ export const BufferJSON = {
 			if (keys.length > 0 && keys.every(k => !isNaN(parseInt(k, 10)))) {
 				const values = Object.values(value)
 				if (values.every(v => typeof v === 'number')) {
+					// AunuBaileys (2.2.0, HB-2026-1113-143 addendum):
+					// Buffer.from silently WRAPS out-of-range numbers
+					// (300 -> 44, -1 -> 255) and truncates fractions —
+					// the numeric form of a mangled key file decoded
+					// to wrong bytes with no error, the exact failure
+					// the base64 branch above rejects loudly. A byte
+					// is an integer in [0, 255]; anything else is
+					// corruption, not data.
+					if (!values.every(v => Number.isInteger(v) && v >= 0 && v <= 255)) {
+						throw new Error('BufferJSON: invalid byte value in serialized Buffer data')
+					}
+
 					return Buffer.from(values)
 				}
 			}
@@ -297,6 +309,24 @@ export const fetchLatestBaileysVersion = async (options: RequestInit = {}) => {
  * A utility that fetches the latest web version of whatsapp.
  * Use to ensure your WA connection is always on the latest version
  */
+// AunuBaileys (2.2.0, HB-2026-1111-8): the last successfully
+// fetched version, kept process-wide. The v6 implementation had
+// this monotonic last-good cache; the v7 rebase dropped it, so a
+// transient fetch failure fell all the way back to the (older)
+// pinned baileysVersion — and a server that had already accepted
+// the newer version could answer 408, looping reconnects. The
+// cache only ever moves forward.
+let lastGoodWaWebVersion: WAVersion | undefined
+
+const compareWaVersions = (a: WAVersion, b: WAVersion): number => {
+	for (let i = 0; i < 3; i++) {
+		const diff = (a[i] || 0) - (b[i] || 0)
+		if (diff !== 0) return diff
+	}
+
+	return 0
+}
+
 export const fetchLatestWaWebVersion = async (options: RequestInit = {}) => {
 	try {
 		// Absolute minimal headers required to bypass anti-bot detection
@@ -325,7 +355,7 @@ export const fetchLatestWaWebVersion = async (options: RequestInit = {}) => {
 
 		if (!match?.[1]) {
 			return {
-				version: baileysVersion as WAVersion,
+				version: lastGoodWaWebVersion ?? (baileysVersion as WAVersion),
 				isLatest: false,
 				error: {
 					message: 'Could not find client revision in the fetched content'
@@ -335,13 +365,18 @@ export const fetchLatestWaWebVersion = async (options: RequestInit = {}) => {
 
 		const clientRevision = match[1]
 
+		const fetchedVersion = [2, 3000, +clientRevision] as WAVersion
+		if (!lastGoodWaWebVersion || compareWaVersions(fetchedVersion, lastGoodWaWebVersion) > 0) {
+			lastGoodWaWebVersion = fetchedVersion
+		}
+
 		return {
-			version: [2, 3000, +clientRevision] as WAVersion,
+			version: lastGoodWaWebVersion,
 			isLatest: true
 		}
 	} catch (error) {
 		return {
-			version: baileysVersion as WAVersion,
+			version: lastGoodWaWebVersion ?? (baileysVersion as WAVersion),
 			isLatest: false,
 			error
 		}

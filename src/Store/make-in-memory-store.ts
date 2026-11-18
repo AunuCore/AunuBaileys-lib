@@ -1,6 +1,6 @@
 // AunuCore fork backport: in-memory store dari Baileys 6.6.0, dikonversi ke ESM untuk basis 6.7.x
 // Ported to TypeScript for the AunuBaileys v7 tree (2.0.0); behaviour identical to the v6 module.
-import { existsSync, readFileSync, renameSync, writeFileSync } from 'fs'
+import { closeSync, existsSync, fsyncSync, openSync, readFileSync, renameSync, writeFileSync } from 'fs'
 import { proto } from '../../WAProto/index.js'
 import { KeyedDB } from './keyed-db.js'
 import type { Comparable } from './keyed-db.js'
@@ -202,10 +202,28 @@ const makeInMemoryStore = ({ logger: _logger, chatKey, labelAssociationKey }: Ba
 			// existing one — every healthy chat AFTER it in the batch
 			// was lost with it. Isolate per entry (HB-134 pattern).
 			for (const chat of newChats) {
+				// AunuBaileys (2.2.0, HB-278 addendum): KeyedDB.upsert
+				// deletes the existing entry BEFORE inserting — when
+				// the insert then throws on a sort-key collision (with
+				// a DIFFERENT chat whose key the new key prefixes),
+				// the upserted chat itself was already gone and the
+				// catch above only logged it. Snapshot first and
+				// restore on failure, mirroring chats.update below
+				// (KeyedDB's delete-before-insert order is deliberate
+				// and stays — see keyed-db.ts).
+				const snapshot = chats.get(chat.id)
+				const snapshotCopy = snapshot ? { ...snapshot } : undefined
 				try {
 					chats.upsert(chat)
 				} catch (err) {
 					logger.warn({ chatId: chat.id, err }, 'aunu: skipped a chat upsert whose sort key collided')
+					if (snapshotCopy && !chats.get(chat.id)) {
+						try {
+							chats.upsert(snapshotCopy)
+						} catch (restoreErr) {
+							logger.warn({ chatId: chat.id, err: restoreErr }, 'aunu: failed to restore the chat after a failed upsert')
+						}
+					}
 				}
 			}
 		})
@@ -325,7 +343,16 @@ const makeInMemoryStore = ({ logger: _logger, chatKey, labelAssociationKey }: Ba
 					}
 				}
 
-				const result = list.updateAssign(key.id!, update as Partial<WAMessage>)
+				// AunuBaileys (2.2.0, HB-370): a stored message's key
+				// is its identity — never a legitimate update payload.
+				// The REVOKE producer (process-message) attaches the
+				// PROTOCOL message's own key as update.key; assigning
+				// it re-keyed the dict entry, so the revoked message
+				// vanished from loadMessage(targetId) and surfaced
+				// under the protocol id. Strip key before assigning.
+				const safeUpdate = { ...(update as Partial<WAMessage>) }
+				delete safeUpdate.key
+				const result = list.updateAssign(key.id!, safeUpdate)
 				if (!result) {
 					logger.debug({ update }, 'got update for non-existent message')
 				}
@@ -612,7 +639,33 @@ const makeInMemoryStore = ({ logger: _logger, chatKey, labelAssociationKey }: Ba
 			// per-pid temp file, then rename it over the target.
 			const tmpPath = `${path}.tmp-${process.pid}`
 			writeFileSync(tmpPath, JSON.stringify(toJSON()), { mode: 0o600 })
+			// AunuBaileys (2.2.0, HB-365): fsync before the rename
+			// and the directory after it — tmp+rename alone is
+			// atomic but not durable across an OS crash. Best-
+			// effort, like the other writers.
+			try {
+				const fd = openSync(tmpPath, 'r')
+				try {
+					fsyncSync(fd)
+				} finally {
+					closeSync(fd)
+				}
+			} catch {
+				// best-effort durability
+			}
+
 			renameSync(tmpPath, path)
+
+			try {
+				const dirFd = openSync(path.slice(0, path.lastIndexOf('/') + 1) || '.', 'r')
+				try {
+					fsyncSync(dirFd)
+				} finally {
+					closeSync(dirFd)
+				}
+			} catch {
+				// directory fsync unsupported on some platforms
+			}
 		},
 		readFromFile: (path: string) => {
 			if (existsSync(path)) {

@@ -164,7 +164,7 @@ export const makeChatsSocket = (config: SocketConfig) => {
 
 	const fetchPrivacySettings = async (force = false) => {
 		if (!privacySettings || force) {
-			const { content } = await query({
+			const result = await query({
 				tag: 'iq',
 				attrs: {
 					xmlns: 'privacy',
@@ -173,7 +173,14 @@ export const makeChatsSocket = (config: SocketConfig) => {
 				},
 				content: [{ tag: 'privacy', attrs: {} }]
 			})
-			privacySettings = reduceBinaryNodeToDictionary(content?.[0] as BinaryNode, 'category')
+			// AunuBaileys (2.2.0, HB-340 addendum, privacy facet):
+			// a timeout resolves undefined — destructuring it threw
+			// a raw TypeError. Keep the previous settings instead.
+			if (!result) {
+				return privacySettings
+			}
+
+			privacySettings = reduceBinaryNodeToDictionary(result.content?.[0] as BinaryNode, 'category')
 		}
 
 		return privacySettings
@@ -975,7 +982,16 @@ export const makeChatsSocket = (config: SocketConfig) => {
 			}
 		} else if (Array.isArray(content)) {
 			const [firstChild] = content
-			let type = firstChild!.tag as WAPresence
+			// AunuBaileys (2.2.0, HB-2026-1112-5 addendum): an empty
+			// <chatstate/> has no first child — the v6 firstChild
+			// guard was lost in the v7 rebase and the deref below
+			// threw (contained by emitWsIsolated, but the presence
+			// update was lost). Nothing to report without a child.
+			if (!firstChild) {
+				return
+			}
+
+			let type = firstChild.tag as WAPresence
 			if (type === 'paused') {
 				type = 'available'
 			}
@@ -1315,7 +1331,12 @@ export const makeChatsSocket = (config: SocketConfig) => {
 			}
 
 			// update our pushname too
-			if (msg.key.fromMe && msg.pushName && authState.creds.me?.name !== msg.pushName) {
+			// AunuBaileys (2.2.0, HB-125 addendum, site A): the emit
+			// below spreads creds.me — undefined pre-pairing, so the
+			// update became {me:{name}} alone and the socket's
+			// shallow Object.assign persisted an identity fragment
+			// (id/lid lost) over creds.me. Require a real identity.
+			if (msg.key.fromMe && msg.pushName && authState.creds.me?.id && authState.creds.me?.name !== msg.pushName) {
 				try {
 					ev.emit('creds.update', { me: { ...authState.creds.me!, name: msg.pushName } })
 				} catch (err) {

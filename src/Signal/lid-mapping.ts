@@ -51,8 +51,14 @@ export class LIDMappingStore {
 				continue
 			}
 
-			const lidDecoded = jidDecode(lid)
-			const pnDecoded = jidDecode(pn)
+			// AunuBaileys (2.2.0, HB-364): the validation above accepts
+			// EITHER field orientation, but the extraction used to
+			// assume the fields were already ordered — a swapped pair
+			// ({ lid: <PN>, pn: <LID> }) was stored inverted, silently.
+			// Normalise by shape, not by field position.
+			const [lidJid, pnJid] = isLidLike(lid) ? [lid, pn] : [pn, lid]
+			const lidDecoded = jidDecode(lidJid)
+			const pnDecoded = jidDecode(pnJid)
 			if (!lidDecoded || !pnDecoded) continue
 
 			validatedPairs.push({ pnUser: pnDecoded.user, lidUser: lidDecoded.user })
@@ -102,10 +108,18 @@ export class LIDMappingStore {
 
 		this.logger.trace({ pairMap }, `Storing ${Object.keys(pairMap).length} pn mappings`)
 
-		const batchData: { [key: string]: string } = {}
+		const batchData: { [key: string]: string | null } = {}
 		for (const [pnUser, lidUser] of Object.entries(pairMap)) {
 			batchData[pnUser] = lidUser
 			batchData[`${lidUser}_reverse`] = pnUser
+			// AunuBaileys (2.2.0, HB-358): a remap (same PN, new LID)
+			// must retire the OLD LID's reverse entry — it used to
+			// survive in the store (and in the cache below), so the
+			// stale LID kept resolving back to this PN indefinitely.
+			const existingLidUser = existingMappings.get(pnUser)
+			if (existingLidUser && existingLidUser !== lidUser) {
+				batchData[`${existingLidUser}_reverse`] = null
+			}
 		}
 
 		await this.keys.transaction(async () => {
@@ -116,6 +130,11 @@ export class LIDMappingStore {
 		for (const [pnUser, lidUser] of Object.entries(pairMap)) {
 			this.mappingCache.set(`pn:${pnUser}`, lidUser)
 			this.mappingCache.set(`lid:${lidUser}`, pnUser)
+			// HB-358: evict the remapped-away LID's reverse cache too
+			const existingLidUser = existingMappings.get(pnUser)
+			if (existingLidUser && existingLidUser !== lidUser) {
+				this.mappingCache.delete(`lid:${existingLidUser}`)
+			}
 		}
 	}
 
@@ -355,6 +374,8 @@ export class LIDMappingStore {
 	 * Close the cache and release resources
 	 */
 	close(): void {
-		this.mappingCache.clear()
+		// AunuBaileys (2.2.0, HB-346): close(), not clear() —
+		// clear() left the purge timer alive past socket end.
+		this.mappingCache.close()
 	}
 }

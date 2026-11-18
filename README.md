@@ -87,7 +87,7 @@ The 34 methods: `aunuWatermark`, `aunuReadWatermark`, `aunuStripWatermark`, `aun
 - 📣 **Channel AutoJoin** — `makeWASocket({ autoJoinChannels: [...], autoJoinLimit: 2 })` or `sock.aunuAutoJoinChannels()`; hard ceiling of 3 channels, framed as creator support.
 - 🚫 **`sock.ignoreKey(rule)`** — drop matching inbound stanzas before any handler (never drops `'peer'` traffic).
 - 🎨 **Rich responses** — code highlighting (12 languages), tables, link lists, LaTeX, Meta AI-style rich messages — with **no injected donation links, ever**. URLs are strictly user-supplied.
-- 📞 **VOIP call signalling** — `offerCall` / `groupCall` / `acceptCall` / `terminateCall` with per-device encrypted call-key envelopes.
+- 📞 **VOIP call signalling** — incoming calls surface as `call` events (with missed-call notification messages), `rejectCall(callId, callFrom)` declines an incoming call, and the exported `Utils/call-utils` builders (`buildCallOfferContent`, `buildCallControlStanza`, `buildGroupCallStanza`, `buildGroupCallCancelStanza`, `createCallKey`, `newCallId`) construct call stanzas for hosts that drive the signalling themselves. There are no `offerCall` / `groupCall` / `acceptCall` / `terminateCall` socket methods.
 - 🖼️ **Sticker packs, albums, newsletter media** — the full send surface, including sticker packs (`stickerPackMessage`), plus `addStickerExif()`.
 - 📰 **Newsletters** — `newsletterSubscribed()`, pinned-message metadata, quoting inside channels, `statusPrivacy` on status sends, and a dedicated `newsletter.status` event.
 

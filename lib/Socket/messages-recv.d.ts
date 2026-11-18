@@ -25,7 +25,7 @@ export declare const makeMessagesRecvSocket: (config: SocketConfig) => {
     waUploadToServer: import("../Types/index.js").WAMediaUploadFunction;
     fetchPrivacySettings: (force?: boolean) => Promise<{
         [_: string]: string;
-    }>;
+    } | undefined>;
     sendPeerDataOperationMessage: (pdoMessage: proto.Message.IPeerDataOperationRequestMessage) => Promise<string>;
     createParticipantNodes: (recipientJids: string[], message: proto.IMessage, extraAttrs?: BinaryNode["attrs"], dsmMessage?: proto.IMessage) => Promise<{
         nodes: BinaryNode[];
@@ -43,6 +43,7 @@ export declare const makeMessagesRecvSocket: (config: SocketConfig) => {
         subscribers: number;
     }>;
     newsletterMetadata: (type: "invite" | "jid", key: string) => Promise<import("../Types/index.js").NewsletterMetadata | null>;
+    newsletterSubscribed: () => Promise<unknown>;
     newsletterFollow: (jid: string) => Promise<unknown>;
     newsletterUnfollow: (jid: string) => Promise<unknown>;
     newsletterMute: (jid: string) => Promise<unknown>;

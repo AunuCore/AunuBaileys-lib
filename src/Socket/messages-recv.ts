@@ -245,7 +245,13 @@ export const makeMessagesRecvSocket = (config: SocketConfig) => {
 			try {
 				if (await placeholderResendCache.get(messageKey?.id!)) {
 					logger.debug({ messageKey }, 'PDO message without response after 8 seconds. Phone possibly offline')
-					await placeholderResendCache.del(messageKey?.id!)
+					// AunuBaileys (2.2.0, HB-349 facet 2): do NOT delete
+					// the entry here — it carries the msgData the PDO
+					// response handler needs (pushName, participantAlt,
+					// verifiedBizName, timestamp) and its TTL is 1h. A
+					// phone answering after 8s still needs it; the
+					// entry expires on its own or is consumed by the
+					// response handler.
 				}
 			} catch (err: any) {
 				logger.warn({ err: err?.message }, 'failed to check placeholder resend cache')
@@ -422,6 +428,13 @@ export const makeMessagesRecvSocket = (config: SocketConfig) => {
 			logger.warn({ data }, 'invalid mex newsletter notification content')
 			return
 		}
+
+		// AunuBaileys (2.2.0, HB-121 addendum): the 2.1.0 guard
+		// validated the CONTAINER, not its elements — one null element
+		// threw on `update.jid` in the branches below and the whole
+		// notification (including its valid updates) was lost. Drop
+		// non-object elements here; the rest still applies.
+		updates = updates.filter(update => !!update && typeof update === 'object')
 
 		logger.info({ operation, updates }, 'got mex newsletter notification')
 
@@ -821,12 +834,26 @@ export const makeMessagesRecvSocket = (config: SocketConfig) => {
 		}
 
 		if (retryCount <= 2) {
+			// AunuBaileys (2.2.0, HB-349): the placeholder resend used
+			// to be requested WITHOUT msgData from here, so the PDO
+			// response handler had no original metadata to preserve
+			// (pushName, participantAlt, verifiedBizName, timestamp)
+			// and the resent message lost all of it. Build the same
+			// msgData the <unavailable> path builds and pass it along.
+			const msgData: Partial<WAMessage> = {
+				key: fullMessage.key,
+				messageTimestamp: fullMessage.messageTimestamp,
+				pushName: fullMessage.pushName,
+				participant: fullMessage.participant,
+				verifiedBizName: fullMessage.verifiedBizName
+			}
+
 			// Use new retry manager for phone requests if available
 			if (messageRetryManager) {
 				// Schedule phone request with delay (like whatsmeow)
 				messageRetryManager.schedulePhoneRequest(msgId, async () => {
 					try {
-						const requestId = await requestPlaceholderResend(msgKey)
+						const requestId = await requestPlaceholderResend(msgKey, msgData)
 						logger.debug(
 							`sendRetryRequest: requested placeholder resend (${requestId}) for message ${msgId} (scheduled)`
 						)
@@ -843,7 +870,7 @@ export const makeMessagesRecvSocket = (config: SocketConfig) => {
 				// receipt below was built, so the receipt was lost with it. Log
 				// the failure and continue to the receipt, like the other sites.
 				try {
-					const msgId = await requestPlaceholderResend(msgKey)
+					const msgId = await requestPlaceholderResend(msgKey, msgData)
 					logger.debug(`sendRetryRequest: requested placeholder resend for message ${msgId}`)
 				} catch (err) {
 					logger.warn({ err, msgId }, 'aunu: placeholder resend request failed in sendRetryRequest; continuing to the retry receipt')
@@ -1043,6 +1070,22 @@ export const makeMessagesRecvSocket = (config: SocketConfig) => {
 	const handleGroupNotification = (fullNode: BinaryNode, child: BinaryNode, msg: Partial<WAMessage>) => {
 		// TODO: Support PN/LID (Here is only LID now)
 
+		// AunuBaileys (2.2.0, HB-2026-1112-40 addendum 2): the same
+		// participant id fallback chain HB-282(e) applied in
+		// extractGroupMetadata — a participant stanza carrying only
+		// phone_number (or only lid) produced id: undefined here, a
+		// participant the host cannot address (and, for 'remove'
+		// without an actor, a false LEAVE classification via
+		// areJidsSameUser(undefined, undefined) === true).
+		const participantIdOf = (attrs: BinaryNode['attrs']): string | undefined =>
+			(attrs.jid ||
+				(attrs.phone_number
+					? jidNormalizedUser(
+							attrs.phone_number.includes('@') ? attrs.phone_number : attrs.phone_number + '@s.whatsapp.net'
+						)
+					: attrs.lid) ||
+				undefined) as unknown as string | undefined
+
 		const actingParticipantLid = fullNode.attrs.participant
 		const actingParticipantPn = fullNode.attrs.participant_pn
 		const actingParticipantUsername = fullNode.attrs.participant_username
@@ -1084,8 +1127,10 @@ export const makeMessagesRecvSocket = (config: SocketConfig) => {
 				}
 				break
 			case 'modify':
-				const oldNumber = getBinaryNodeChildren(child, 'participant').map(p => p.attrs.jid!)
-				msg.messageStubParameters = oldNumber || []
+				const oldNumber = getBinaryNodeChildren(child, 'participant')
+					.map(p => participantIdOf(p.attrs))
+					.filter((id): id is string => !!id)
+				msg.messageStubParameters = oldNumber
 				msg.messageStubType = WAMessageStubType.GROUP_PARTICIPANT_CHANGE_NUMBER
 				break
 			case 'promote':
@@ -1099,7 +1144,7 @@ export const makeMessagesRecvSocket = (config: SocketConfig) => {
 				const participants = getBinaryNodeChildren(child, 'participant').map(({ attrs }) => {
 					// TODO: Store LID MAPPINGS
 					return {
-						id: attrs.jid!,
+						id: participantIdOf(attrs)!,
 						phoneNumber: isLidUser(attrs.jid) && isPnUser(attrs.phone_number) ? attrs.phone_number : undefined,
 						lid: isPnUser(attrs.jid) && isLidUser(attrs.lid) ? attrs.lid : undefined,
 						username: attrs.participant_username || attrs.username || undefined,
@@ -1109,6 +1154,12 @@ export const makeMessagesRecvSocket = (config: SocketConfig) => {
 
 				if (
 					participants.length === 1 &&
+					// AunuBaileys (2.2.0, HB-2026-1112-40 addendum 2):
+					// never classify on an unresolved id —
+					// areJidsSameUser(undefined, undefined) is true, so
+					// a remove with neither participant id nor actor
+					// was misreported as a voluntary LEAVE.
+					!!participants[0]!.id &&
 					// if recv. "remove" message and sender removed themselves
 					// mark as left
 					(areJidsSameUser(participants[0]!.id, actingParticipantLid) ||
@@ -1945,16 +1996,30 @@ export const makeMessagesRecvSocket = (config: SocketConfig) => {
 			const alt = msg.key.participantAlt || msg.key.remoteJidAlt
 			// store new mappings we didn't have before
 			if (!!alt) {
-				const altServer = jidDecode(alt)?.server
-				const primaryJid = msg.key.participant || msg.key.remoteJid!
-				if (altServer === 'lid') {
-					if (!(await signalRepository.lidMapping.getPNForLID(alt))) {
-						await signalRepository.lidMapping.storeLIDPNMappings([{ lid: alt, pn: primaryJid }])
-						await signalRepository.migrateSession(primaryJid, alt)
+				// AunuBaileys (2.2.0, HB-368): this bookkeeping block was
+				// unguarded — a throwing key store killed the message
+				// before decryption (NACK 500, no retry receipt, no
+				// decrypt-failure event). The mapping is bookkeeping;
+				// decryption continues without it, exactly like
+				// storeMappingFromEnvelope in decode-wa-message.
+				try {
+					const altServer = jidDecode(alt)?.server
+					const primaryJid = msg.key.participant || msg.key.remoteJid!
+					// AunuBaileys (2.2.0, HB-364): a hosted LID alt
+					// ('hosted.lid') is a LID too — it used to fall into
+					// the else branch and be stored as the PN side of
+					// the pair (swapped), poisoning both directions.
+					if (altServer === 'lid' || altServer === 'hosted.lid') {
+						if (!(await signalRepository.lidMapping.getPNForLID(alt))) {
+							await signalRepository.lidMapping.storeLIDPNMappings([{ lid: alt, pn: primaryJid }])
+							await signalRepository.migrateSession(primaryJid, alt)
+						}
+					} else {
+						await signalRepository.lidMapping.storeLIDPNMappings([{ lid: primaryJid, pn: alt }])
+						await signalRepository.migrateSession(alt, primaryJid)
 					}
-				} else {
-					await signalRepository.lidMapping.storeLIDPNMappings([{ lid: primaryJid, pn: alt }])
-					await signalRepository.migrateSession(alt, primaryJid)
+				} catch (err) {
+					logger.warn({ err, alt }, 'failed to store LID/PN mapping from message alt — continuing to decrypt')
 				}
 			}
 
@@ -2301,6 +2366,17 @@ export const makeMessagesRecvSocket = (config: SocketConfig) => {
 	const handleCall = async (node: BinaryNode) => {
 		try {
 			const { attrs } = node
+			// AunuBaileys (2.2.0, HB-356): a call stanza without `from`
+			// built a call event with an undefined chatId, and the
+			// internal 'call' listener's upsert then rejected
+			// asynchronously — an unhandled rejection downstream of
+			// the emit. Without a caller there is no call to surface;
+			// skip the stanza (the finally still acks it).
+			if (!attrs.from) {
+				logger.warn({ node: binaryNodeToString(node) }, 'call stanza without from — skipping')
+				return
+			}
+
 			const [infoChild] = getAllBinaryNodeChildren(node)
 
 			if (!infoChild) {
@@ -2509,8 +2585,23 @@ export const makeMessagesRecvSocket = (config: SocketConfig) => {
 			ignoreJid = !isNodeFromMe || isJidGroup(attrs.from) ? attrs.from : attrs.recipient
 		}
 
-		if (ignoreJid && ignoreJid !== S_WHATSAPP_NET && shouldIgnoreJid(ignoreJid)) {
-			await sendMessageAck(node, type === 'message' ? NACK_REASONS.UnhandledError : undefined)
+		// AunuBaileys (2.2.0, HB-362 + facet 2): the fast path was
+		// unguarded twice over — a throwing host shouldIgnoreJid
+		// callback escaped as an unhandled rejection, and the ack
+		// itself, awaited bare, killed the process when the socket
+		// closed mid-ack (Boom 428). A callback throw means "not
+		// ignored"; a failed ack must never take the process down.
+		let ignored = false
+		if (ignoreJid && ignoreJid !== S_WHATSAPP_NET) {
+			try {
+				ignored = !!shouldIgnoreJid(ignoreJid)
+			} catch (err) {
+				logger.warn({ err, jid: ignoreJid }, 'shouldIgnoreJid callback threw — treating the stanza as not ignored')
+			}
+		}
+
+		if (ignored) {
+			await sendMessageAck(node, type === 'message' ? NACK_REASONS.UnhandledError : undefined).catch(() => {})
 			return
 		}
 
@@ -2583,7 +2674,16 @@ export const makeMessagesRecvSocket = (config: SocketConfig) => {
 		}
 
 			const protoMsg = proto.WebMessageInfo.fromObject(msg) as WAMessage
-			await upsertMessage(protoMsg, call.offline ? 'append' : 'notify')
+			// AunuBaileys (2.2.0, HB-356): this listener is the choke
+			// point — an upsert rejection here used to escape the
+			// emit as an unhandled rejection. The call event itself
+			// has already been delivered; a failed notification
+			// upsert is logged, never fatal.
+			try {
+				await upsertMessage(protoMsg, call.offline ? 'append' : 'notify')
+			} catch (err) {
+				logger.error({ err, callId: call.id }, 'failed to upsert call notification message')
+			}
 		}
 	})
 

@@ -200,7 +200,15 @@ export const prepareWAMessageMedia = async (
 			uploadData.media,
 			options.mediaTypeOverride || mediaType,
 			logger,
-			options.options
+			// AunuBaileys (2.2.0, HB-344 addendum): the upload below
+			// honoured mediaUploadTimeoutMs but the download did
+			// not — a stalled remote URL hung the newsletter send
+			// forever. Forward the host signal, else the same
+			// budget as the upload.
+			{
+				...options.options,
+				signal: options.options?.signal ?? AbortSignal.timeout(options.mediaUploadTimeoutMs ?? 120_000)
+			}
 		)
 
 		const fileSha256B64 = fileSha256.toString('base64')
@@ -261,7 +269,14 @@ export const prepareWAMessageMedia = async (
 		await encryptedStream(uploadData.media, options.mediaTypeOverride || mediaType, {
 			logger,
 			saveOriginalFileIfRequired: requiresOriginalForSomeProcessing,
-			opts: options.options
+			// AunuBaileys (2.2.0, HB-344 addendum): same half-applied
+			// timeout on the main send path — the download inside
+			// encryptedStream gets the host signal, else the
+			// mediaUploadTimeoutMs budget the upload already uses.
+			opts: {
+				...options.options,
+				signal: options.options?.signal ?? AbortSignal.timeout(options.mediaUploadTimeoutMs ?? 120_000)
+			}
 		})
 
 	const fileEncSha256B64 = fileEncSha256.toString('base64')
@@ -621,7 +636,9 @@ export const prepareStickerPackMessage = async (
 	const stickerData: { [fileName: string]: Uint8Array } = {}
 	const stickerPromises = stickers.map(async (s, i) => {
 		try {
-			const { stream } = await getStream(s.data)
+			const { stream } = await getStream(s.data, {
+				signal: AbortSignal.timeout(options.mediaUploadTimeoutMs ?? 120_000)
+			})
 			// AunuBaileys (1.0.72): cap matches the 1MB post-buffer
 			// sticker limit enforced below — a remote sticker URL used
 			// to be buffered entirely before that check (HB-76).
@@ -702,7 +719,9 @@ export const prepareStickerPackMessage = async (
 
 	// Process and add cover/tray icon to the ZIP
 	const trayIconFileName = `${stickerPackIdValue}.webp`
-	const { stream: coverStream } = await getStream(cover)
+	const { stream: coverStream } = await getStream(cover, {
+		signal: AbortSignal.timeout(options.mediaUploadTimeoutMs ?? 120_000)
+	})
 	// AunuBaileys (1.0.72): the pack cover had NO size limit at all
 	// (HB-76); it is downscaled to 252px, so 5MB is generous headroom.
 	const coverBuffer = await toBufferWithLimit(coverStream, 5 * 1024 * 1024)
@@ -939,7 +958,16 @@ export const generateWAMessageContent = async (
 		if (options.getProfilePicUrl) {
 			const pfpUrl = await options.getProfilePicUrl(message.groupInvite.jid, 'preview')
 			if (pfpUrl) {
-				const resp = await fetch(pfpUrl, { method: 'GET', dispatcher: options?.options?.dispatcher })
+				// AunuBaileys (2.2.0, HB-344 addendum, site 4): this
+				// fetch kept only the host's dispatcher and dropped
+				// the signal entirely — a stalled CDN profile pic
+				// hung the groupInvite send forever. Forward the
+				// host signal; default to a bounded 30s.
+				const resp = await fetch(pfpUrl, {
+					method: 'GET',
+					dispatcher: options?.options?.dispatcher,
+					signal: options?.options?.signal ?? AbortSignal.timeout(30_000)
+				})
 				if (resp.ok) {
 					const buf = Buffer.from(await resp.arrayBuffer())
 					m.groupInviteMessage.jpegThumbnail = buf

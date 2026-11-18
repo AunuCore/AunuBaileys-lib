@@ -33,7 +33,7 @@ export declare const makeChatsSocket: (config: SocketConfig) => {
     };
     fetchPrivacySettings: (force?: boolean) => Promise<{
         [_: string]: string;
-    }>;
+    } | undefined>;
     upsertMessage: (msg: WAMessage, type: MessageUpsertType) => Promise<void>;
     appPatch: (patchCreate: WAPatchCreate) => Promise<void>;
     sendPresenceUpdate: (type: WAPresence, toJid?: string) => Promise<void>;

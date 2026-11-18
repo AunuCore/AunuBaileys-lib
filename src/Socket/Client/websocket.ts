@@ -45,13 +45,31 @@ export class WebSocketClient extends AbstractSocketClient {
 			return
 		}
 
-		const closePromise = new Promise<void>(resolve => {
-			this.socket?.once('close', resolve)
+		const socket = this.socket
+
+		// AunuBaileys (2.2.0, HB-341): the close handshake waits for the
+		// peer's close frame — a peer that black-holes it (exactly the
+		// dead-peer paths that call end()) stalled the caller for the
+		// full ws closeTimeout (30s) before connection.update: close
+		// could be emitted. Give the handshake a short grace, then
+		// force the transport down and settle anyway.
+		await new Promise<void>(resolve => {
+			const timer = setTimeout(() => {
+				try {
+					socket.terminate()
+				} catch {}
+
+				resolve()
+			}, 5_000)
+			timer.unref?.()
+
+			socket.once('close', () => {
+				clearTimeout(timer)
+				resolve()
+			})
+
+			socket.close()
 		})
-
-		this.socket.close()
-
-		await closePromise
 
 		this.socket = null
 	}

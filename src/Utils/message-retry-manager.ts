@@ -282,6 +282,22 @@ export class MessageRetryManager {
 		}
 	}
 
+	/**
+	 * AunuBaileys (2.2.0, HB-346): clear() empties the caches but
+	 * leaves their InternalCache purge timers (60s intervals)
+	 * running — the manager had no close() at all, so every ended
+	 * socket leaked four timers (and, via the dispose closure, the
+	 * whole manager). close() is the socket-end path: clear, then
+	 * stop every purge timer.
+	 */
+	close(): void {
+		this.clear()
+		this.recentMessagesMap.close()
+		this.sessionRecreateHistory.close()
+		this.retryCounters.close()
+		this.baseKeys.close()
+	}
+
 	clear(): void {
 		this.recentMessagesMap.clear()
 		this.messageKeyIndex.clear()

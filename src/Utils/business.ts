@@ -257,7 +257,15 @@ export const uploadingNecessaryImages = async (
 				}
 			}
 
-			const { stream } = await getStream(img, { maxContentLength: MAX_PRODUCT_IMAGE_BYTES })
+			// AunuBaileys (2.2.0, HB-344): timeoutMs only reached
+			// the upload half — the download streamed unbounded, so
+			// a trickling catalog image hung productCreate /
+			// productUpdate forever. Bound the download with the
+			// same budget.
+			const { stream } = await getStream(img, {
+				maxContentLength: MAX_PRODUCT_IMAGE_BYTES,
+				signal: AbortSignal.timeout(timeoutMs)
+			})
 			const hasher = createHash('sha256')
 
 			const filePath = join(tmpdir(), 'img' + generateMessageIDV2())

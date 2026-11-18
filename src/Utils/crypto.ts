@@ -60,8 +60,10 @@ export const Curve = {
 		curve.calculateSignature(keyMaterialToBuffer(privateKey) as Uint8Array, buf),
 	verify: (pubKey: Uint8Array, message: Uint8Array, signature: Uint8Array) => {
 		try {
-			curve.verifySignature(generateSignalPubKey(pubKey), message, signature)
-			return true
+			// HB-361: verifySignature returns a boolean for well-formed
+			// input and only throws on malformed input — the boolean IS
+			// the verdict; discarding it made every signature valid.
+			return curve.verifySignature(generateSignalPubKey(pubKey), message, signature) !== false
 		} catch (error) {
 			return false
 		}

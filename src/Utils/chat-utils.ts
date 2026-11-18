@@ -618,6 +618,15 @@ export const decodePatches = async (
 }
 
 export const chatModificationToAppPatch = (mod: ChatModification, jid: string) => {
+	// AunuBaileys (2.2.0, HB-353 + addendum): every branch below
+	// dereferences its payload field — a missing modification, or a
+	// branch payload that is undefined/empty, threw a raw TypeError
+	// at the host. The house pattern for invalid host input is a
+	// Boom 400 (HB-49, HB-208), validated per branch.
+	if (!mod || typeof mod !== 'object') {
+		throw new Boom('chatModify: a modification object is required', { statusCode: 400 })
+	}
+
 	const OP = proto.SyncdMutation.SyncdOperation
 	const getMessageRange = (lastMessages: LastMessageList) => {
 		let messageRange: proto.SyncActionValue.ISyncActionMessageRange
@@ -627,7 +636,7 @@ export const chatModificationToAppPatch = (mod: ChatModification, jid: string) =
 				lastMessageTimestamp: lastMsg?.messageTimestamp,
 				messages: lastMessages?.length
 					? lastMessages.map(m => {
-							if (!m.key?.id || !m.key?.remoteJid) {
+							if (!m?.key?.id || !m?.key?.remoteJid) {
 								throw new Boom('Incomplete key', { statusCode: 400, data: m })
 							}
 
@@ -695,6 +704,10 @@ export const chatModificationToAppPatch = (mod: ChatModification, jid: string) =
 			operation: OP.SET
 		}
 	} else if ('deleteForMe' in mod) {
+		if (!mod.deleteForMe?.key?.id) {
+			throw new Boom('chatModify: deleteForMe requires a message key with an id', { statusCode: 400 })
+		}
+
 		const { timestamp, key, deleteMedia } = mod.deleteForMe
 		patch = {
 			syncAction: {
@@ -753,7 +766,10 @@ export const chatModificationToAppPatch = (mod: ChatModification, jid: string) =
 			operation: OP.SET
 		}
 	} else if ('star' in mod) {
-		const key = mod.star.messages[0]!
+		const key = mod.star?.messages?.[0]
+		if (!key?.id) {
+			throw new Boom('chatModify: star requires at least one message key with an id', { statusCode: 400 })
+		}
 		patch = {
 			syncAction: {
 				starAction: {
@@ -790,6 +806,10 @@ export const chatModificationToAppPatch = (mod: ChatModification, jid: string) =
 			operation: OP.SET
 		}
 	} else if ('quickReply' in mod) {
+		if (!mod.quickReply) {
+			throw new Boom('chatModify: quickReply requires a payload object', { statusCode: 400 })
+		}
+
 		patch = {
 			syncAction: {
 				quickReplyAction: {
@@ -806,6 +826,10 @@ export const chatModificationToAppPatch = (mod: ChatModification, jid: string) =
 			operation: OP.SET
 		}
 	} else if ('addLabel' in mod) {
+		if (!mod.addLabel) {
+			throw new Boom('chatModify: addLabel requires a payload object', { statusCode: 400 })
+		}
+
 		patch = {
 			syncAction: {
 				labelEditAction: {
@@ -821,6 +845,10 @@ export const chatModificationToAppPatch = (mod: ChatModification, jid: string) =
 			operation: OP.SET
 		}
 	} else if ('addChatLabel' in mod) {
+		if (!mod.addChatLabel?.labelId) {
+			throw new Boom('chatModify: addChatLabel requires a labelId', { statusCode: 400 })
+		}
+
 		patch = {
 			syncAction: {
 				labelAssociationAction: {
@@ -833,6 +861,10 @@ export const chatModificationToAppPatch = (mod: ChatModification, jid: string) =
 			operation: OP.SET
 		}
 	} else if ('removeChatLabel' in mod) {
+		if (!mod.removeChatLabel?.labelId) {
+			throw new Boom('chatModify: removeChatLabel requires a labelId', { statusCode: 400 })
+		}
+
 		patch = {
 			syncAction: {
 				labelAssociationAction: {
@@ -845,6 +877,10 @@ export const chatModificationToAppPatch = (mod: ChatModification, jid: string) =
 			operation: OP.SET
 		}
 	} else if ('addMessageLabel' in mod) {
+		if (!mod.addMessageLabel?.labelId || !mod.addMessageLabel?.messageId) {
+			throw new Boom('chatModify: addMessageLabel requires a labelId and a messageId', { statusCode: 400 })
+		}
+
 		patch = {
 			syncAction: {
 				labelAssociationAction: {
@@ -857,6 +893,10 @@ export const chatModificationToAppPatch = (mod: ChatModification, jid: string) =
 			operation: OP.SET
 		}
 	} else if ('removeMessageLabel' in mod) {
+		if (!mod.removeMessageLabel?.labelId || !mod.removeMessageLabel?.messageId) {
+			throw new Boom('chatModify: removeMessageLabel requires a labelId and a messageId', { statusCode: 400 })
+		}
+
 		patch = {
 			syncAction: {
 				labelAssociationAction: {
@@ -967,7 +1007,12 @@ export const processSyncAction = (
 		emitSyncActionResults(ev, results)
 	} else if (action?.pushNameSetting) {
 		const name = action?.pushNameSetting?.name
-		if (name && me?.name !== name) {
+		// AunuBaileys (2.2.0, HB-125 addendum, site B): with `me`
+		// undefined (pre-pairing), {...me, name} is just {name} —
+		// the socket's shallow Object.assign then REPLACED creds.me
+		// with that fragment and saveCreds persisted an identity
+		// with no id/lid. Skip the emit until an identity exists.
+		if (name && me && me?.name !== name) {
 			// AunuBaileys (HB-259, re-applied P3): every bare
 			// 'creds.update' emit is guarded \u2014 the event is not
 			// bufferable, so a throwing host listener (e.g. saveCreds)

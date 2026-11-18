@@ -107,6 +107,17 @@ export const makeNewsletterSocket = (config: SocketConfig) => {
 			return parseNewsletterMetadata(result)
 		},
 
+		// AunuBaileys (2.2.0, HB-357): runAutoJoinChannels has
+		// always called sock.newsletterSubscribed() to dedupe its
+		// follows, but the method was never defined — the call
+		// threw TypeError into the caller's catch, the dedup list
+		// came back null, and every channel was re-followed on
+		// every connect. Query form verified against the
+		// itsliaaa/angkasa reference implementation.
+		newsletterSubscribed: () => {
+			return executeWMexQuery({}, QueryIds.SUBSCRIBED, XWAPaths.xwa2_newsletter_subscribed)
+		},
+
 		newsletterFollow: (jid: string) => {
 			return executeWMexQuery({ newsletter_id: jid }, QueryIds.FOLLOW, XWAPaths.xwa2_newsletter_join_v2)
 		},

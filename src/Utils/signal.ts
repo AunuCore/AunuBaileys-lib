@@ -228,6 +228,18 @@ export const parseAndInjectE2ESessions = async (
 					}
 
 					const registrationId = getBinaryNodeChildUInt(node, 'registration', 4)
+					// AunuBaileys (2.2.0, HB-367 + addendum): an entry
+					// without a valid <registration> (missing, short or
+					// empty — the short forms parse to NaN) used to be
+					// injected with registrationId undefined/NaN and
+					// stored as a phantom session: present in the store
+					// yet validateSession reported no open session, so
+					// assertSessions refetched and re-injected on every
+					// send. Skip the entry, like the retry-receipt
+					// sibling above already does via isValidUInt.
+					if (!isValidUInt(registrationId)) {
+						throw new Error('key-bundle entry is missing a valid registration id')
+					}
 
 					await repository.injectE2ESession({
 						jid,
@@ -324,7 +336,15 @@ export const getNextPreKeys = async ({ creds, keys }: AuthenticationState, count
 	// without real key material here too.
 	const preKeys: { [keyId: string]: KeyPair } = {}
 	for (const [preKeyId, pair] of Object.entries(storedPreKeys)) {
-		if (pair && isKeyMaterial(pair.public)) {
+		// AunuBaileys (2.2.0, HB-83 addendum): HB-83 filtered on the
+		// PUBLIC half only — an entry with a valid public but a
+		// corrupt/missing private was still uploaded; the server
+		// then advertised a pre-key we can never answer (loadPreKey
+		// rejects it under HB-98), costing the peer a failed pkmsg
+		// and a retry round-trip per corrupt id. Require BOTH
+		// halves. (The sendRetryRequest consumer is already safe
+		// against an empty map — HB-154's fresh-pair fallback.)
+		if (pair && isKeyMaterial(pair.public) && isKeyMaterial(pair.private)) {
 			preKeys[preKeyId] = pair
 		}
 	}

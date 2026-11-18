@@ -64,6 +64,46 @@ const makeWASocket = (config: UserFacingSocketConfig) => {
 		value.every(element => typeof element === 'number' && Number.isFinite(element))
 	newConfig.version = isValidVersion(newConfig.version) ? newConfig.version : DEFAULT_CONNECTION_CONFIG.version
 
+	// AunuBaileys (2.2.0, HB-335 addenda): the same explicit-undefined
+	// clobbering hit six more defaulted fields — each exploded as a bare
+	// TypeError at construction or first use (new URL(undefined),
+	// logger.child, makeSignalRepository(...), shouldIgnoreJid(...),
+	// patchMessageBeforeSending(...), [...customUploadHosts]). Sanitise
+	// them at the same boundary: waWebSocketUrl must be a parseable URL
+	// string, logger a pino-shaped object, the two callbacks and the
+	// repository factory functions, customUploadHosts an array — else
+	// the documented default. Values are never coerced (HB-199).
+	const isValidWaUrl = (value: unknown): value is string => {
+		if (typeof value !== 'string' || !value) {
+			return false
+		}
+
+		try {
+			return !!new URL(value).protocol
+		} catch {
+			return false
+		}
+	}
+	newConfig.waWebSocketUrl = isValidWaUrl(newConfig.waWebSocketUrl)
+		? newConfig.waWebSocketUrl
+		: DEFAULT_CONNECTION_CONFIG.waWebSocketUrl
+	const isValidLogger = (value: unknown): value is typeof newConfig.logger =>
+		!!value && typeof value === 'object' && typeof (value as { child?: unknown }).child === 'function'
+	newConfig.logger = isValidLogger(newConfig.logger) ? newConfig.logger : DEFAULT_CONNECTION_CONFIG.logger
+	newConfig.makeSignalRepository =
+		typeof newConfig.makeSignalRepository === 'function'
+			? newConfig.makeSignalRepository
+			: DEFAULT_CONNECTION_CONFIG.makeSignalRepository
+	newConfig.shouldIgnoreJid =
+		typeof newConfig.shouldIgnoreJid === 'function' ? newConfig.shouldIgnoreJid : DEFAULT_CONNECTION_CONFIG.shouldIgnoreJid
+	newConfig.patchMessageBeforeSending =
+		typeof newConfig.patchMessageBeforeSending === 'function'
+			? newConfig.patchMessageBeforeSending
+			: DEFAULT_CONNECTION_CONFIG.patchMessageBeforeSending
+	newConfig.customUploadHosts = Array.isArray(newConfig.customUploadHosts)
+		? newConfig.customUploadHosts
+		: DEFAULT_CONNECTION_CONFIG.customUploadHosts
+
 	// AunuBaileys (1.0.80, HB-139 + HB-174 + addendum HB-139,
 	// re-applied P3): the numeric connection config was spread raw
 	// above \u2014 an explicit undefined/NaN from the host (classically

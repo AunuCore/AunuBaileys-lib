@@ -95,7 +95,11 @@ export const getRawMediaUploadData = async (
 	logger?: ILogger,
 	opts?: RequestInit & { maxContentLength?: number }
 ) => {
-	const { stream } = await getStream(media)
+	// AunuBaileys (2.2.0, HB-344 addendum): opts (incl. the host's
+	// AbortSignal) used to be accepted and then DROPPED here —
+	// getStream was called bare, so the newsletter raw-media path
+	// streamed without any timeout even when the caller set one.
+	const { stream } = await getStream(media, opts)
 	logger?.debug('got stream for raw upload')
 
 	const hasher = Crypto.createHash('sha256')
@@ -573,10 +577,14 @@ export async function generateThumbnail(
 			await extractVideoThumb(file, imgFilename, '00:00:00', { width: 32, height: 32 })
 			const buff = await fs.readFile(imgFilename)
 			thumbnail = buff.toString('base64')
-
-			await fs.unlink(imgFilename)
 		} catch (err) {
 			options.logger?.debug('could not generate video thumb: ' + err)
+		} finally {
+			// AunuBaileys (2.2.0, HB-2026-1112-10 addendum, remaining
+			// facet): the unlink used to sit after readFile inside the
+			// try — a readFile failure after a successful ffmpeg run
+			// leaked the .jpg. Cleanup belongs in finally.
+			await fs.unlink(imgFilename).catch(() => {})
 		}
 	}
 
@@ -838,7 +846,14 @@ export const encryptedStream = async (
 				// full second copy of the media. Retain only the
 				// prefix the scan can consume; its verdicts are
 				// unchanged.
-				head = Buffer.concat([head, data]).subarray(0, AUNU_SIDECAR_SCAN_MAX_BYTES + 32)
+				// AunuBaileys (2.2.0, HB-220 addendum): subarray is a
+				// VIEW — for Buffer input the concat backing store is
+				// the whole media, and the view kept it alive for the
+				// entire call (the 1.0.85 fix only worked for streams).
+				// Buffer.from copies just the retained prefix and
+				// releases the backing store. (Buffer.slice would not
+				// help — it is a view too.)
+				head = Buffer.from(Buffer.concat([head, data]).subarray(0, AUNU_SIDECAR_SCAN_MAX_BYTES + 32))
 				streamableVerdict = aunuScanStreamable(head)
 				if (streamableVerdict === null && head.length > AUNU_SIDECAR_SCAN_MAX_BYTES) {
 					streamableVerdict = true
@@ -939,8 +954,20 @@ export type MediaDownloadOptions = {
 	host?: string
 }
 
-export const getUrlFromDirectPath = (directPath: string, host: string = DEF_MEDIA_HOST) =>
-	`https://${host}${directPath}`
+export const getUrlFromDirectPath = (directPath: string, host: string = DEF_MEDIA_HOST) => {
+	// AunuBaileys (2.2.0, HB-2026-1112-114 addendum): directPath is
+	// peer-controlled and was concatenated raw — a value starting
+	// with '@' smuggles a whole new authority into the URL
+	// (https://host@attacker/…), bypassing the media-host allowlist
+	// that guards the `url` path below. A genuine directPath always
+	// starts with '/'; anything else is refused here, at the one
+	// construction site every caller shares.
+	if (!directPath.startsWith('/')) {
+		throw new Boom('Refusing to build a media URL from a malformed directPath (SSRF guard)', { statusCode: 400 })
+	}
+
+	return `https://${host}${directPath}`
+}
 
 // Some media messages (stickers, voice notes, images) carry a `url` on `a.whatsapp.net`,
 // which doesn't resolve. Their `directPath` is valid, so it must go to the default host.
@@ -1194,6 +1221,11 @@ export const downloadEncryptedContent = async (
 	// process) and the consumer hanging forever. Destroy the
 	// Transform with the source error instead.
 	fetched.on('error', err => output.destroy(err))
+	// AunuBaileys (2.2.0, HB-352): the reverse direction was open —
+	// when the consumer destroys the returned stream, the CDN source
+	// kept downloading in the background. Closing the output (for
+	// any reason) now tears the source down with it.
+	output.on('close', () => fetched.destroy())
 	return fetched.pipe(output, { end: true })
 }
 
@@ -1263,6 +1295,19 @@ export const uploadWithNodeHttp = async (
 	const fileSize = fileStats.size
 
 	return new Promise((resolve, reject) => {
+		// AunuBaileys (2.2.0, HB-302 addendum): the response phase got
+		// its total deadline in 2.1.0, but the REQUEST phase (sending
+		// the body to a stalling host) was bounded only by the socket
+		// inactivity timeout. One deadline now covers the send phase;
+		// it is cleared the moment a response starts (the response
+		// phase then runs under its own deadline below).
+		const requestDeadline = setTimeout(() => {
+			stream.destroy()
+			req.destroy()
+			reject(new Boom('Media upload timed out', { statusCode: 408 }))
+		}, timeoutMs || 120_000)
+		requestDeadline.unref?.()
+
 		const req = httpModule.request(
 			{
 				hostname: parsedUrl.hostname,
@@ -1277,6 +1322,7 @@ export const uploadWithNodeHttp = async (
 				timeout: timeoutMs
 			},
 			res => {
+				clearTimeout(requestDeadline)
 				// AunuBaileys (2.1.0, HB-302): the response body used to accumulate without a cap and without error/close handlers — a trickling response hung the upload forever and grew memory without bound. Cap the body, fail on error/close, and bound the whole response phase by a total deadline (the socket timeout above only fires on inactivity).
 				let body = ''
 				let bodyBytes = 0
@@ -1300,6 +1346,10 @@ export const uploadWithNodeHttp = async (
 				// Handle redirects (3xx)
 				if (res.statusCode && res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
 					res.resume() // Consume response to free resources
+					// AunuBaileys (2.2.0, HB-351 addendum): the recursive
+					// call opens its own stream — destroy this attempt's
+					// file stream or its fd leaks on every redirect.
+					stream.destroy()
 					clearTimeout(deadline)
 					const newUrl = new URL(res.headers.location, url).toString()
 					resolve(
@@ -1343,8 +1393,18 @@ export const uploadWithNodeHttp = async (
 			}
 		)
 
-		req.on('error', reject)
+		// AunuBaileys (2.2.0, HB-351): a failed or timed-out request
+		// used to leave the file stream open — one leaked fd per
+		// failed upload, accumulating until the process ran dry.
+		// Every settle path now destroys the source stream too.
+		req.on('error', err => {
+			clearTimeout(requestDeadline)
+			stream.destroy()
+			reject(err)
+		})
 		req.on('timeout', () => {
+			clearTimeout(requestDeadline)
+			stream.destroy()
 			req.destroy()
 			reject(new Error('Upload timeout'))
 		})
@@ -1352,6 +1412,7 @@ export const uploadWithNodeHttp = async (
 		const stream = createReadStream(filePath)
 		stream.pipe(req)
 		stream.on('error', err => {
+			clearTimeout(requestDeadline)
 			req.destroy()
 			reject(err)
 		})
@@ -1463,6 +1524,20 @@ export const getWAUploadToServer = (
 
 		let urls: { mediaUrl: string; directPath: string; meta_hmac?: string; ts?: number; fbid?: number } | undefined
 		const hosts = [...customUploadHosts, ...uploadInfo.hosts]
+		// AunuBaileys (2.2.0, HB-366 + HB-137 facet 1): after a media
+		// connection refresh, the FRESH hosts join the itinerary —
+		// previously the refresh result was used only for its auth
+		// token while the loop kept knocking on the stale host list
+		// (and the catch path never refreshed at all). Hosts already
+		// listed are not re-added, so every host is tried at most once
+		// per refresh generation.
+		const addFreshHosts = () => {
+			for (const freshHost of uploadInfo.hosts) {
+				if (!hosts.some(h => h.hostname === freshHost.hostname)) {
+					hosts.push(freshHost)
+				}
+			}
+		}
 
 		fileEncSha256B64 = encodeBase64EncodedStringForUpload(fileEncSha256B64)
 
@@ -1509,10 +1584,18 @@ export const getWAUploadToServer = (
 					break
 				} else {
 					uploadInfo = await refreshMediaConn(true)
+					addFreshHosts()
 					throw new Error(`upload failed, reason: ${JSON.stringify(result)}`)
 				}
 			} catch (error: any) {
-				const isLast = hostname === hosts[uploadInfo.hosts.length - 1]?.hostname
+				// HB-137 facet 1: a thrown attempt refreshes too, so the
+				// iterations that follow can reach the fresh hosts.
+				try {
+					uploadInfo = await refreshMediaConn(true)
+					addFreshHosts()
+				} catch {}
+
+				const isLast = hostname === hosts[hosts.length - 1]?.hostname
 				logger.warn(
 					{ trace: error?.stack, uploadResult: result },
 					`Error in uploading to ${hostname} ${isLast ? '' : ', retrying...'}`

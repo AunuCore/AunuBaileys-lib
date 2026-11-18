@@ -34,6 +34,16 @@ export const executeWMexQuery = async <T>(
 	generateMessageTag: () => string
 ): Promise<T> => {
 	const result = await wMexQuery(variables, queryId, query, generateMessageTag)
+	// AunuBaileys (2.2.0, HB-340 addendum, MEX path): a query
+	// timeout resolves undefined (waitForMessage swallows it) and
+	// used to fall through to the Boom 400 'unexpected response
+	// structure' below — indistinguishable from a genuinely
+	// malformed reply, so a host retrying on 408 misdiagnosed a
+	// transient timeout as a client error. A timeout is a 408.
+	if (!result) {
+		throw new Boom('Timed out waiting for the MEX query response', { statusCode: 408 })
+	}
+
 	const child = getBinaryNodeChild(result, 'result')
 	if (child?.content) {
 		// AunuBaileys (2.1.0, sweep): a non-JSON MEX body used to escape

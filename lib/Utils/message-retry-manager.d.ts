@@ -105,6 +105,15 @@ export declare class MessageRetryManager {
      * Cancel pending phone request
      */
     cancelPendingPhoneRequest(messageId: string): void;
+    /**
+     * AunuBaileys (2.2.0, HB-346): clear() empties the caches but
+     * leaves their InternalCache purge timers (60s intervals)
+     * running — the manager had no close() at all, so every ended
+     * socket leaked four timers (and, via the dispose closure, the
+     * whole manager). close() is the socket-end path: clear, then
+     * stop every purge timer.
+     */
+    close(): void;
     clear(): void;
     saveBaseKey(addr: string, msgId: string, baseKey: Uint8Array): void;
     hasSameBaseKey(addr: string, msgId: string, baseKey: Uint8Array): boolean;

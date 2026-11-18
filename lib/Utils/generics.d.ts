@@ -47,10 +47,6 @@ export declare const fetchLatestBaileysVersion: (options?: RequestInit) => Promi
     isLatest: boolean;
     error: unknown;
 }>;
-/**
- * A utility that fetches the latest web version of whatsapp.
- * Use to ensure your WA connection is always on the latest version
- */
 export declare const fetchLatestWaWebVersion: (options?: RequestInit) => Promise<{
     version: WAVersion;
     isLatest: boolean;

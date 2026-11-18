@@ -367,6 +367,17 @@ export const makeCommunitiesSocket = (config: SocketConfig) => {
 			async (key: string | WAMessageKey, inviteMessage: proto.Message.IGroupInviteMessage) => {
 				key = typeof key === 'string' ? { remoteJid: key } : key
 				// AunuBaileys (2.1.0, HB-21/22): an invite message missing its fields used to throw a raw TypeError from .toString() — reject it as a caller-visible Boom 400 instead.
+				// AunuBaileys (2.2.0, HB-2026-1112-22 addendum 2):
+				// the HB-21/22 field guard below destructures FIRST —
+				// an undefined/null inviteMessage threw a raw
+				// TypeError before the guard could run. Guard the
+				// object itself.
+				if (!inviteMessage || typeof inviteMessage !== 'object') {
+					throw new Boom('communityAcceptInviteV4: invite message is missing groupJid, inviteCode or inviteExpiration', {
+						statusCode: 400
+					})
+				}
+
 				const { groupJid, inviteCode, inviteExpiration } = inviteMessage
 				if (!groupJid || !inviteCode || typeof inviteExpiration !== 'number') {
 					throw new Boom('communityAcceptInviteV4: invite message is missing groupJid, inviteCode or inviteExpiration', {

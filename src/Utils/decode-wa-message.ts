@@ -25,8 +25,18 @@ export const getDecryptionJid = async (sender: string, repository: SignalReposit
 		return sender
 	}
 
-	const mapped = await repository.lidMapping.getLIDForPN(sender)
-	return mapped || sender
+	// AunuBaileys (2.2.0, HB-343 addendum, site 4): this lookup
+	// sits OUTSIDE the per-enc try in decrypt() — a USync failure
+	// here rejected the WHOLE decrypt and the message vanished
+	// without a stub, a retry receipt, or a decrypt-failure event.
+	// A failed lookup is a miss: decrypt under the raw sender JID
+	// (the HB-343 choke-point behaviour in resolveLIDSignalAddress).
+	try {
+		const mapped = await repository.lidMapping.getLIDForPN(sender)
+		return mapped || sender
+	} catch {
+		return sender
+	}
 }
 
 const storeMappingFromEnvelope = async (
@@ -36,10 +46,17 @@ const storeMappingFromEnvelope = async (
 	decryptionJid: string,
 	logger: ILogger
 ): Promise<void> => {
-	// TODO: Handle hosted IDs
 	const { senderAlt } = extractAddressingContext(stanza)
 
-	if (senderAlt && isLidUser(senderAlt) && isPnUser(sender) && decryptionJid === sender) {
+	// AunuBaileys (2.2.0, HB-364): hosted identities are handled the
+	// same as their plain forms — the old TODO left every hosted
+	// envelope mapping unstored.
+	if (
+		senderAlt &&
+		(isLidUser(senderAlt) || isHostedLidUser(senderAlt)) &&
+		(isPnUser(sender) || isHostedPnUser(sender)) &&
+		decryptionJid === sender
+	) {
 		try {
 			await repository.lidMapping.storeLIDPNMappings([{ lid: senderAlt, pn: sender }])
 			await repository.migrateSession(sender, senderAlt)
@@ -309,7 +326,20 @@ export function decodeMessageNode(stanza: BinaryNode, meId: string | undefined, 
 
 	const key: WAMessageKey = {
 		remoteJid: chatId,
-		remoteJidAlt: !isJidGroup(chatId) ? addressingContext.senderAlt : undefined,
+		// AunuBaileys (2.2.0, HB-337): for a fromMe 1:1 message the
+		// chat partner is the RECIPIENT, but senderAlt describes the
+		// sender — us. remoteJidAlt used to carry our own PN for a
+		// LID-addressed fromMe chat, and the receive path stored it
+		// as the peer's alt: our own LID↔PN mapping got poisoned in
+		// both directions and migrateSession ran (our PN → peer LID).
+		// Use the recipient's alt whenever the chat partner is the
+		// recipient; senderAlt remains correct for incoming and
+		// self-routed stanzas.
+		remoteJidAlt: !isJidGroup(chatId)
+			? fromMe && recipient && !isJidMetaAI(recipient)
+				? addressingContext.recipientAlt
+				: addressingContext.senderAlt
+			: undefined,
 		remoteJidUsername: !isJidGroup(chatId)
 			? stanza.attrs.peer_recipient_username || stanza.attrs.recipient_username
 			: undefined,

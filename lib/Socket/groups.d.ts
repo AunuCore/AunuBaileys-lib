@@ -67,7 +67,7 @@ export declare const makeGroupsSocket: (config: SocketConfig) => {
     };
     fetchPrivacySettings: (force?: boolean) => Promise<{
         [_: string]: string;
-    }>;
+    } | undefined>;
     upsertMessage: (msg: import("../Types/index.js").WAMessage, type: import("../Types/index.js").MessageUpsertType) => Promise<void>;
     appPatch: (patchCreate: import("../Types/index.js").WAPatchCreate) => Promise<void>;
     sendPresenceUpdate: (type: import("../Types/index.js").WAPresence, toJid?: string) => Promise<void>;

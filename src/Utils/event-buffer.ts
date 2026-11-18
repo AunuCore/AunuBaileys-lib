@@ -90,6 +90,13 @@ export const makeEventBuffer = (logger: ILogger): BaileysBufferableEventEmitter 
 	let bufferTimeout: NodeJS.Timeout | null = null
 	let flushPendingTimeout: NodeJS.Timeout | null = null // Add a specific timer for the debounced flush to prevent leak
 	let bufferCount = 0
+	// AunuBaileys (2.2.0, HB-359): incremented at the start of every
+	// buffering session. The 100ms flush timers armed by
+	// createBufferedFunction capture the generation they belong to —
+	// a timer left over from a previous session must never flush the
+	// NEXT session early (its guards only consulted the global
+	// counter, which the new session also satisfies).
+	let bufferGeneration = 0
 	const BUFFER_TIMEOUT_MS = 30000 // 30 seconds
 
 	// take the generic event and fire it as a baileys event
@@ -109,7 +116,20 @@ export const makeEventBuffer = (logger: ILogger): BaileysBufferableEventEmitter 
 			const listeners = ev.rawListeners(event)
 			for (const listener of listeners) {
 				try {
-					;(listener as (...args: any[]) => void).call(ev, map[event as keyof BaileysEventMap])
+					const result = (listener as (...args: any[]) => unknown).call(ev, map[event as keyof BaileysEventMap])
+					// AunuBaileys (2.2.0, HB-264 addendum): the guard
+					// above only ever caught SYNCHRONOUS throws. An
+					// async listener's rejection floated out of this
+					// dispatcher as an unhandledRejection — fatal by
+					// default on Node >= 15, and uncatchable by the
+					// host (it happens on the library's stack). Attach
+					// a catch to any thenable result; dispatch is
+					// fire-and-forget by design.
+					if (result && typeof (result as { catch?: unknown }).catch === 'function') {
+						;(result as Promise<unknown>).catch(err =>
+							logger.error({ err, event }, 'error in async event listener \u2014 dispatch continues')
+						)
+					}
 				} catch (err) {
 					logger.error({ err, event }, 'error in event listener \u2014 dispatch continues')
 				}
@@ -122,6 +142,14 @@ export const makeEventBuffer = (logger: ILogger): BaileysBufferableEventEmitter 
 			logger.debug('Event buffer activated')
 			isBuffering = true
 			bufferCount = 0
+			bufferGeneration += 1
+
+			// AunuBaileys (2.2.0, HB-359): a debounced flush armed by
+			// the PREVIOUS session must not fire into this one.
+			if (flushPendingTimeout) {
+				clearTimeout(flushPendingTimeout)
+				flushPendingTimeout = null
+			}
 
 			if (bufferTimeout) {
 				clearTimeout(bufferTimeout)
@@ -273,8 +301,9 @@ export const makeEventBuffer = (logger: ILogger): BaileysBufferableEventEmitter 
 					const result = await work(...args)
 					// If this is the only buffer, flush after a small delay
 					if (bufferCount === 1) {
+						const generation = bufferGeneration
 						setTimeout(() => {
-							if (isBuffering && bufferCount === 1) {
+							if (isBuffering && bufferCount === 1 && generation === bufferGeneration) {
 								flush()
 							}
 						}, 100) // Small delay to allow nested buffers
@@ -288,7 +317,14 @@ export const makeEventBuffer = (logger: ILogger): BaileysBufferableEventEmitter 
 					if (bufferCount === 0) {
 						// Only schedule ONE timeout, not 10,000
 						if (!flushPendingTimeout) {
-							flushPendingTimeout = setTimeout(flush, 100)
+							const generation = bufferGeneration
+							flushPendingTimeout = setTimeout(() => {
+								if (generation === bufferGeneration) {
+									flush()
+								} else {
+									flushPendingTimeout = null
+								}
+							}, 100)
 						}
 					}
 				}
@@ -590,7 +626,13 @@ function append<E extends BufferableEvent>(
 				const keyStr = stringifyMessageKey(key)
 				const existing = data.historySets.messages[keyStr] || data.messageUpserts[keyStr]?.message
 				if (existing) {
-					Object.assign(existing, update)
+					// AunuBaileys (2.2.0, HB-370): the buffered
+					// message's key is its identity — a messages.update
+					// carrying a foreign key (the REVOKE producer
+					// attaches the protocol message's key) must not
+					// re-key the buffered upsert before it is emitted.
+					const { key: _updateKey, ...restUpdate } = update as Partial<WAMessage>
+					Object.assign(existing, restUpdate)
 					// if the message was received & read by us
 					// the chat counter must have been incremented
 					// so we need to decrement it

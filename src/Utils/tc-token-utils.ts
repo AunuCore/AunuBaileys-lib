@@ -92,8 +92,16 @@ export async function resolveTcTokenJid(
 	getLIDForPN: (pn: string) => Promise<string | null>
 ): Promise<string> {
 	if (isLidUser(jid)) return jid
-	const lid = await getLIDForPN(jid)
-	return lid ?? jid
+	// AunuBaileys (2.2.0, HB-354): the lookup can throw (USync/IQ
+	// failure) — the throw used to escape every caller (history-sync
+	// chunk processing, ack handling) and take the whole chunk with
+	// it. A failed lookup is a miss: fall back to the raw JID.
+	try {
+		const lid = await getLIDForPN(jid)
+		return lid ?? jid
+	} catch {
+		return jid
+	}
 }
 
 /** Resolve target JID for issuing privacy token based on AB prop 14303 */

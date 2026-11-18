@@ -1,6 +1,6 @@
-import { readFileSync, renameSync, writeFileSync } from 'fs'
+import { closeSync, fsyncSync, openSync, readFileSync, renameSync, writeFileSync } from 'fs'
 import type { WAMessage } from '../Types/index.js'
-import { isLidUser, isPnUser, jidNormalizedUser } from '../WABinary/jid-utils.js'
+import { isHostedLidUser, isHostedPnUser, isLidUser, isPnUser, jidNormalizedUser } from '../WABinary/jid-utils.js'
 
 export interface LIDStoreOptions {
 	/** Maximum PN<->LID pairs kept; least-recently-used pairs are evicted. Default 5000. */
@@ -108,7 +108,11 @@ export const makeLIDStore = (options: LIDStoreOptions = {}): LIDStore => {
 
 		const pn = jidNormalizedUser(pnJid)
 		const lid = jidNormalizedUser(lidJid)
-		if (!isPnUser(pn) || !isLidUser(lid)) {
+		// AunuBaileys (2.2.0, HB-336 addendum): hosted identities
+		// (@hosted / @hosted.lid) are valid pairs too — the persistent
+		// LIDMappingStore accepts them via isPnLike/isLidLike, and this
+		// in-memory store used to silently drop every hosted pair.
+		if (!(isPnUser(pn) || isHostedPnUser(pn)) || !(isLidUser(lid) || isHostedLidUser(lid))) {
 			return false
 		}
 
@@ -153,7 +157,7 @@ export const makeLIDStore = (options: LIDStoreOptions = {}): LIDStore => {
 
 		// a DM chat partner: remoteJid may be the PN while the stanza
 		// only carried the sender LID (or the reverse)
-		if (key.remoteJid && key.senderLid && isPnUser(key.remoteJid) && !key.fromMe) {
+		if (key.remoteJid && key.senderLid && (isPnUser(key.remoteJid) || isHostedPnUser(key.remoteJid)) && !key.fromMe) {
 			learned += addPair(key.remoteJid, key.senderLid) ? 1 : 0
 		}
 
@@ -183,11 +187,11 @@ export const makeLIDStore = (options: LIDStoreOptions = {}): LIDStore => {
 			}
 
 			const norm = jidNormalizedUser(jid)
-			if (isLidUser(norm)) {
+			if (isLidUser(norm) || isHostedLidUser(norm)) {
 				return lidToPn.get(norm)
 			}
 
-			if (isPnUser(norm)) {
+			if (isPnUser(norm) || isHostedPnUser(norm)) {
 				return pnToLid.get(norm)
 			}
 
@@ -233,7 +237,34 @@ export const makeLIDStore = (options: LIDStoreOptions = {}): LIDStore => {
 			// files (HB-116) — this file maps phone numbers to
 			// LIDs and must not land world-readable.
 			writeFileSync(tmpPath, JSON.stringify(Object.fromEntries(pnToLid)), { mode: 0o600 })
+			// AunuBaileys (2.2.0, HB-365): fsync before the rename
+			// and the directory after it — tmp+rename alone is
+			// atomic but not durable across an OS crash. Best-
+			// effort: an un-fsyncable filesystem must not break
+			// the store.
+			try {
+				const fd = openSync(tmpPath, 'r')
+				try {
+					fsyncSync(fd)
+				} finally {
+					closeSync(fd)
+				}
+			} catch {
+				// best-effort durability
+			}
+
 			renameSync(tmpPath, path)
+
+			try {
+				const dirFd = openSync(path.slice(0, path.lastIndexOf('/') + 1) || '.', 'r')
+				try {
+					fsyncSync(dirFd)
+				} finally {
+					closeSync(dirFd)
+				}
+			} catch {
+				// directory fsync unsupported on some platforms
+			}
 		},
 		loadFromFile: path => {
 			try {

@@ -51,7 +51,24 @@ function makeOrderedDictionary<T>(idGetter: (item: T) => string) {
 		updateAssign: (id: string, update: Partial<T>) => {
 			const item = get(id)
 			if (item) {
+				// AunuBaileys (2.2.0, HB-370): an update must never
+				// change the entry's identity — the old code assigned
+				// blindly and re-keyed the dict under whatever the
+				// update carried (a REVOKE update carrying the
+				// protocol message's key moved the stored message to
+				// the wrong id). If the assign would change the id,
+				// restore the item untouched and report no update.
+				const snapshot = { ...(item as object) }
 				Object.assign(item as object, update)
+				if (idGetter(item) !== id) {
+					for (const k of Object.keys(item as object)) {
+						delete (item as Record<string, unknown>)[k]
+					}
+
+					Object.assign(item as object, snapshot)
+					return false
+				}
+
 				delete dict[id]
 				dict[idGetter(item)] = item
 				return true
