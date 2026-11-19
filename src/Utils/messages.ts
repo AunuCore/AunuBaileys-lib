@@ -2,7 +2,7 @@ import { Boom } from '@hapi/boom'
 import { randomBytes } from 'crypto'
 import { promises as fs } from 'fs'
 import { type Transform } from 'stream'
-import { proto } from '../../WAProto/index.js'
+import { waproto } from '../../WAProto/index.js'
 import {
 	CALL_AUDIO_PREFIX,
 	CALL_VIDEO_PREFIX,
@@ -43,6 +43,7 @@ import {
 	getRawMediaUploadData,
 	getStream,
 	type MediaDownloadOptions,
+	sanitizeMediaTimeoutMs,
 	toBufferWithLimit
 } from './messages-media'
 import { shouldIncludeReportingToken } from './reporting-utils'
@@ -184,10 +185,10 @@ export const prepareWAMessageMedia = async (
 		if (mediaBuff) {
 			logger?.debug({ cacheableKey }, 'got media cache hit')
 
-			const obj = proto.Message.decode(mediaBuff)
+			const obj = waproto.Message.decode(mediaBuff)
 			const key = `${mediaType}Message`
 
-			Object.assign(obj[key as keyof proto.Message]!, { ...uploadData, media: undefined })
+			Object.assign(obj[key as keyof waproto.Message]!, { ...uploadData, media: undefined })
 
 			return obj
 		}
@@ -205,9 +206,12 @@ export const prepareWAMessageMedia = async (
 			// not — a stalled remote URL hung the newsletter send
 			// forever. Forward the host signal, else the same
 			// budget as the upload.
+			// AunuBaileys (2.3.0, HB-392): the budget is sanitised —
+			// a raw 0/NaN/negative/Infinity used to abort instantly
+			// or throw a synchronous RangeError.
 			{
 				...options.options,
-				signal: options.options?.signal ?? AbortSignal.timeout(options.mediaUploadTimeoutMs ?? 120_000)
+				signal: options.options?.signal ?? AbortSignal.timeout(sanitizeMediaTimeoutMs(options.mediaUploadTimeoutMs))
 			}
 		)
 
@@ -273,9 +277,10 @@ export const prepareWAMessageMedia = async (
 			// timeout on the main send path — the download inside
 			// encryptedStream gets the host signal, else the
 			// mediaUploadTimeoutMs budget the upload already uses.
+			// AunuBaileys (2.3.0, HB-392): budget sanitised as above.
 			opts: {
 				...options.options,
-				signal: options.options?.signal ?? AbortSignal.timeout(options.mediaUploadTimeoutMs ?? 120_000)
+				signal: options.options?.signal ?? AbortSignal.timeout(sanitizeMediaTimeoutMs(options.mediaUploadTimeoutMs))
 			}
 		})
 
@@ -398,7 +403,7 @@ export const generateForwardMessageContent = (message: WAMessage, forceForward?:
 
 	// hacky copy
 	content = normalizeMessageContent(content)
-	content = proto.Message.decode(proto.Message.encode(content!).finish())
+	content = waproto.Message.decode(waproto.Message.encode(content!).finish())
 
 	// AunuBaileys (2.0.5, HB-324): the content key used to be
 	// Object.keys(content)[0], unvalidated — an empty message threw a
@@ -413,7 +418,7 @@ export const generateForwardMessageContent = (message: WAMessage, forceForward?:
 		throw new Boom('no forwardable content in message', { statusCode: 400 })
 	}
 
-	let score = (content?.[key] as { contextInfo: proto.IContextInfo })?.contextInfo?.forwardingScore || 0
+	let score = (content?.[key] as { contextInfo: waproto.IContextInfo })?.contextInfo?.forwardingScore || 0
 	score += message.key.fromMe && !forceForward ? 0 : 1
 	if (key === 'conversation') {
 		content.extendedTextMessage = { text: content[key] }
@@ -422,7 +427,7 @@ export const generateForwardMessageContent = (message: WAMessage, forceForward?:
 		key = 'extendedTextMessage'
 	}
 
-	const key_ = content?.[key] as { contextInfo: proto.IContextInfo }
+	const key_ = content?.[key] as { contextInfo: waproto.IContextInfo }
 	if (score > 0) {
 		key_.contextInfo = { forwardingScore: score, isForwarded: true }
 	} else {
@@ -600,7 +605,7 @@ type StickerPackImageLibrary = {
 export const prepareStickerPackMessage = async (
 	stickerPack: StickerPackInfo,
 	options: MessageContentGenerationOptions
-): Promise<{ stickerPackMessage: proto.Message.IStickerPackMessage }> => {
+): Promise<{ stickerPackMessage: waproto.Message.IStickerPackMessage }> => {
 	// AunuBaileys (1.0.71): a pack without stickers/cover (or no pack
 	// at all) used to throw a raw TypeError from the length/getStream
 	// derefs below — fail with a clear Boom instead.
@@ -636,8 +641,14 @@ export const prepareStickerPackMessage = async (
 	const stickerData: { [fileName: string]: Uint8Array } = {}
 	const stickerPromises = stickers.map(async (s, i) => {
 		try {
+			// AunuBaileys (2.3.0, HB-344 addendum + HB-392): the pack
+			// path built its own 120s signal and DROPPED the host's
+			// options signal entirely — a host abort never cancelled
+			// a sticker/cover download. Forward the host signal, else
+			// the sanitised mediaUploadTimeoutMs budget.
 			const { stream } = await getStream(s.data, {
-				signal: AbortSignal.timeout(options.mediaUploadTimeoutMs ?? 120_000)
+				signal:
+					options.options?.signal ?? AbortSignal.timeout(sanitizeMediaTimeoutMs(options.mediaUploadTimeoutMs))
 			})
 			// AunuBaileys (1.0.72): cap matches the 1MB post-buffer
 			// sticker limit enforced below — a remote sticker URL used
@@ -720,7 +731,9 @@ export const prepareStickerPackMessage = async (
 	// Process and add cover/tray icon to the ZIP
 	const trayIconFileName = `${stickerPackIdValue}.webp`
 	const { stream: coverStream } = await getStream(cover, {
-		signal: AbortSignal.timeout(options.mediaUploadTimeoutMs ?? 120_000)
+		// AunuBaileys (2.3.0, HB-344 addendum + HB-392): host signal
+		// forwarded + timeout sanitised, same as the sticker path.
+		signal: options.options?.signal ?? AbortSignal.timeout(sanitizeMediaTimeoutMs(options.mediaUploadTimeoutMs))
 	})
 	// AunuBaileys (1.0.72): the pack cover had NO size limit at all
 	// (HB-76); it is downscaled to 252px, so 5MB is generous headroom.
@@ -772,7 +785,7 @@ export const prepareStickerPackMessage = async (
 		await fs.unlink(stickerPackUpload.encFilePath).catch(() => {})
 	}
 
-	const stickerPackMessage: proto.Message.IStickerPackMessage = {
+	const stickerPackMessage: waproto.Message.IStickerPackMessage = {
 		name: name,
 		publisher: publisher,
 		stickerPackId: stickerPackIdValue,
@@ -956,22 +969,36 @@ export const generateWAMessageContent = async (
 		//TODO: use built-in interface and get disappearing mode info etc.
 		//TODO: cache / use store!?
 		if (options.getProfilePicUrl) {
-			const pfpUrl = await options.getProfilePicUrl(message.groupInvite.jid, 'preview')
-			if (pfpUrl) {
-				// AunuBaileys (2.2.0, HB-344 addendum, site 4): this
-				// fetch kept only the host's dispatcher and dropped
-				// the signal entirely — a stalled CDN profile pic
-				// hung the groupInvite send forever. Forward the
-				// host signal; default to a bounded 30s.
-				const resp = await fetch(pfpUrl, {
-					method: 'GET',
-					dispatcher: options?.options?.dispatcher,
-					signal: options?.options?.signal ?? AbortSignal.timeout(30_000)
-				})
-				if (resp.ok) {
-					const buf = Buffer.from(await resp.arrayBuffer())
-					m.groupInviteMessage.jpegThumbnail = buf
+			// AunuBaileys (2.3.0, HB-261 addendum): the lookup and
+			// the fetch below were awaited bare — either throwing
+			// aborted the whole send, although the thumbnail is
+			// purely cosmetic and the invite is ready without it.
+			// Best effort now, mirroring the HB-261 fix in
+			// readMessages: on failure, send the invite with no
+			// thumbnail instead of dropping the send.
+			try {
+				const pfpUrl = await options.getProfilePicUrl(message.groupInvite.jid, 'preview')
+				if (pfpUrl) {
+					// AunuBaileys (2.2.0, HB-344 addendum, site 4): this
+					// fetch kept only the host's dispatcher and dropped
+					// the signal entirely — a stalled CDN profile pic
+					// hung the groupInvite send forever. Forward the
+					// host signal; default to a bounded 30s.
+					const resp = await fetch(pfpUrl, {
+						method: 'GET',
+						dispatcher: options?.options?.dispatcher,
+						signal: options?.options?.signal ?? AbortSignal.timeout(30_000)
+					})
+					if (resp.ok) {
+						const buf = Buffer.from(await resp.arrayBuffer())
+						m.groupInviteMessage.jpegThumbnail = buf
+					}
 				}
+			} catch (err) {
+				options.logger?.warn(
+					{ err, jid: message.groupInvite.jid },
+					'aunu: groupInvite profile-pic thumbnail fetch failed; sending invite without thumbnail'
+				)
 			}
 		}
 	} else if (hasNonNullishProperty(message, 'pin')) {
@@ -997,7 +1024,7 @@ export const generateWAMessageContent = async (
 				m.buttonsResponseMessage = {
 					selectedButtonId: message.buttonReply.id,
 					selectedDisplayText: message.buttonReply.displayText,
-					type: proto.Message.ButtonsResponseMessage.Type.DISPLAY_TEXT
+					type: waproto.Message.ButtonsResponseMessage.Type.DISPLAY_TEXT
 				}
 				break
 			default:
@@ -1081,12 +1108,23 @@ export const generateWAMessageContent = async (
 			})
 		}
 
+		// AunuBaileys (2.3.0, HB-325 addendum): a non-Date endDate
+		// (ISO string / epoch number from a JSON-minded host) used to
+		// throw a raw TypeError from .getTime() below — validate it
+		// like the event branch's dates, with a Boom 400.
+		if (
+			typeof message.poll.endDate !== 'undefined' &&
+			(!(message.poll.endDate instanceof Date) || !Number.isFinite(message.poll.endDate.getTime()))
+		) {
+			throw new Boom('poll.endDate must be a valid Date', { statusCode: 400 })
+		}
+
 		m.messageContextInfo = {
 			// encKey
 			messageSecret: message.poll.messageSecret || randomBytes(32)
 		}
 
-		const pollCreationMessage: proto.Message.IPollCreationMessage & {
+		const pollCreationMessage: waproto.Message.IPollCreationMessage & {
 			endTime?: number
 			hideParticipantName?: boolean
 			allowAddOption?: boolean
@@ -1115,7 +1153,7 @@ export const generateWAMessageContent = async (
 			m.pollCreationMessageV5 = {
 				...pollCreationMessage,
 				correctAnswer: { optionName: message.poll.correctAnswer.toString() },
-				pollType: proto.Message.PollType.QUIZ,
+				pollType: waproto.Message.PollType.QUIZ,
 				selectableOptionsCount: 1
 			}
 		} else if (message.poll.hideVoter || message.poll.canAddOption) {
@@ -1171,21 +1209,21 @@ export const generateWAMessageContent = async (
 			throw new Boom('aiRich.submessages must be an array', { statusCode: 400 })
 		}
 
-		const subs: proto.IAIRichResponseSubMessage[] = (message.aiRich.submessages || []).map(s => {
+		const subs: waproto.IAIRichResponseSubMessage[] = (message.aiRich.submessages || []).map(s => {
 			if (!s || typeof s !== 'object') {
 				throw new Boom('aiRich submessages must be objects', { statusCode: 400 })
 			}
 
 			if (s.type === 'text' || (!s.type && s.text)) {
 				return {
-					messageType: proto.AIRichResponseSubMessageType.AI_RICH_RESPONSE_TEXT,
+					messageType: waproto.AIRichResponseSubMessageType.AI_RICH_RESPONSE_TEXT,
 					messageText: aiRichSubString(s.text, 'text')
 				}
 			}
 
 			if (s.type === 'code') {
 				return {
-					messageType: proto.AIRichResponseSubMessageType.AI_RICH_RESPONSE_CODE,
+					messageType: waproto.AIRichResponseSubMessageType.AI_RICH_RESPONSE_CODE,
 					codeMetadata: {
 						codeLanguage: aiRichSubString(s.language || 'text', 'language'),
 						codeBlocks: [{ codeContent: aiRichSubString(s.code || s.text, 'code') }]
@@ -1195,7 +1233,7 @@ export const generateWAMessageContent = async (
 
 			if (s.type === 'latex') {
 				return {
-					messageType: proto.AIRichResponseSubMessageType.AI_RICH_RESPONSE_LATEX,
+					messageType: waproto.AIRichResponseSubMessageType.AI_RICH_RESPONSE_LATEX,
 					latexMetadata: { text: aiRichSubString(s.text, 'text') }
 				}
 			}
@@ -1206,7 +1244,7 @@ export const generateWAMessageContent = async (
 				}
 
 				return {
-					messageType: proto.AIRichResponseSubMessageType.AI_RICH_RESPONSE_TABLE,
+					messageType: waproto.AIRichResponseSubMessageType.AI_RICH_RESPONSE_TABLE,
 					tableMetadata: s.table
 				}
 			}
@@ -1238,7 +1276,7 @@ export const generateWAMessageContent = async (
 				}
 
 				return {
-					messageType: proto.AIRichResponseSubMessageType.AI_RICH_RESPONSE_MAP,
+					messageType: waproto.AIRichResponseSubMessageType.AI_RICH_RESPONSE_MAP,
 					mapMetadata: mapSource || {
 						centerLatitude: s.centerLatitude ?? s.latitude,
 						centerLongitude: s.centerLongitude ?? s.longitude,
@@ -1268,7 +1306,7 @@ export const generateWAMessageContent = async (
 				}
 
 				return {
-					messageType: proto.AIRichResponseSubMessageType.AI_RICH_RESPONSE_INLINE_IMAGE,
+					messageType: waproto.AIRichResponseSubMessageType.AI_RICH_RESPONSE_INLINE_IMAGE,
 					imageMetadata: {
 						imageUrl:
 							typeof imageUrl === 'string'
@@ -1285,15 +1323,28 @@ export const generateWAMessageContent = async (
 				throw new Boom('aiRich raw submessage must be an object', { statusCode: 400 })
 			}
 
-			return s.raw || (s as unknown as proto.IAIRichResponseSubMessage)
+			return s.raw || (s as unknown as waproto.IAIRichResponseSubMessage)
 		})
 		m.richResponseMessage = {
-			messageType: proto.AIRichResponseMessageType.AI_RICH_RESPONSE_TYPE_STANDARD,
+			messageType: waproto.AIRichResponseMessageType.AI_RICH_RESPONSE_TYPE_STANDARD,
 			submessages: subs
 		}
 		// A companion 'text' on the same content is ignored when the rich
 		// response is present, exactly as in v6.
 	} else if (hasNonNullishProperty(message, 'album')) {
+		// AunuBaileys (2.3.0, HB-253 addendum): both counts are
+		// optional, so `{ album: {} }` is type-valid — but
+		// protobufjs drops the undefined fields, and the relay's
+		// HB-253 guard (object with at least one content key)
+		// cannot see the emptiness one level down: an empty
+		// AlbumMessage went out as a success. Reject unless at
+		// least one count is a positive finite number, mirroring
+		// the `values` validation in the neighbouring poll branch.
+		const isPositiveCount = (n: number | undefined) => typeof n === 'number' && Number.isFinite(n) && n > 0
+		if (!isPositiveCount(message.album.expectedImageCount) && !isPositiveCount(message.album.expectedVideoCount)) {
+			throw new Boom('album requires at least one positive expectedImageCount or expectedVideoCount', { statusCode: 400 })
+		}
+
 		m.albumMessage = {
 			expectedImageCount: message.album.expectedImageCount,
 			expectedVideoCount: message.album.expectedVideoCount
@@ -1307,13 +1358,13 @@ export const generateWAMessageContent = async (
 		m = await prepareStickerPackMessage(message as StickerPackInfo, options)
 	} else if (hasNonNullishProperty(message, 'sharePhoneNumber')) {
 		m.protocolMessage = {
-			type: proto.Message.ProtocolMessage.Type.SHARE_PHONE_NUMBER
+			type: waproto.Message.ProtocolMessage.Type.SHARE_PHONE_NUMBER
 		}
 	} else if (hasNonNullishProperty(message, 'requestPhoneNumber')) {
 		m.requestPhoneNumberMessage = {}
 	} else if (hasNonNullishProperty(message, 'limitSharing')) {
 		m.protocolMessage = {
-			type: proto.Message.ProtocolMessage.Type.LIMIT_SHARING,
+			type: waproto.Message.ProtocolMessage.Type.LIMIT_SHARING,
 			limitSharing: {
 				sharingLimited: message.limitSharing === true,
 				trigger: 1,
@@ -1325,15 +1376,18 @@ export const generateWAMessageContent = async (
 		m = await prepareWAMessageMedia(message, options)
 	}
 
-	if (hasOptionalProperty(message, 'viewOnce') && !!message.viewOnce) {
-		m = { viewOnceMessage: { message: m } }
-	}
-
+	// AunuBaileys (2.3.0, HB-381): the viewOnce wrap used to happen
+	// HERE, before the mentions/contextInfo blocks — both blocks then
+	// resolved the inner key as `viewOnceMessage` and wrote (or
+	// skipped) contextInfo on the WRAPPER, which ViewOnceMessage
+	// cannot carry, so protobufjs silently dropped every mention.
+	// The wrap now happens after those blocks, below (the `edit`
+	// wrap already had the correct order).
 	if (
 		(hasOptionalProperty(message, 'mentions') && message.mentions?.length) ||
 		(hasOptionalProperty(message, 'mentionAll') && message.mentionAll)
 	) {
-		const messageType = Object.keys(m)[0]! as Extract<keyof proto.IMessage, MessageWithContextInfo>
+		const messageType = Object.keys(m)[0]! as Extract<keyof waproto.IMessage, MessageWithContextInfo>
 		const key = m[messageType]
 		if (key && 'contextInfo' in key) {
 			key.contextInfo = key.contextInfo || {}
@@ -1365,13 +1419,21 @@ export const generateWAMessageContent = async (
 	}
 
 	if (hasOptionalProperty(message, 'contextInfo') && !!message.contextInfo) {
-		const messageType = Object.keys(m)[0]! as Extract<keyof proto.IMessage, MessageWithContextInfo>
+		const messageType = Object.keys(m)[0]! as Extract<keyof waproto.IMessage, MessageWithContextInfo>
 		const key = m[messageType]
 		if ('contextInfo' in key! && !!key.contextInfo) {
 			key.contextInfo = { ...key.contextInfo, ...message.contextInfo }
 		} else if (key!) {
 			key.contextInfo = message.contextInfo
 		}
+	}
+
+	// AunuBaileys (2.3.0, HB-381): viewOnce wrap AFTER mentions and
+	// contextInfo have been applied to the inner message (see the
+	// note at the mentions block) — wrapping earlier silently
+	// discarded both.
+	if (hasOptionalProperty(message, 'viewOnce') && !!message.viewOnce) {
+		m = { viewOnceMessage: { message: m } }
 	}
 
 	if (hasOptionalProperty(message, 'albumParentKey') && !!message.albumParentKey) {
@@ -1406,7 +1468,7 @@ export const generateWAMessageFromContent = (
 	}
 
 	const innerMessage = normalizeMessageContent(message)!
-	const key = getContentType(innerMessage)! as Exclude<keyof proto.IMessage, 'conversation'>
+	const key = getContentType(innerMessage)! as Exclude<keyof waproto.IMessage, 'conversation'>
 	// AunuBaileys (1.0.86, HB-122, re-applied P3b): on the raw path the
 	// content value can be a bare string ('conversation') or absent
 	// entirely (key undefined). Quote and ephemeral contextInfo can
@@ -1427,14 +1489,14 @@ export const generateWAMessageFromContent = (
 		let quotedMsg = normalizeMessageContent(quoted.message)!
 		const msgType = getContentType(quotedMsg)!
 		// strip any redundant properties
-		quotedMsg = proto.Message.create({ [msgType]: quotedMsg[msgType] })
+		quotedMsg = waproto.Message.create({ [msgType]: quotedMsg[msgType] })
 
 		const quotedContent = quotedMsg[msgType]
 		if (typeof quotedContent === 'object' && quotedContent && 'contextInfo' in quotedContent) {
 			delete quotedContent.contextInfo
 		}
 
-		const contextInfo: proto.IContextInfo =
+		const contextInfo: waproto.IContextInfo =
 			(canAttachContext && 'contextInfo' in contextTarget && contextTarget.contextInfo) || {}
 		contextInfo.participant = jidNormalizedUser(participant!)
 		contextInfo.stanzaId = quoted.key.id
@@ -1497,7 +1559,7 @@ export const generateWAMessage = async (jid: string, content: AnyMessageContent,
 }
 
 /** Get the key to access the true type of content */
-export const getContentType = (content: proto.IMessage | undefined) => {
+export const getContentType = (content: waproto.IMessage | undefined) => {
 	if (content) {
 		const keys = Object.keys(content)
 		const key = keys.find(k => (k === 'conversation' || k.includes('Message')) && k !== 'senderKeyDistributionMessage')
@@ -1549,7 +1611,7 @@ export const normalizeMessageContent = (content: WAMessageContent | null | undef
  */
 export const extractMessageContent = (content: WAMessageContent | undefined | null): WAMessageContent | undefined => {
 	const extractFromTemplateMessage = (
-		msg: proto.Message.TemplateMessage.IHydratedFourRowTemplate | proto.Message.IButtonsMessage
+		msg: waproto.Message.TemplateMessage.IHydratedFourRowTemplate | waproto.Message.IButtonsMessage
 	) => {
 		if (msg.imageMessage) {
 			return { imageMessage: msg.imageMessage }
@@ -1632,7 +1694,7 @@ export const updateMessageWithReceipt = (msg: Pick<WAMessage, 'userReceipt'>, re
 }
 
 /** Update the message with a new reaction */
-export const updateMessageWithReaction = (msg: Pick<WAMessage, 'reactions'>, reaction: proto.IReaction) => {
+export const updateMessageWithReaction = (msg: Pick<WAMessage, 'reactions'>, reaction: waproto.IReaction) => {
 	const authorID = getKeyAuthor(reaction.key)
 
 	const reactions = (msg.reactions || []).filter(r => getKeyAuthor(r.key) !== authorID)
@@ -1648,13 +1710,13 @@ export interface PollLIDOptions {
 /** Update the message with a new poll update */
 export const updateMessageWithPollUpdate = (
 	msg: Pick<WAMessage, 'pollUpdates'>,
-	update: proto.IPollUpdate,
+	update: waproto.IPollUpdate,
 	options?: PollLIDOptions
 ) => {
 	// AunuBaileys: normalize the voter through the LID store when one is
 	// given, so a vote arriving in the other identity form REPLACES the
 	// voter's earlier update instead of piling up as a second voter.
-	const resolveVoter = (key: proto.IMessageKey | null | undefined) => {
+	const resolveVoter = (key: waproto.IMessageKey | null | undefined) => {
 		const author = getKeyAuthor(key as WAMessageKey)
 		return options?.lidStore?.getPNForLID?.(author) || author
 	}
@@ -1670,7 +1732,7 @@ export const updateMessageWithPollUpdate = (
 /** Update the message with a new event response */
 export const updateMessageWithEventResponse = (
 	msg: Pick<WAMessage, 'eventResponses'>,
-	update: proto.IEventResponse
+	update: waproto.IEventResponse
 ) => {
 	const authorID = getKeyAuthor(update.eventResponseMessageKey)
 
@@ -1873,7 +1935,21 @@ export const downloadMediaMessage = async <Type extends 'buffer' | 'stream'>(
 		}
 
 		let download: DownloadableMessage
-		if ('thumbnailDirectPath' in media && !('url' in media)) {
+		// AunuBaileys (2.3.0, HB-252 addendum): this thumbnail branch
+		// used to hijack sticker packs — StickerPackMessage has no
+		// `url` field at all and its proto default makes
+		// `'thumbnailDirectPath' in media` true even when null, so
+		// every pack download fetched the THUMBNAIL (or a null path)
+		// under the 'thumbnail-link' keys and decryption always
+		// failed. Packs download via their own directPath as
+		// 'sticker-pack'; other media only take the thumbnail branch
+		// when a thumbnail path actually exists.
+		if (
+			contentType !== 'stickerPackMessage' &&
+			'thumbnailDirectPath' in media &&
+			media.thumbnailDirectPath &&
+			!('url' in media)
+		) {
 			download = {
 				directPath: media.thumbnailDirectPath,
 				mediaKey: media.mediaKey
@@ -1898,7 +1974,7 @@ export const downloadMediaMessage = async <Type extends 'buffer' | 'stream'>(
 }
 
 /** Checks whether the given message is a media message; if it is returns the inner content */
-export const assertMediaContent = (content: proto.IMessage | null | undefined) => {
+export const assertMediaContent = (content: waproto.IMessage | null | undefined) => {
 	content = extractMessageContent(content)
 	const mediaContent =
 		content?.documentMessage ||

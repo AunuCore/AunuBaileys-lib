@@ -3,6 +3,7 @@
 // JavaScript module of the same name — behaviour and HB/version
 // annotations preserved verbatim; types are intentionally loose here
 // and tighten in a later pass.
+import { Boom } from '@hapi/boom'
 import baileysVersion from '../Defaults/baileys-version.json' with { type: 'json' }
 import {
 	appendWatermark,
@@ -15,9 +16,10 @@ import {
 	parseVanishDuration,
 	stripWatermark
 } from '../Utils/aunu-experimental.js'
-import { isLidUser } from '../WABinary/jid-utils.js'
+import { isLidUser, jidNormalizedUser } from '../WABinary/jid-utils.js'
 import { generateWAMessageFromContent, prepareWAMessageMedia } from '../Utils/messages.js'
-import { proto } from '../../WAProto/index.js'
+import { assertImageWithinPixelLimit, getImageProcessingLibrary } from '../Utils/messages-media.js'
+import { waproto } from '../../WAProto/index.js'
 import { randomBytes } from 'crypto'
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms))
 // AunuBaileys (1.0.86, HB-112 short series): Node clamps any
@@ -101,7 +103,200 @@ const MAX_TIMER_DELAY_MS = 2 ** 31 - 1
  * 29. A2UI widget — `aunuSendA2UI`: send a declarative A2UI widget
  *     (Text/Image/Video/Button/Card/Column/Row) as an interactive
  *     message carrying `bloksWidget`.
+ * 36. Emoji sticker — `aunuSendEmojiSticker`: render one emoji
+ *     (single codepoint, VS16, skin tone or ZWJ sequence) as a large
+ *     transparent 512x512 WebP sticker from its Twemoji asset and
+ *     send it as a sticker message.
  */
+export const AUNU_EMOJI_STICKER_SIZE = 512
+export const AUNU_TWEMOJI_ASSET_BASE_URL = 'https://cdn.jsdelivr.net/gh/twitter/twemoji@14.0.2/assets/72x72/'
+
+/**
+ * Twemoji asset file name for one emoji: its codepoints as lowercase
+ * hex joined with '-'. U+FE0F (VS16) is dropped UNLESS the sequence
+ * contains a ZWJ (U+200D) — that is Twemoji's own file-naming rule
+ * (a lone heart is `2764.png`, while the rainbow-flag ZWJ sequence
+ * keeps its selector: `1f3f3-fe0f-200d-1f308.png`). Throws Boom 400
+ * for an empty or structurally invalid emoji string.
+ */
+export const aunuEmojiTwemojiFileName = emoji => {
+	if (typeof emoji !== 'string' || !emoji.trim()) {
+		throw new Boom('aunuSendEmojiSticker: a non-empty emoji string is required', { statusCode: 400 })
+	}
+
+	const value = emoji.trim()
+	if (/\s/u.test(value)) {
+		throw new Boom('aunuSendEmojiSticker: emoji must be a single emoji sequence (no whitespace)', { statusCode: 400 })
+	}
+
+	const chars = [...value]
+	const hasZwj = chars.includes('\u200d')
+	const parts = []
+	for (const ch of chars) {
+		const cp = ch.codePointAt(0)
+		if (cp === undefined) {
+			continue
+		}
+
+		if (cp === 0xfe0f && !hasZwj) {
+			continue
+		}
+
+		parts.push(cp.toString(16))
+	}
+
+	// A sequence of only selectors/joiners has nothing to render.
+	if (!parts.length || parts.every(part => part === '200d' || part === 'fe0f')) {
+		throw new Boom('aunuSendEmojiSticker: invalid emoji (no renderable codepoint)', { statusCode: 400 })
+	}
+
+	return parts.join('-') + '.png'
+}
+
+export const aunuEmojiTwemojiAssetUrl = (emoji, assetBaseUrl) => {
+	const base =
+		typeof assetBaseUrl === 'string' && assetBaseUrl.trim() ? assetBaseUrl.trim() : AUNU_TWEMOJI_ASSET_BASE_URL
+	return (base.endsWith('/') ? base : base + '/') + aunuEmojiTwemojiFileName(emoji)
+}
+
+const bufferFromBinaryResult = result => {
+	if (Buffer.isBuffer(result)) {
+		return result
+	}
+
+	if (result instanceof Uint8Array) {
+		return Buffer.from(result)
+	}
+
+	if (result instanceof ArrayBuffer) {
+		return Buffer.from(result)
+	}
+
+	return null
+}
+
+const bufferFromAssetResult = async (result, url) => {
+	const direct = bufferFromBinaryResult(result)
+	if (direct) {
+		return direct
+	}
+
+	if (result && typeof result.arrayBuffer === 'function') {
+		if (result.ok === false) {
+			const status =
+				typeof result.status === 'number' && result.status >= 400 && result.status < 600 ? result.status : 502
+			throw new Boom(`aunuSendEmojiSticker: emoji asset fetch failed with HTTP ${result.status ?? 'unknown'} (${url})`, {
+				statusCode: status
+			})
+		}
+
+		return Buffer.from(await result.arrayBuffer())
+	}
+
+	throw new Boom(`aunuSendEmojiSticker: emoji asset fetcher returned an unsupported result (${url})`, {
+		statusCode: 502
+	})
+}
+
+const fetchEmojiAssetPng = async (fetcher, url) => {
+	let result
+	try {
+		result = await fetcher(url)
+	} catch (err) {
+		if (err?.isBoom) {
+			throw err
+		}
+
+		throw new Boom(`aunuSendEmojiSticker: failed to fetch emoji asset (${url}): ${err?.message || err}`, {
+			statusCode: 502
+		})
+	}
+
+	if (!result) {
+		throw new Boom(`aunuSendEmojiSticker: emoji asset fetch returned nothing (${url})`, { statusCode: 502 })
+	}
+
+	return bufferFromAssetResult(result, url)
+}
+
+const defaultEmojiAssetFetcher = async url => {
+	if (typeof fetch !== 'function') {
+		throw new Boom('aunuSendEmojiSticker: no global fetch available — pass options.fetcher', { statusCode: 501 })
+	}
+
+	return fetch(url)
+}
+
+/**
+ * Default emoji-sticker renderer: resize/pad the Twemoji PNG onto a
+ * transparent 512x512 canvas and convert to WebP, using the same
+ * dynamically-loaded image library as the sticker-pack path
+ * (getImageProcessingLibrary — sharp first, then @napi-rs/image,
+ * then jimp; all optional peers, so there is no hard dependency).
+ * Throws Boom 501 when no backend is usable at all.
+ */
+const renderEmojiStickerWebP = async pngBuffer => {
+	assertImageWithinPixelLimit(pngBuffer, 'aunuSendEmojiSticker')
+	let lib
+	try {
+		lib = await getImageProcessingLibrary()
+	} catch {
+		throw new Boom(
+			'aunuSendEmojiSticker: no image processing library available — install sharp (or @napi-rs/image / jimp), or pass options.renderer',
+			{ statusCode: 501 }
+		)
+	}
+
+	try {
+		if ('sharp' in lib && typeof lib.sharp?.default === 'function') {
+			return await lib.sharp
+				.default(pngBuffer)
+				.resize(AUNU_EMOJI_STICKER_SIZE, AUNU_EMOJI_STICKER_SIZE, {
+					fit: 'contain',
+					background: { r: 0, g: 0, b: 0, alpha: 0 }
+				})
+				.webp()
+				.toBuffer()
+		}
+
+		if ('image' in lib && lib.image?.Transformer) {
+			const out = await new lib.image.Transformer(pngBuffer)
+				.resize(AUNU_EMOJI_STICKER_SIZE, AUNU_EMOJI_STICKER_SIZE)
+				.webp()
+			const buf = bufferFromBinaryResult(out)
+			if (buf) {
+				return buf
+			}
+		}
+
+		if ('jimp' in lib && lib.jimp) {
+			const Jimp = lib.jimp.Jimp || lib.jimp.default?.Jimp
+			if (typeof Jimp?.read === 'function') {
+				const img = await Jimp.read(pngBuffer)
+				const buf = bufferFromBinaryResult(
+					await img.resize({ w: AUNU_EMOJI_STICKER_SIZE, h: AUNU_EMOJI_STICKER_SIZE }).getBuffer('image/webp')
+				)
+				if (buf) {
+					return buf
+				}
+			}
+		}
+	} catch (err) {
+		if (err?.isBoom) {
+			throw err
+		}
+
+		throw new Boom(`aunuSendEmojiSticker: failed to convert emoji asset to WebP: ${err?.message || err}`, {
+			statusCode: 502
+		})
+	}
+
+	throw new Boom(
+		'aunuSendEmojiSticker: no usable image renderer/converter available — install sharp (or @napi-rs/image / jimp), or pass options.renderer',
+		{ statusCode: 501 }
+	)
+}
+
 export const attachAunuExperimental = sock => {
 	const scheduled = new Map()
 	const destructs = new Map()
@@ -693,7 +888,7 @@ export const attachAunuExperimental = sock => {
 				...(child.message.messageContextInfo || {}),
 				messageAssociation: {
 					parentMessageKey: header.key,
-					associationType: proto.MessageAssociation.AssociationType.MEDIA_ALBUM
+					associationType: waproto.MessageAssociation.AssociationType.MEDIA_ALBUM
 				}
 			}
 			await sock.relayMessage(jid, child.message, { messageId: child.key.id })
@@ -735,7 +930,7 @@ export const attachAunuExperimental = sock => {
 	 * ('PLANNED' | 'EXECUTING' | 'FINISHED') or raw numbers.
 	 */
 	sock.aunuBotSteps = async (jid, first = {}, options = {}) => {
-		const Status = proto.BotProgressIndicatorMetadata.BotPlanningStepMetadata.PlanningStepStatus
+		const Status = waproto.BotProgressIndicatorMetadata.BotPlanningStepMetadata.PlanningStepStatus
 		const steps = []
 		let description = first.description || first.title || ''
 		let text = first.text
@@ -788,7 +983,7 @@ export const attachAunuExperimental = sock => {
 							forwardingScore: 1,
 							isForwarded: true,
 							forwardedAiBotMessageInfo: { botJid: '0@bot' },
-							forwardOrigin: proto.ContextInfo.ForwardOrigin.META_AI
+							forwardOrigin: waproto.ContextInfo.ForwardOrigin.META_AI
 						}
 					}
 				}
@@ -806,7 +1001,7 @@ export const attachAunuExperimental = sock => {
 						message: {
 							protocolMessage: {
 								key: { remoteJid: jid, fromMe: true, id: sent.key.id },
-								type: proto.Message.ProtocolMessage.Type.MESSAGE_EDIT,
+								type: waproto.Message.ProtocolMessage.Type.MESSAGE_EDIT,
 								editedMessage: build(),
 								timestampMs: Date.now()
 							}
@@ -858,6 +1053,86 @@ export const attachAunuExperimental = sock => {
 	 */
 	sock.aunuSendGroupStatus = async (jid, content, options = {}) => {
 		return sock.sendMessage(jid, { ...content, groupStatus: true }, options)
+	}
+	/**
+	 * EXPERIMENTAL (2.3.0): emoji sticker — render ONE emoji as a
+	 * large transparent 512x512 WebP sticker and send it. The artwork
+	 * is the emoji's Twemoji PNG asset (see aunuEmojiTwemojiFileName
+	 * for the file-name rule); the PNG is resized/padded onto a
+	 * transparent 512x512 canvas and converted to WebP with the same
+	 * dynamically-loaded image library the sticker-pack path uses
+	 * (sharp first, then @napi-rs/image, then jimp — all optional
+	 * peers, no hard dependency). Hosts can override every step:
+	 * `options.assetBaseUrl` (asset CDN base), `options.fetcher`
+	 * (url -> Buffer / Uint8Array / ArrayBuffer / Response-like, for
+	 * offline or proxied fetching) and `options.renderer` /
+	 * `options.converter` ((pngBuffer, { emoji, fileName, size,
+	 * width, height }) -> WebP data, used before the built-in
+	 * converter). The sticker goes out through sendMessage as
+	 * `{ sticker }`, which prepareWAMessageMedia turns into a
+	 * stickerMessage — the same send path as aunuSendGroupStatus.
+	 * `options.quoted` and `options.messageOptions` are forwarded to
+	 * sendMessage. Throws Boom 400 for an empty/invalid emoji or
+	 * JID, the fetcher's HTTP status (or 502) when the asset cannot
+	 * be fetched, and 501 when no renderer/converter exists at all.
+	 */
+	sock.aunuSendEmojiSticker = async (jid, emoji, options = {}) => {
+		const remoteJid = typeof jid === 'string' ? jidNormalizedUser(jid) : ''
+		if (!remoteJid) {
+			throw new Boom('aunuSendEmojiSticker: a valid destination jid is required', { statusCode: 400 })
+		}
+
+		const fileName = aunuEmojiTwemojiFileName(emoji)
+		const url = aunuEmojiTwemojiAssetUrl(emoji, options.assetBaseUrl)
+		const fetcher = typeof options.fetcher === 'function' ? options.fetcher : defaultEmojiAssetFetcher
+		const pngBuffer = await fetchEmojiAssetPng(fetcher, url)
+		if (!pngBuffer.length) {
+			throw new Boom(`aunuSendEmojiSticker: emoji asset is empty (${url})`, { statusCode: 502 })
+		}
+
+		const renderer =
+			typeof options.renderer === 'function'
+				? options.renderer
+				: typeof options.converter === 'function'
+					? options.converter
+					: null
+		let webpBuffer
+		if (renderer) {
+			let rendered
+			try {
+				rendered = await renderer(pngBuffer, {
+					emoji,
+					fileName,
+					size: AUNU_EMOJI_STICKER_SIZE,
+					width: AUNU_EMOJI_STICKER_SIZE,
+					height: AUNU_EMOJI_STICKER_SIZE
+				})
+			} catch (err) {
+				if (err?.isBoom) {
+					throw err
+				}
+
+				throw new Boom(`aunuSendEmojiSticker: options.renderer/converter failed: ${err?.message || err}`, {
+					statusCode: 502
+				})
+			}
+
+			webpBuffer = bufferFromBinaryResult(rendered)
+			if (!webpBuffer?.length) {
+				throw new Boom('aunuSendEmojiSticker: options.renderer/converter returned no WebP data', {
+					statusCode: 502
+				})
+			}
+		} else {
+			webpBuffer = await renderEmojiStickerWebP(pngBuffer)
+		}
+
+		const sendOptions = { ...(options.messageOptions || {}) }
+		if (options.quoted !== undefined) {
+			sendOptions.quoted = options.quoted
+		}
+
+		return sock.sendMessage(remoteJid, { sticker: webpBuffer }, sendOptions)
 	}
 	/**
 	 * EXPERIMENTAL (1.0.71): A2UI widget — sends a declarative widget

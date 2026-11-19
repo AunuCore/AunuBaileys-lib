@@ -39,9 +39,18 @@ export class USyncBotProfileProtocol implements USyncQueryProtocol {
 		}
 	}
 
-	parser(node: BinaryNode): BotProfileInfo {
-		const botNode = getBinaryNodeChild(node, 'bot')
-		const profile = getBinaryNodeChild(botNode, 'profile')
+	parser(node: BinaryNode): BotProfileInfo | null {
+		// AunuBaileys (2.3.0, HB-402): parseUSyncQueryResult hands
+		// this parser the <bot> node ITSELF, but the parser searched
+		// for a child 'bot' inside it — always undefined, so every
+		// public withBotProfileProtocol() query died with a
+		// TypeError. Read <profile> directly from the node received;
+		// a bot without a public profile gets an empty <bot/> back,
+		// which is a null result, not an error.
+		const profile = getBinaryNodeChild(node, 'profile')
+		if (!profile) {
+			return null
+		}
 
 		const commandsNode = getBinaryNodeChild(profile, 'commands')
 		const promptsNode = getBinaryNodeChild(profile, 'prompts')

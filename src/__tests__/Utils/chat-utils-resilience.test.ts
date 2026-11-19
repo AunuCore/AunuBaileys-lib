@@ -1,6 +1,6 @@
 import { jest } from '@jest/globals'
 import { randomBytes } from 'crypto'
-import { proto } from '../../../WAProto/index.js'
+import { waproto } from '../../../WAProto/index.js'
 import type { LTHashState, WAPatchName } from '../../Types'
 import { decodeSyncdMutations, decodeSyncdSnapshot, encodeSyncdPatch, newLTHashState } from '../../Utils/chat-utils'
 
@@ -18,7 +18,7 @@ const NAME: WAPatchName = 'regular'
 const MY_KEY_ID = Buffer.from(randomBytes(16)).toString('base64')
 
 // 32-byte app-state-sync key — fed to expandAppStateKeys via mutationKeys().
-const APP_STATE_KEY: proto.Message.IAppStateSyncKeyData = {
+const APP_STATE_KEY: waproto.Message.IAppStateSyncKeyData = {
 	keyData: randomBytes(32),
 	fingerprint: { rawId: 1, currentIndex: 0, deviceIndexes: [0] },
 	timestamp: Date.now()
@@ -37,7 +37,7 @@ const encodeValidRecord = async (state: LTHashState) => {
 			index: ['conversation', `jid-${Math.random()}`, 'archive'],
 			syncAction: { archiveChatAction: { archived: true } },
 			apiVersion: 0,
-			operation: proto.SyncdMutation.SyncdOperation.SET
+			operation: waproto.SyncdMutation.SyncdOperation.SET
 		},
 		MY_KEY_ID,
 		state,
@@ -65,7 +65,7 @@ describe('decodeSyncdMutations resilience', () => {
 		// Flip the trailing HMAC so Buffer.compare(contentHmac, ogValueMac) !== 0.
 		const blob = Buffer.from(record.value!.blob!)
 		blob[blob.length - 1] = (blob[blob.length - 1]! ^ 0xff) & 0xff
-		const tampered: proto.ISyncdRecord = {
+		const tampered: waproto.ISyncdRecord = {
 			...record,
 			value: { blob }
 		}
@@ -86,7 +86,7 @@ describe('decodeSyncdMutations resilience', () => {
 		// Provide a non-AES-block-aligned ciphertext so Decipheriv.final() throws "bad decrypt".
 		const encContent = randomBytes(17)
 		const fakeValueMac = randomBytes(32)
-		const record: proto.ISyncdRecord = {
+		const record: waproto.ISyncdRecord = {
 			keyId: { id: keyId },
 			value: { blob: Buffer.concat([encContent, fakeValueMac]) },
 			index: { blob: randomBytes(32) }
@@ -108,7 +108,7 @@ describe('decodeSyncdMutations resilience', () => {
 		// the record-level corruption skip path (NOT missing-key, which now propagates).
 		const tamperedBlob = Buffer.from(good1.value!.blob!)
 		tamperedBlob[tamperedBlob.length - 1] = (tamperedBlob[tamperedBlob.length - 1]! ^ 0xff) & 0xff
-		const bad: proto.ISyncdRecord = {
+		const bad: waproto.ISyncdRecord = {
 			keyId: good1.keyId,
 			value: { blob: tamperedBlob },
 			index: { blob: randomBytes(32) }
@@ -136,7 +136,7 @@ describe('decodeSyncdSnapshot resilience', () => {
 		corruptedMac[0] = (corruptedMac[0]! ^ 0xff) & 0xff
 
 		const keyIdBytes = Buffer.from(MY_KEY_ID, 'base64')
-		const snapshot: proto.ISyncdSnapshot = {
+		const snapshot: waproto.ISyncdSnapshot = {
 			version: { version: 1 },
 			mac: corruptedMac,
 			keyId: { id: keyIdBytes },

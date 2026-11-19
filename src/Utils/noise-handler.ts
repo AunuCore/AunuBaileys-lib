@@ -1,5 +1,5 @@
 import { Boom } from '@hapi/boom'
-import { proto } from '../../WAProto/index.js'
+import { waproto } from '../../WAProto/index.js'
 import { NOISE_MODE, WA_CERT_DETAILS } from '../Defaults'
 import type { KeyPair } from '../Types'
 import type { BinaryNode } from '../WABinary'
@@ -208,7 +208,7 @@ export const makeNoiseHandler = ({
 		authenticate,
 		mixIntoKey,
 		finishInit,
-		processHandshake: ({ serverHello }: proto.HandshakeMessage, noiseKey: KeyPair) => {
+		processHandshake: ({ serverHello }: waproto.HandshakeMessage, noiseKey: KeyPair) => {
 			// AunuBaileys (1.0.74, HB-102 + 1.0.79 addendum,
 			// re-applied P3b): a partial creds restore can reach the
 			// handshake with noiseKey missing or wrong-typed —
@@ -266,7 +266,7 @@ export const makeNoiseHandler = ({
 
 			const certDecoded = decrypt(serverHello!.payload!)
 
-			const { intermediate: certIntermediate, leaf } = proto.CertChain.decode(certDecoded)
+			const { intermediate: certIntermediate, leaf } = waproto.CertChain.decode(certDecoded)
 			// leaf
 			if (!leaf?.details || !leaf?.signature) {
 				throw new Boom('invalid noise leaf certificate', { statusCode: 400 })
@@ -276,7 +276,7 @@ export const makeNoiseHandler = ({
 				throw new Boom('invalid noise intermediate certificate', { statusCode: 400 })
 			}
 
-			const details = proto.CertChain.NoiseCertificate.Details.decode(certIntermediate.details)
+			const details = waproto.CertChain.NoiseCertificate.Details.decode(certIntermediate.details)
 
 			const { issuerSerial } = details
 

@@ -1,10 +1,10 @@
 import Long from 'long'
 import '../index.js'
-import { proto } from '../../WAProto/index.js'
+import { waproto } from '../../WAProto/index.js'
 
 describe('proto serialization', () => {
 	it('handles string values in long fields gracefully', () => {
-		const message = proto.WebMessageInfo.fromObject({
+		const message = waproto.WebMessageInfo.fromObject({
 			key: {
 				remoteJid: '123@s.whatsapp.net',
 				id: 'ABC123',
@@ -31,7 +31,7 @@ describe('proto serialization', () => {
 	})
 
 	it('converts Long objects to strings correctly via BigInt fast path', () => {
-		const message = proto.WebMessageInfo.fromObject({
+		const message = waproto.WebMessageInfo.fromObject({
 			key: {
 				remoteJid: '123@s.whatsapp.net',
 				id: 'ABC123',
@@ -51,7 +51,7 @@ describe('proto serialization', () => {
 	})
 
 	it('handles large unsigned Long values (> MAX_SAFE_INTEGER)', () => {
-		const message = proto.WebMessageInfo.fromObject({
+		const message = waproto.WebMessageInfo.fromObject({
 			key: {
 				remoteJid: '123@s.whatsapp.net',
 				id: 'ABC123',
@@ -71,7 +71,7 @@ describe('proto serialization', () => {
 	})
 
 	it('handles zero and small Long values', () => {
-		const message = proto.WebMessageInfo.fromObject({
+		const message = waproto.WebMessageInfo.fromObject({
 			key: {
 				remoteJid: '123@s.whatsapp.net',
 				id: 'ABC123',
@@ -91,7 +91,7 @@ describe('proto serialization', () => {
 	})
 
 	it('roundtrips encode/decode with Long fields preserving values', () => {
-		const original = proto.WebMessageInfo.fromObject({
+		const original = waproto.WebMessageInfo.fromObject({
 			key: {
 				remoteJid: '123@s.whatsapp.net',
 				id: 'ABC123',
@@ -105,8 +105,8 @@ describe('proto serialization', () => {
 			}
 		})
 
-		const encoded = proto.WebMessageInfo.encode(original).finish()
-		const decoded = proto.WebMessageInfo.decode(encoded)
+		const encoded = waproto.WebMessageInfo.encode(original).finish()
+		const decoded = waproto.WebMessageInfo.decode(encoded)
 		const json = decoded.toJSON()
 
 		expect(json.messageTimestamp).toBe('1700000000')

@@ -17,7 +17,7 @@ import type {
 } from '../Types'
 import { type BinaryNode, getBinaryNodeChild, getBinaryNodeChildren, getBinaryNodeChildString } from '../WABinary'
 import { generateMessageIDV2 } from './generics'
-import { getStream, getUrlFromDirectPath } from './messages-media'
+import { getStream, getUrlFromDirectPath, sanitizeMediaTimeoutMs } from './messages-media'
 
 export const parseCatalogNode = (node: BinaryNode) => {
 	const catalogNode = getBinaryNodeChild(node, 'product_catalog')
@@ -262,9 +262,12 @@ export const uploadingNecessaryImages = async (
 			// a trickling catalog image hung productCreate /
 			// productUpdate forever. Bound the download with the
 			// same budget.
+			// AunuBaileys (2.3.0, HB-392 addendum): the budget is
+			// sanitised — a raw NaN/negative threw a synchronous
+			// RangeError and 0 aborted every healthy image fetch.
 			const { stream } = await getStream(img, {
 				maxContentLength: MAX_PRODUCT_IMAGE_BYTES,
-				signal: AbortSignal.timeout(timeoutMs)
+				signal: AbortSignal.timeout(sanitizeMediaTimeoutMs(timeoutMs, 30_000))
 			})
 			const hasher = createHash('sha256')
 

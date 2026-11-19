@@ -1,4 +1,4 @@
-import type { proto } from '../../WAProto/index.js'
+import type { waproto } from '../../WAProto/index.js'
 import type { AccountSettings } from './Auth'
 import type { QuickReplyAction } from './Bussines.js'
 import type { BufferedEventData } from './Events'
@@ -45,21 +45,30 @@ export type BotListInfo = {
 }
 
 export type ChatMutation = {
-	syncAction: proto.ISyncActionData
+	syncAction: waproto.ISyncActionData
 	index: string[]
 }
 
 export type WAPatchCreate = {
-	syncAction: proto.ISyncActionValue
+	syncAction: waproto.ISyncActionValue
 	index: string[]
 	type: WAPatchName
 	apiVersion: number
-	operation: proto.SyncdMutation.SyncdOperation
+	operation: waproto.SyncdMutation.SyncdOperation
 }
 
-export type Chat = proto.IConversation & {
+export type Chat = waproto.IConversation & {
 	/** unix timestamp of when the last message was received in the chat */
 	lastMessageRecvTimestamp?: number
+	/**
+	 * whether the chat is locked (chat lock). Mirrors the proto
+	 * Conversation field of the same name; written by the in-memory
+	 * store from the `chats.lock` event (lockChatAction sync) —
+	 * declared here so the field is part of the documented Chat
+	 * surface instead of only reachable through the proto type.
+	 * AunuBaileys (2.3.0, HB-397).
+	 */
+	locked?: boolean | null
 }
 
 export type ChatUpdate = Partial<
@@ -83,7 +92,7 @@ export type ChatUpdate = Partial<
  * the last messages in a chat, sorted reverse-chronologically. That is, the latest message should be first in the chat
  * for MD modifications, the last message in the array (i.e. the earlist message) must be the last message recv in the chat
  * */
-export type LastMessageList = MinimalMessage[] | proto.SyncActionValue.ISyncActionMessageRange
+export type LastMessageList = MinimalMessage[] | waproto.SyncActionValue.ISyncActionMessageRange
 
 export type ChatModification =
 	| {
@@ -114,8 +123,8 @@ export type ChatModification =
 			lastMessages: LastMessageList
 	  }
 	| { delete: true; lastMessages: LastMessageList }
-	| { contact: proto.SyncActionValue.IContactAction | null }
-	| { disableLinkPreviews: proto.SyncActionValue.IPrivacySettingDisableLinkPreviewsAction }
+	| { contact: waproto.SyncActionValue.IContactAction | null }
+	| { disableLinkPreviews: waproto.SyncActionValue.IPrivacySettingDisableLinkPreviewsAction }
 	// Label
 	| { addLabel: LabelActionBody }
 	// Label assosiation

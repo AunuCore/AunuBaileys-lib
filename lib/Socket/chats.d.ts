@@ -1,5 +1,5 @@
 import { Boom } from '@hapi/boom';
-import { proto } from '../../WAProto/index.js';
+import { waproto } from '../../WAProto/index.js';
 import type { BotListInfo, CacheStore, ChatModification, MessageUpsertType, SocketConfig, WABusinessProfile, WAMediaUpload, WAMessage, WAPatchCreate, WAPresence, WAPrivacyCallValue, WAPrivacyGroupAddValue, WAPrivacyMessagesValue, WAPrivacyOnlineValue, WAPrivacyValue, WAReadReceiptsValue } from '../Types/index.js';
 import type { QuickReplyAction } from '../Types/Bussines.js';
 import type { LabelActionBody } from '../Types/Label.js';
@@ -64,7 +64,7 @@ export declare const makeChatsSocket: (config: SocketConfig) => {
     resyncAppState: (collections: readonly ("critical_unblock_low" | "regular_high" | "regular_low" | "critical_block" | "regular")[], isInitialSync: boolean) => Promise<void>;
     chatModify: (mod: ChatModification, jid: string) => Promise<void>;
     cleanDirtyBits: (type: "account_sync" | "groups", fromTimestamp?: number | string) => Promise<void>;
-    addOrEditContact: (jid: string, contact: proto.SyncActionValue.IContactAction) => Promise<void>;
+    addOrEditContact: (jid: string, contact: waproto.SyncActionValue.IContactAction) => Promise<void>;
     removeContact: (jid: string) => Promise<void>;
     placeholderResendCache: CacheStore;
     addLabel: (jid: string, labels: LabelActionBody) => Promise<void>;
@@ -122,7 +122,12 @@ export declare const makeChatsSocket: (config: SocketConfig) => {
     };
     authState: {
         creds: import("../Types/index.js").AuthenticationCreds;
-        keys: import("../Types/index.js").SignalKeyStoreWithTransaction;
+        keys: import("../Types/index.js").SignalKeyStore & {
+            isInTransaction: () => boolean;
+            transaction<T>(exec: () => Promise<T>, key: string): Promise<T>;
+        } & {
+            disposeTransactionStorage: () => void;
+        };
     };
     aunuLid: import("../index.js").LIDStore;
     aunuIgnoreFilter: {

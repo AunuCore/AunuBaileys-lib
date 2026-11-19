@@ -7,8 +7,10 @@ export declare class LIDMappingStore {
     private pnToLIDFunc?;
     private readonly inflightLIDLookups;
     private readonly inflightPNLookups;
+    private readonly storeMutex;
     constructor(keys: SignalKeyStoreWithTransaction, logger: ILogger, pnToLIDFunc?: (jids: string[]) => Promise<LIDMapping[] | undefined>);
     storeLIDPNMappings(pairs: LIDMapping[]): Promise<void>;
+    private storeLIDPNMappingsInner;
     getLIDForPN(pn: string): Promise<string | null>;
     getLIDsForPNs(pns: string[]): Promise<LIDMapping[] | null>;
     private _getLIDsForPNsImpl;

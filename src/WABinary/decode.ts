@@ -86,7 +86,13 @@ export const decodeDecompressedBinaryNode = (
 		let val = 0
 		for (let i = 0; i < n; i++) {
 			const shift = littleEndian ? i : n - 1 - i
-			val |= next()! << (shift * 8)
+			// AunuBaileys (2.3.0, HB-385): JS bitwise ops are SIGNED
+			// 32-bit — a first byte >= 0x80 at shift 24 made the
+			// BINARY_32 length negative, the decoder cursor ran
+			// backwards and the value silently decoded as empty.
+			// Keep the accumulator unsigned so a poisoned length is
+			// huge and checkEOS rejects it as end-of-stream.
+			val = (val | (next()! << (shift * 8))) >>> 0
 		}
 
 		return val

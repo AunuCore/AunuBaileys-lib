@@ -1,4 +1,4 @@
-import { proto } from '../../WAProto/index.js';
+import { waproto } from '../../WAProto/index.js';
 import type { SocketConfig } from '../Types/index.js';
 export declare const UNAUTHORIZED_CODES: number[];
 export declare const DEFAULT_ORIGIN = "https://web.whatsapp.com";
@@ -27,7 +27,7 @@ export declare const WA_CERT_DETAILS: {
     ISSUER: string;
     PUBLIC_KEY: Buffer<ArrayBuffer>;
 };
-export declare const PROCESSABLE_HISTORY_TYPES: proto.HistorySync.HistorySyncType[];
+export declare const PROCESSABLE_HISTORY_TYPES: waproto.HistorySync.HistorySyncType[];
 export declare const DEFAULT_CACHE_TTLS: {
     SIGNAL_STORE: number;
     MSG_RETRY: number;

@@ -1,5 +1,5 @@
 import { Boom } from '@hapi/boom'
-import { proto } from '../../WAProto/index.js'
+import { waproto } from '../../WAProto/index.js'
 import { DEFAULT_CACHE_TTLS, HISTORY_SYNC_PAUSED_TIMEOUT_MS, PROCESSABLE_HISTORY_TYPES } from '../Defaults'
 import type {
 	BotListInfo,
@@ -591,11 +591,11 @@ export const makeChatsSocket = (config: SocketConfig) => {
 
 	const resyncAppState = ev.createBufferedFunction(
 		async (collections: readonly WAPatchName[], isInitialSync: boolean) => {
-			const appStateSyncKeyCache = new Map<string, proto.Message.IAppStateSyncKeyData | null>()
+			const appStateSyncKeyCache = new Map<string, waproto.Message.IAppStateSyncKeyData | null>()
 
 			const getCachedAppStateSyncKey = async (
 				keyId: string
-			): Promise<proto.Message.IAppStateSyncKeyData | null | undefined> => {
+			): Promise<waproto.Message.IAppStateSyncKeyData | null | undefined> => {
 				if (appStateSyncKeyCache.has(keyId)) {
 					return appStateSyncKeyCache.get(keyId) ?? undefined
 				}
@@ -1018,7 +1018,7 @@ export const makeChatsSocket = (config: SocketConfig) => {
 		}
 
 		let initial: LTHashState
-		let encodeResult: { patch: proto.ISyncdPatch; state: LTHashState }
+		let encodeResult: { patch: waproto.ISyncdPatch; state: LTHashState }
 
 		await appStatePatchMutex.mutex(async () => {
 			await authState.keys.transaction(async () => {
@@ -1055,7 +1055,7 @@ export const makeChatsSocket = (config: SocketConfig) => {
 										{
 											tag: 'patch',
 											attrs: {},
-											content: proto.SyncdPatch.encode(patch).finish()
+											content: waproto.SyncdPatch.encode(patch).finish()
 										}
 									]
 								}
@@ -1189,7 +1189,7 @@ export const makeChatsSocket = (config: SocketConfig) => {
 	/**
 	 * Add or Edit Contact
 	 */
-	const addOrEditContact = (jid: string, contact: proto.SyncActionValue.IContactAction) => {
+	const addOrEditContact = (jid: string, contact: waproto.SyncActionValue.IContactAction) => {
 		return chatModify(
 			{
 				contact
@@ -1348,15 +1348,15 @@ export const makeChatsSocket = (config: SocketConfig) => {
 		const historyMsg = getHistoryMsg(msg.message!)
 		const shouldProcessHistoryMsg = historyMsg
 			? shouldSyncHistoryMessage(historyMsg) &&
-				PROCESSABLE_HISTORY_TYPES.includes(historyMsg.syncType! as proto.HistorySync.HistorySyncType)
+				PROCESSABLE_HISTORY_TYPES.includes(historyMsg.syncType! as waproto.HistorySync.HistorySyncType)
 			: false
 
 		if (historyMsg && shouldProcessHistoryMsg) {
-			const syncType = historyMsg.syncType as proto.HistorySync.HistorySyncType
+			const syncType = historyMsg.syncType as waproto.HistorySync.HistorySyncType
 
 			// INITIAL_BOOTSTRAP — fire immediately, no progress check (same as WA Web K function)
 			if (
-				syncType === proto.HistorySync.HistorySyncType.INITIAL_BOOTSTRAP &&
+				syncType === waproto.HistorySync.HistorySyncType.INITIAL_BOOTSTRAP &&
 				!historySyncStatus.initialBootstrapComplete
 			) {
 				historySyncStatus.initialBootstrapComplete = true
@@ -1369,7 +1369,7 @@ export const makeChatsSocket = (config: SocketConfig) => {
 
 			// RECENT with progress === 100 — explicit completion
 			if (
-				syncType === proto.HistorySync.HistorySyncType.RECENT &&
+				syncType === waproto.HistorySync.HistorySyncType.RECENT &&
 				historyMsg.progress === 100 &&
 				!historySyncStatus.recentSyncComplete
 			) {
@@ -1384,13 +1384,13 @@ export const makeChatsSocket = (config: SocketConfig) => {
 			}
 
 			// Reset 120s paused timeout on any RECENT chunk (like WA Web's handleChunkProgress)
-			if (syncType === proto.HistorySync.HistorySyncType.RECENT && !historySyncStatus.recentSyncComplete) {
+			if (syncType === waproto.HistorySync.HistorySyncType.RECENT && !historySyncStatus.recentSyncComplete) {
 				clearTimeout(historySyncPausedTimeout)
 				historySyncPausedTimeout = setTimeout(() => {
 					if (!historySyncStatus.recentSyncComplete) {
 						historySyncStatus.recentSyncComplete = true
 						ev.emit('messaging-history.status', {
-							syncType: proto.HistorySync.HistorySyncType.RECENT,
+							syncType: waproto.HistorySync.HistorySyncType.RECENT,
 							status: 'paused',
 							explicit: false
 						})
@@ -1553,8 +1553,8 @@ export const makeChatsSocket = (config: SocketConfig) => {
 		ev.buffer()
 
 		const willSyncHistory = shouldSyncHistoryMessage(
-			proto.Message.HistorySyncNotification.create({
-				syncType: proto.HistorySync.HistorySyncType.RECENT
+			waproto.Message.HistorySyncNotification.create({
+				syncType: waproto.HistorySync.HistorySyncType.RECENT
 			})
 		)
 

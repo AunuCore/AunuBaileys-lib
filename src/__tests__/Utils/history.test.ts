@@ -1,11 +1,11 @@
-import { proto } from '../../../WAProto/index.js'
+import { waproto } from '../../../WAProto/index.js'
 import { processHistoryMessage } from '../../Utils/history'
 
 describe('processHistoryMessage', () => {
 	describe('phoneNumberToLidMappings extraction', () => {
 		it('should extract LID-PN mappings from history sync payload', () => {
-			const historySync: proto.IHistorySync = {
-				syncType: proto.HistorySync.HistorySyncType.INITIAL_BOOTSTRAP,
+			const historySync: waproto.IHistorySync = {
+				syncType: waproto.HistorySync.HistorySyncType.INITIAL_BOOTSTRAP,
 				conversations: [],
 				phoneNumberToLidMappings: [
 					{ lidJid: '11111111111111@lid', pnJid: '1234567890123@s.whatsapp.net' },
@@ -22,8 +22,8 @@ describe('processHistoryMessage', () => {
 		})
 
 		it('should skip mappings with missing lidJid or pnJid', () => {
-			const historySync: proto.IHistorySync = {
-				syncType: proto.HistorySync.HistorySyncType.RECENT,
+			const historySync: waproto.IHistorySync = {
+				syncType: waproto.HistorySync.HistorySyncType.RECENT,
 				conversations: [],
 				phoneNumberToLidMappings: [
 					{ lidJid: undefined, pnJid: '1234567890123@s.whatsapp.net' },
@@ -38,8 +38,8 @@ describe('processHistoryMessage', () => {
 		})
 
 		it('should return empty array when no mappings exist', () => {
-			const historySync: proto.IHistorySync = {
-				syncType: proto.HistorySync.HistorySyncType.INITIAL_BOOTSTRAP,
+			const historySync: waproto.IHistorySync = {
+				syncType: waproto.HistorySync.HistorySyncType.INITIAL_BOOTSTRAP,
 				conversations: []
 			}
 
@@ -49,10 +49,10 @@ describe('processHistoryMessage', () => {
 		})
 
 		it('should process mappings regardless of sync type', () => {
-			const syncTypes = [proto.HistorySync.HistorySyncType.PUSH_NAME, proto.HistorySync.HistorySyncType.ON_DEMAND]
+			const syncTypes = [waproto.HistorySync.HistorySyncType.PUSH_NAME, waproto.HistorySync.HistorySyncType.ON_DEMAND]
 
 			for (const syncType of syncTypes) {
-				const historySync: proto.IHistorySync = {
+				const historySync: waproto.IHistorySync = {
 					syncType,
 					conversations: [],
 					pushnames: [],
@@ -68,8 +68,8 @@ describe('processHistoryMessage', () => {
 
 	describe('conversations processing', () => {
 		it('should extract contacts with LID and PN from conversations', () => {
-			const historySync: proto.IHistorySync = {
-				syncType: proto.HistorySync.HistorySyncType.INITIAL_BOOTSTRAP,
+			const historySync: waproto.IHistorySync = {
+				syncType: waproto.HistorySync.HistorySyncType.INITIAL_BOOTSTRAP,
 				conversations: [
 					{
 						id: '1234567890123@s.whatsapp.net',
@@ -94,8 +94,8 @@ describe('processHistoryMessage', () => {
 
 	describe('LID-PN mapping extraction from conversations', () => {
 		it('should extract mapping when chat.id is LID and pnJid exists', () => {
-			const historySync: proto.IHistorySync = {
-				syncType: proto.HistorySync.HistorySyncType.INITIAL_BOOTSTRAP,
+			const historySync: waproto.IHistorySync = {
+				syncType: waproto.HistorySync.HistorySyncType.INITIAL_BOOTSTRAP,
 				conversations: [
 					{
 						id: '11111111111111@lid',
@@ -113,8 +113,8 @@ describe('processHistoryMessage', () => {
 		})
 
 		it('should extract mapping when chat.id is PN and lidJid exists', () => {
-			const historySync: proto.IHistorySync = {
-				syncType: proto.HistorySync.HistorySyncType.INITIAL_BOOTSTRAP,
+			const historySync: waproto.IHistorySync = {
+				syncType: waproto.HistorySync.HistorySyncType.INITIAL_BOOTSTRAP,
 				conversations: [
 					{
 						id: '1234567890123@s.whatsapp.net',
@@ -132,8 +132,8 @@ describe('processHistoryMessage', () => {
 		})
 
 		it('should not extract mapping for group chats', () => {
-			const historySync: proto.IHistorySync = {
-				syncType: proto.HistorySync.HistorySyncType.INITIAL_BOOTSTRAP,
+			const historySync: waproto.IHistorySync = {
+				syncType: waproto.HistorySync.HistorySyncType.INITIAL_BOOTSTRAP,
 				conversations: [
 					{
 						id: '123456789012345678@g.us',
@@ -149,8 +149,8 @@ describe('processHistoryMessage', () => {
 		})
 
 		it('should combine mappings from phoneNumberToLidMappings and conversations', () => {
-			const historySync: proto.IHistorySync = {
-				syncType: proto.HistorySync.HistorySyncType.INITIAL_BOOTSTRAP,
+			const historySync: waproto.IHistorySync = {
+				syncType: waproto.HistorySync.HistorySyncType.INITIAL_BOOTSTRAP,
 				phoneNumberToLidMappings: [{ lidJid: '11111111111111@lid', pnJid: '1111111111111@s.whatsapp.net' }],
 				conversations: [
 					{
@@ -174,8 +174,8 @@ describe('processHistoryMessage', () => {
 		})
 
 		it('should extract mapping for hosted LID users', () => {
-			const historySync: proto.IHistorySync = {
-				syncType: proto.HistorySync.HistorySyncType.INITIAL_BOOTSTRAP,
+			const historySync: waproto.IHistorySync = {
+				syncType: waproto.HistorySync.HistorySyncType.INITIAL_BOOTSTRAP,
 				conversations: [
 					{
 						id: '11111111111111@hosted.lid',
@@ -193,8 +193,8 @@ describe('processHistoryMessage', () => {
 		})
 
 		it('should extract mapping for hosted PN users', () => {
-			const historySync: proto.IHistorySync = {
-				syncType: proto.HistorySync.HistorySyncType.INITIAL_BOOTSTRAP,
+			const historySync: waproto.IHistorySync = {
+				syncType: waproto.HistorySync.HistorySyncType.INITIAL_BOOTSTRAP,
 				conversations: [
 					{
 						id: '1234567890123@hosted',
@@ -214,8 +214,8 @@ describe('processHistoryMessage', () => {
 		it('should extract mapping from userReceipt when pnJid is missing and chat.id is LID', () => {
 			// Based on real-world case: LID chat without pnJid but userReceipt contains PN
 			// See: https://github.com/WhiskeySockets/Baileys/pull/2282#issuecomment-3777941679
-			const historySync: proto.IHistorySync = {
-				syncType: proto.HistorySync.HistorySyncType.INITIAL_BOOTSTRAP,
+			const historySync: waproto.IHistorySync = {
+				syncType: waproto.HistorySync.HistorySyncType.INITIAL_BOOTSTRAP,
 				conversations: [
 					{
 						id: '211071956705386@lid',
@@ -252,8 +252,8 @@ describe('processHistoryMessage', () => {
 		})
 
 		it('should not extract mapping from userReceipt when pnJid already exists', () => {
-			const historySync: proto.IHistorySync = {
-				syncType: proto.HistorySync.HistorySyncType.INITIAL_BOOTSTRAP,
+			const historySync: waproto.IHistorySync = {
+				syncType: waproto.HistorySync.HistorySyncType.INITIAL_BOOTSTRAP,
 				conversations: [
 					{
 						id: '211071956705386@lid',
@@ -293,8 +293,8 @@ describe('processHistoryMessage', () => {
 		})
 
 		it('should not extract mapping from userReceipt when fromMe is false', () => {
-			const historySync: proto.IHistorySync = {
-				syncType: proto.HistorySync.HistorySyncType.INITIAL_BOOTSTRAP,
+			const historySync: waproto.IHistorySync = {
+				syncType: waproto.HistorySync.HistorySyncType.INITIAL_BOOTSTRAP,
 				conversations: [
 					{
 						id: '211071956705386@lid',
@@ -328,8 +328,8 @@ describe('processHistoryMessage', () => {
 		})
 
 		it('should not extract mapping from userReceipt when userJid is also a LID', () => {
-			const historySync: proto.IHistorySync = {
-				syncType: proto.HistorySync.HistorySyncType.INITIAL_BOOTSTRAP,
+			const historySync: waproto.IHistorySync = {
+				syncType: waproto.HistorySync.HistorySyncType.INITIAL_BOOTSTRAP,
 				conversations: [
 					{
 						id: '211071956705386@lid',
@@ -372,8 +372,8 @@ describe('processHistoryMessage', () => {
 				}
 			]
 
-			const historySync: proto.IHistorySync = {
-				syncType: proto.HistorySync.HistorySyncType.INITIAL_BOOTSTRAP,
+			const historySync: waproto.IHistorySync = {
+				syncType: waproto.HistorySync.HistorySyncType.INITIAL_BOOTSTRAP,
 				conversations: [],
 				pastParticipants
 			}
@@ -384,8 +384,8 @@ describe('processHistoryMessage', () => {
 		})
 
 		it('should return undefined pastParticipants when not present in payload', () => {
-			const historySync: proto.IHistorySync = {
-				syncType: proto.HistorySync.HistorySyncType.INITIAL_BOOTSTRAP,
+			const historySync: waproto.IHistorySync = {
+				syncType: waproto.HistorySync.HistorySyncType.INITIAL_BOOTSTRAP,
 				conversations: []
 			}
 
@@ -395,8 +395,8 @@ describe('processHistoryMessage', () => {
 		})
 
 		it('should pass through empty pastParticipants array', () => {
-			const historySync: proto.IHistorySync = {
-				syncType: proto.HistorySync.HistorySyncType.INITIAL_BOOTSTRAP,
+			const historySync: waproto.IHistorySync = {
+				syncType: waproto.HistorySync.HistorySyncType.INITIAL_BOOTSTRAP,
 				conversations: [],
 				pastParticipants: []
 			}
@@ -418,8 +418,8 @@ describe('processHistoryMessage', () => {
 				}
 			]
 
-			const historySync: proto.IHistorySync = {
-				syncType: proto.HistorySync.HistorySyncType.RECENT,
+			const historySync: waproto.IHistorySync = {
+				syncType: waproto.HistorySync.HistorySyncType.RECENT,
 				conversations: [],
 				pastParticipants
 			}

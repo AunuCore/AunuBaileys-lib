@@ -1,5 +1,5 @@
 import { Boom } from '@hapi/boom';
-import { proto } from '../../WAProto/index.js';
+import { waproto } from '../../WAProto/index.js';
 import { type GroupMetadata, type ParticipantAction, type SocketConfig, type WAMessageKey } from '../Types/index.js';
 import { type BinaryNode } from '../WABinary/index.js';
 export declare const makeCommunitiesSocket: (config: SocketConfig) => {
@@ -49,7 +49,7 @@ export declare const makeCommunitiesSocket: (config: SocketConfig) => {
      * @param key the key of the invite message, or optionally only provide the jid of the person who sent the invite
      * @param inviteMessage the message to accept
      */
-    communityAcceptInviteV4: (key: string | WAMessageKey, inviteMessage: proto.Message.IGroupInviteMessage) => Promise<any>;
+    communityAcceptInviteV4: (key: string | WAMessageKey, inviteMessage: waproto.Message.IGroupInviteMessage) => Promise<any>;
     communityGetInviteInfo: (code: string) => Promise<GroupMetadata>;
     communityToggleEphemeral: (jid: string, ephemeralExpiration: number) => Promise<void>;
     communitySettingUpdate: (jid: string, setting: "announcement" | "not_announcement" | "locked" | "unlocked") => Promise<void>;
@@ -87,7 +87,7 @@ export declare const makeCommunitiesSocket: (config: SocketConfig) => {
     };
     issuePrivacyTokens: (jids: string[], timestamp?: number) => Promise<any>;
     assertSessions: (jids: string[], force?: boolean) => Promise<boolean>;
-    relayMessage: (jid: string, message: proto.IMessage, { messageId: msgId, participant, additionalAttributes, additionalNodes, useUserDevicesCache, useCachedGroupMetadata, statusJidList }: import("../Types/index.js").MessageRelayOptions) => Promise<string>;
+    relayMessage: (jid: string, message: waproto.IMessage, { messageId: msgId, participant, additionalAttributes, additionalNodes, useUserDevicesCache, useCachedGroupMetadata, statusJidList }: import("../Types/index.js").MessageRelayOptions) => Promise<string>;
     sendReceipt: (jid: string, participant: string | undefined, messageIds: string[], type: import("../Types/index.js").MessageReceiptType) => Promise<void>;
     sendReceipts: (keys: WAMessageKey[], type: import("../Types/index.js").MessageReceiptType) => Promise<void>;
     readMessages: (keys: WAMessageKey[]) => Promise<void>;
@@ -97,8 +97,8 @@ export declare const makeCommunitiesSocket: (config: SocketConfig) => {
     fetchPrivacySettings: (force?: boolean) => Promise<{
         [_: string]: string;
     } | undefined>;
-    sendPeerDataOperationMessage: (pdoMessage: proto.Message.IPeerDataOperationRequestMessage) => Promise<string>;
-    createParticipantNodes: (recipientJids: string[], message: proto.IMessage, extraAttrs?: BinaryNode["attrs"], dsmMessage?: proto.IMessage) => Promise<{
+    sendPeerDataOperationMessage: (pdoMessage: waproto.Message.IPeerDataOperationRequestMessage) => Promise<string>;
+    createParticipantNodes: (recipientJids: string[], message: waproto.IMessage, extraAttrs?: BinaryNode["attrs"], dsmMessage?: waproto.IMessage) => Promise<{
         nodes: BinaryNode[];
         shouldIncludeDeviceIdentity: boolean;
     }>;
@@ -153,7 +153,7 @@ export declare const makeCommunitiesSocket: (config: SocketConfig) => {
     groupRevokeInvite: (jid: string) => Promise<string | undefined>;
     groupAcceptInvite: (code: string) => Promise<string | undefined>;
     groupRevokeInviteV4: (groupJid: string, invitedJid: string) => Promise<boolean>;
-    groupAcceptInviteV4: (key: string | WAMessageKey, inviteMessage: proto.Message.IGroupInviteMessage) => Promise<any>;
+    groupAcceptInviteV4: (key: string | WAMessageKey, inviteMessage: waproto.Message.IGroupInviteMessage) => Promise<any>;
     groupGetInviteInfo: (code: string) => Promise<GroupMetadata>;
     groupToggleEphemeral: (jid: string, ephemeralExpiration: number) => Promise<void>;
     groupSettingUpdate: (jid: string, setting: "announcement" | "not_announcement" | "locked" | "unlocked") => Promise<void>;
@@ -213,7 +213,7 @@ export declare const makeCommunitiesSocket: (config: SocketConfig) => {
     resyncAppState: (collections: readonly ("critical_unblock_low" | "regular_high" | "regular_low" | "critical_block" | "regular")[], isInitialSync: boolean) => Promise<void>;
     chatModify: (mod: import("../Types/index.js").ChatModification, jid: string) => Promise<void>;
     cleanDirtyBits: (type: "account_sync" | "groups", fromTimestamp?: number | string) => Promise<void>;
-    addOrEditContact: (jid: string, contact: proto.SyncActionValue.IContactAction) => Promise<void>;
+    addOrEditContact: (jid: string, contact: waproto.SyncActionValue.IContactAction) => Promise<void>;
     removeContact: (jid: string) => Promise<void>;
     placeholderResendCache: import("../Types/index.js").CacheStore;
     addLabel: (jid: string, labels: import("../Types/Label.js").LabelActionBody) => Promise<void>;
@@ -271,7 +271,12 @@ export declare const makeCommunitiesSocket: (config: SocketConfig) => {
     };
     authState: {
         creds: import("../Types/index.js").AuthenticationCreds;
-        keys: import("../Types/index.js").SignalKeyStoreWithTransaction;
+        keys: import("../Types/index.js").SignalKeyStore & {
+            isInTransaction: () => boolean;
+            transaction<T>(exec: () => Promise<T>, key: string): Promise<T>;
+        } & {
+            disposeTransactionStorage: () => void;
+        };
     };
     aunuLid: import("../index.js").LIDStore;
     aunuIgnoreFilter: {

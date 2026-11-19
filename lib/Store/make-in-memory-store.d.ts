@@ -1,4 +1,4 @@
-import { proto } from '../../WAProto/index.js';
+import { waproto } from '../../WAProto/index.js';
 import type { Comparable } from './keyed-db.js';
 import type makeWASocket from '../Socket/index.js';
 import type { BaileysEventEmitter, Chat, ConnectionState, Contact, GroupMetadata, PresenceData, WAMessage, WAMessageCursor, WAMessageKey } from '../Types/index.js';
@@ -74,7 +74,7 @@ declare const makeInMemoryStore: ({ logger: _logger, chatKey, labelAssociationKe
     mostRecentMessage: (jid: string) => Promise<WAMessage | undefined>;
     fetchImageUrl: (jid: string, sock: WASocket | undefined) => Promise<any>;
     fetchGroupMetadata: (jid: string, sock: WASocket | undefined) => Promise<GroupMetadata>;
-    fetchMessageReceipts: ({ remoteJid, id }: WAMessageKey) => Promise<proto.IUserReceipt[] | null | undefined>;
+    fetchMessageReceipts: ({ remoteJid, id }: WAMessageKey) => Promise<waproto.IUserReceipt[] | null | undefined>;
     toJSON: () => {
         chats: any;
         contacts: {

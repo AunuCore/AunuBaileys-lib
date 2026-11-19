@@ -167,7 +167,12 @@ export declare const makeNewsletterSocket: (config: SocketConfig) => {
     };
     authState: {
         creds: import("../index.js").AuthenticationCreds;
-        keys: import("../index.js").SignalKeyStoreWithTransaction;
+        keys: import("../index.js").SignalKeyStore & {
+            isInTransaction: () => boolean;
+            transaction<T>(exec: () => Promise<T>, key: string): Promise<T>;
+        } & {
+            disposeTransactionStorage: () => void;
+        };
     };
     aunuLid: import("../index.js").LIDStore;
     aunuIgnoreFilter: {

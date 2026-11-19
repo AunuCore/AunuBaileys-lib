@@ -1,5 +1,5 @@
 import { InternalCache } from './internal-cache'
-import type { proto } from '../../WAProto/index.js'
+import type { waproto } from '../../WAProto/index.js'
 import type { ILogger } from './logger'
 
 /** Number of sent messages to cache in memory for handling retry receipts */
@@ -16,7 +16,7 @@ export interface RecentMessageKey {
 }
 
 export interface RecentMessage {
-	message: proto.IMessage
+	message: waproto.IMessage
 	timestamp: number
 }
 
@@ -109,7 +109,7 @@ export class MessageRetryManager {
 	/**
 	 * Add a recent message to the cache for retry handling
 	 */
-	addRecentMessage(to: string, id: string, message: proto.IMessage): void {
+	addRecentMessage(to: string, id: string, message: waproto.IMessage): void {
 		const key: RecentMessageKey = { to, id }
 		const keyStr = this.keyToString(key)
 

@@ -1,12 +1,12 @@
 import { randomBytes } from 'crypto'
-import { proto } from '../../../WAProto'
+import { waproto } from '../../../WAProto'
 import type { WAMessageKey } from '../../Types'
 import { getMessageReportingToken, shouldIncludeReportingToken } from '../../Utils/reporting-utils'
 import type { BinaryNode } from '../../WABinary'
 
 describe('Reporting Utils', () => {
 	describe('shouldIncludeReportingToken', () => {
-		const includedMessages: [string, proto.IMessage][] = [
+		const includedMessages: [string, waproto.IMessage][] = [
 			['conversation', { conversation: 'Hello' }],
 			['extendedTextMessage', { extendedTextMessage: { text: 'Link' } }],
 			['imageMessage', { imageMessage: { url: 'url', mimetype: 'image/jpeg' } }],
@@ -16,7 +16,7 @@ describe('Reporting Utils', () => {
 			['stickerMessage', { stickerMessage: { url: 'url', mimetype: 'image/webp' } }]
 		]
 
-		const excludedMessages: [string, proto.IMessage][] = [
+		const excludedMessages: [string, waproto.IMessage][] = [
 			['reactionMessage', { reactionMessage: { key: { id: 'id' }, text: '👍' } }],
 			[
 				'encReactionMessage',
@@ -62,12 +62,12 @@ describe('Reporting Utils', () => {
 			...overrides
 		})
 
-		const withSecret = (content: proto.IMessage, secret = randomBytes(32)): proto.IMessage => ({
+		const withSecret = (content: waproto.IMessage, secret = randomBytes(32)): waproto.IMessage => ({
 			...content,
 			messageContextInfo: { messageSecret: secret }
 		})
 
-		const encode = (msg: proto.IMessage) => Buffer.from(proto.Message.encode(msg).finish())
+		const encode = (msg: waproto.IMessage) => Buffer.from(waproto.Message.encode(msg).finish())
 		const getToken = (result: BinaryNode | null): Buffer | undefined => {
 			const content = result?.content
 			if (Array.isArray(content) && content[0]) {
@@ -78,7 +78,7 @@ describe('Reporting Utils', () => {
 		}
 
 		it('should return null when message secret is missing', async () => {
-			const msg: proto.IMessage = { conversation: 'Hello' }
+			const msg: waproto.IMessage = { conversation: 'Hello' }
 			expect(await getMessageReportingToken(encode(msg), msg, createKey())).toBeNull()
 		})
 
@@ -109,7 +109,7 @@ describe('Reporting Utils', () => {
 			expect(token1).toEqual(token2)
 		})
 
-		const uniquenessTests: [string, () => [proto.IMessage, WAMessageKey, proto.IMessage, WAMessageKey]][] = [
+		const uniquenessTests: [string, () => [waproto.IMessage, WAMessageKey, waproto.IMessage, WAMessageKey]][] = [
 			[
 				'different secrets',
 				() => {

@@ -1,4 +1,5 @@
 import { InternalCache } from '../Utils/internal-cache'
+import { Mutex } from '../Utils/mutex'
 import type { LIDMapping, SignalKeyStoreWithTransaction } from '../Types'
 import type { ILogger } from '../Utils/logger'
 import { isHostedLidUser, isHostedPnUser, isLidUser, isPnUser, jidDecode, jidNormalizedUser, WAJIDDomains } from '../WABinary'
@@ -16,6 +17,17 @@ import { isHostedLidUser, isHostedPnUser, isLidUser, isPnUser, jidDecode, jidNor
 const isLidLike = (jid: string | undefined) => isLidUser(jid) || isHostedLidUser(jid)
 const isPnLike = (jid: string | undefined) => isPnUser(jid) || isHostedPnUser(jid)
 
+// AunuBaileys (2.3.0, HB-378): a stored lid-mapping VALUE is a user
+// id — decimal digits, nothing else (the write path validates the
+// JID shape before extracting the user; the read paths used to
+// check only `typeof === 'string'`). A corrupt/hand-edited store
+// value ('garbage!!not-a-lid') was trusted, cached for 3 days, and
+// built into a JID, so resolveLIDSignalAddress keyed sessions by a
+// garbage address and every lookup for that contact missed
+// permanently. Values failing this shape are a MISS, never data —
+// the same treatment HB-98 gave pre-keys and HB-124 sender keys.
+const isValidStoredUser = (value: unknown): value is string => typeof value === 'string' && /^\d+$/.test(value)
+
 export class LIDMappingStore {
 	private readonly mappingCache = new InternalCache<string>({
 		ttlMs: 3 * 24 * 60 * 60 * 1000, // 3 days (value preserved from
@@ -31,6 +43,23 @@ export class LIDMappingStore {
 	private readonly inflightLIDLookups = new Map<string, Promise<LIDMapping[] | null>>()
 	private readonly inflightPNLookups = new Map<string, Promise<LIDMapping[] | null>>()
 
+	// AunuBaileys (2.3.0, HB-358): serialises whole storeLIDPNMappings
+	// calls (reads + compute + commit + cache update) on this store.
+	// The keys-transaction mutex only serialises the COMMIT — two
+	// concurrent remaps of one PN both read the OLD LID first, so each
+	// nulls only that old reverse and the loser's reverse entry
+	// survives in the store (and the cache) even though the forward
+	// mapping now points at the winner (run-0572, T2/T2b). Re-reading
+	// inside the transaction is NOT the fix here: keys.get for a
+	// cache-miss key re-acquires the same 'lid-mapping' mutex the
+	// transaction already holds, and the Mutex is not re-entrant —
+	// verified to hang forever. Serialising the whole call at this
+	// layer makes the second caller's pre-commit reads observe the
+	// first caller's committed state, so it nulls the loser's
+	// reverse too. Never nested: no caller invokes this from inside
+	// itself or from inside a keys transaction.
+	private readonly storeMutex = new Mutex()
+
 	constructor(
 		keys: SignalKeyStoreWithTransaction,
 		logger: ILogger,
@@ -42,6 +71,14 @@ export class LIDMappingStore {
 	}
 
 	async storeLIDPNMappings(pairs: LIDMapping[]): Promise<void> {
+		// AunuBaileys (2.3.0, HB-358): whole-call serialisation —
+		// see storeMutex. The read/compute phase must not overlap
+		// another call's commit, or the loser of a concurrent remap
+		// keeps a live reverse entry (run-0572).
+		return this.storeMutex.runExclusive(() => this.storeLIDPNMappingsInner(pairs))
+	}
+
+	private async storeLIDPNMappingsInner(pairs: LIDMapping[]): Promise<void> {
 		if (pairs.length === 0) return
 
 		const validatedPairs: Array<{ pnUser: string; lidUser: string }> = []
@@ -71,7 +108,9 @@ export class LIDMappingStore {
 
 		for (const { pnUser } of validatedPairs) {
 			const cached = this.mappingCache.get(`pn:${pnUser}`)
-			if (cached) {
+			// AunuBaileys (2.3.0, HB-378): cached values pass the
+			// same shape check as stored ones.
+			if (isValidStoredUser(cached)) {
 				existingMappings.set(pnUser, cached)
 			} else {
 				cacheMissSet.add(pnUser)
@@ -85,10 +124,39 @@ export class LIDMappingStore {
 
 			for (const pnUser of cacheMisses) {
 				const existingLidUser = stored[pnUser]
-				if (existingLidUser) {
+				if (isValidStoredUser(existingLidUser)) {
 					existingMappings.set(pnUser, existingLidUser)
 					this.mappingCache.set(`pn:${pnUser}`, existingLidUser)
 					this.mappingCache.set(`lid:${existingLidUser}`, pnUser)
+				}
+			}
+		}
+
+		// AunuBaileys (2.3.0, addendum HB-358): the mirror direction
+		// of the HB-358 remap — when a LID that currently maps to PN
+		// A is stored against a NEW PN B (number change; the LID is
+		// the stable side), PN A's forward entry must be retired
+		// too, or the dead number keeps resolving to this LID
+		// forever. Look up each incoming LID's current reverse
+		// mapping (cache first, then the store).
+		const reverseExisting = new Map<string, string>()
+		const reverseMissSet = new Set<string>()
+		for (const { lidUser } of validatedPairs) {
+			const cached = this.mappingCache.get(`lid:${lidUser}`)
+			if (isValidStoredUser(cached)) {
+				reverseExisting.set(lidUser, cached)
+			} else {
+				reverseMissSet.add(lidUser)
+			}
+		}
+
+		if (reverseMissSet.size > 0) {
+			const reverseKeys = [...reverseMissSet].map(lidUser => `${lidUser}_reverse`)
+			const storedReverse = await this.keys.get('lid-mapping', reverseKeys)
+			for (const lidUser of reverseMissSet) {
+				const existingPnUser = storedReverse[`${lidUser}_reverse`]
+				if (isValidStoredUser(existingPnUser)) {
+					reverseExisting.set(lidUser, existingPnUser)
 				}
 			}
 		}
@@ -120,6 +188,15 @@ export class LIDMappingStore {
 			if (existingLidUser && existingLidUser !== lidUser) {
 				batchData[`${existingLidUser}_reverse`] = null
 			}
+
+			// AunuBaileys (2.3.0, addendum HB-358): mirror direction —
+			// retire the OLD PN's forward entry when this LID moves
+			// to a new PN, unless that PN is itself being remapped
+			// in this same batch (its pairMap entry wins).
+			const existingPnUser = reverseExisting.get(lidUser)
+			if (existingPnUser && existingPnUser !== pnUser && !(existingPnUser in pairMap)) {
+				batchData[existingPnUser] = null
+			}
 		}
 
 		await this.keys.transaction(async () => {
@@ -134,6 +211,13 @@ export class LIDMappingStore {
 			const existingLidUser = existingMappings.get(pnUser)
 			if (existingLidUser && existingLidUser !== lidUser) {
 				this.mappingCache.delete(`lid:${existingLidUser}`)
+			}
+
+			// Addendum HB-358 (2.3.0): evict the old PN's forward
+			// cache entry on a LID remap, same guard as the store.
+			const existingPnUser = reverseExisting.get(lidUser)
+			if (existingPnUser && existingPnUser !== pnUser && !(existingPnUser in pairMap)) {
+				this.mappingCache.delete(`pn:${existingPnUser}`)
 			}
 		}
 	}
@@ -195,7 +279,14 @@ export class LIDMappingStore {
 
 			const pnUser = decoded.user
 			const cached = this.mappingCache.get(`pn:${pnUser}`)
-			if (cached && typeof cached === 'string') {
+			// AunuBaileys (2.3.0, HB-378): a cached value that is not
+			// a digit user id is a miss, not a mapping — drop it so
+			// it cannot poison later lookups.
+			if (cached !== undefined && !isValidStoredUser(cached)) {
+				this.mappingCache.delete(`pn:${pnUser}`)
+			}
+
+			if (isValidStoredUser(cached)) {
 				if (!addResolvedPair(pn, decoded, cached)) {
 					this.logger.warn(`Invalid entry for ${pn} (pair not resolved)`)
 					continue
@@ -212,7 +303,7 @@ export class LIDMappingStore {
 			const stored = await this.keys.get('lid-mapping', pnUsers)
 			for (const pnUser of pnUsers) {
 				const lidUser = stored[pnUser]
-				if (lidUser && typeof lidUser === 'string') {
+				if (isValidStoredUser(lidUser)) {
 					this.mappingCache.set(`pn:${pnUser}`, lidUser)
 					this.mappingCache.set(`lid:${lidUser}`, pnUser)
 				}
@@ -220,7 +311,7 @@ export class LIDMappingStore {
 
 			for (const { pn, pnUser, decoded } of pending) {
 				const cached = this.mappingCache.get(`pn:${pnUser}`)
-				if (cached && typeof cached === 'string') {
+				if (isValidStoredUser(cached)) {
 					if (!addResolvedPair(pn, decoded, cached)) {
 						this.logger.warn(`Invalid entry for ${pn} (pair not resolved)`)
 						continue
@@ -315,7 +406,9 @@ export class LIDMappingStore {
 		const pending: Array<{ lid: string; lidUser: string; decoded: ReturnType<typeof jidDecode> }> = []
 
 		const addResolvedPair = (lid: string, decoded: ReturnType<typeof jidDecode>, pnUser: string) => {
-			if (!pnUser || typeof pnUser !== 'string') {
+			// AunuBaileys (2.3.0, HB-378): digit-shape check, not
+			// just typeof — see isValidStoredUser.
+			if (!isValidStoredUser(pnUser)) {
 				return false
 			}
 
@@ -337,7 +430,13 @@ export class LIDMappingStore {
 
 			const lidUser = decoded.user
 			const cached = this.mappingCache.get(`lid:${lidUser}`)
-			if (cached && typeof cached === 'string') {
+			// AunuBaileys (2.3.0, HB-378): garbage cache values are
+			// evicted and treated as a miss (see _getLIDsForPNsImpl).
+			if (cached !== undefined && !isValidStoredUser(cached)) {
+				this.mappingCache.delete(`lid:${lidUser}`)
+			}
+
+			if (isValidStoredUser(cached)) {
 				addResolvedPair(lid, decoded, cached)
 				continue
 			}
@@ -351,15 +450,17 @@ export class LIDMappingStore {
 
 			for (const { lid, lidUser, decoded } of pending) {
 				let pnUser = this.mappingCache.get(`lid:${lidUser}`)
-				if (!pnUser || typeof pnUser !== 'string') {
+				if (!isValidStoredUser(pnUser)) {
 					pnUser = stored[`${lidUser}_reverse`]
-					if (pnUser && typeof pnUser === 'string') {
+					if (isValidStoredUser(pnUser)) {
 						this.mappingCache.set(`lid:${lidUser}`, pnUser)
 						this.mappingCache.set(`pn:${pnUser}`, lidUser)
+					} else {
+						pnUser = undefined
 					}
 				}
 
-				if (pnUser && typeof pnUser === 'string') {
+				if (isValidStoredUser(pnUser)) {
 					addResolvedPair(lid, decoded, pnUser)
 				} else {
 					this.logger.trace(`No reverse mapping found for LID user: ${lidUser}`)

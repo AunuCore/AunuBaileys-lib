@@ -2,11 +2,14 @@ import { Boom } from '@hapi/boom';
 import type { Agent } from 'https';
 import { Readable, Transform } from 'stream';
 import { URL } from 'url';
-import { proto } from '../../WAProto/index.js';
+import { waproto } from '../../WAProto/index.js';
 import { type MediaType } from '../Defaults/index.js';
 import type { DownloadableMessage, MediaConnInfo, MediaDecryptionKeyInfo, SocketConfig, WAMediaUpload, WAMediaUploadFunction, WAMessageContent, WAMessageKey } from '../Types/index.js';
 import { type BinaryNode } from '../WABinary/index.js';
 import type { ILogger } from './logger.js';
+export declare const sanitizeMediaTimeoutMs: (value: unknown, fallback?: number) => number;
+export declare const isMediaAbortError: (error: unknown) => boolean;
+export declare const destroyQuietly: (stream: unknown) => void;
 export declare const getImageProcessingLibrary: () => Promise<{
     sharp: typeof import("sharp");
     image?: undefined;
@@ -176,7 +179,7 @@ export declare const decodeMediaRetryNode: (node: BinaryNode) => {
 export declare const decryptMediaRetryData: ({ ciphertext, iv }: {
     ciphertext: Uint8Array;
     iv: Uint8Array;
-}, mediaKey: Uint8Array, msgId: string) => proto.MediaRetryNotification;
+}, mediaKey: Uint8Array, msgId: string) => waproto.MediaRetryNotification;
 export declare const getStatusCodeForMediaRetry: (code: number) => 200 | 412 | 404 | 418;
 export {};
 //# sourceMappingURL=messages-media.d.ts.map

@@ -1,5 +1,5 @@
 import { jest } from '@jest/globals'
-import { proto } from '../../../WAProto/index.js'
+import { waproto } from '../../../WAProto/index.js'
 import type { BaileysEventEmitter, ChatMutation, Contact } from '../../Types'
 import { LabelAssociationType } from '../../Types/LabelAssociation'
 import { processSyncAction } from '../../Utils/chat-utils'
@@ -34,7 +34,7 @@ const createMockLogger = (): ILogger =>
 	}) as unknown as ILogger
 
 const createSyncAction = (
-	action: proto.ISyncActionValue,
+	action: waproto.ISyncActionValue,
 	index: string[] = ['type', 'id', 'msgId', '0']
 ): ChatMutation => ({
 	syncAction: { value: action },
@@ -347,7 +347,7 @@ describe('processSyncAction', () => {
 
 	describe('unprocessable actions', () => {
 		it('logs debug for unknown action', () => {
-			const syncAction = createSyncAction({ unknownAction: {} } as unknown as proto.ISyncActionValue, [
+			const syncAction = createSyncAction({ unknownAction: {} } as unknown as waproto.ISyncActionValue, [
 				'unknown',
 				'id123'
 			])

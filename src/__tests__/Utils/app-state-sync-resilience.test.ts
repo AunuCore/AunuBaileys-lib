@@ -1,5 +1,5 @@
 import { Boom } from '@hapi/boom'
-import { proto } from '../../../WAProto/index.js'
+import { waproto } from '../../../WAProto/index.js'
 import {
 	decodeSyncdMutations,
 	decodeSyncdPatch,
@@ -15,7 +15,7 @@ const missingKeyFn = async () => null
 describe('App State Sync', () => {
 	describe('missing key errors are marked with isMissingKey (Blocked in WA Web)', () => {
 		it('decodeSyncdPatch throws with isMissingKey on missing key', async () => {
-			const msg: proto.ISyncdPatch = {
+			const msg: waproto.ISyncdPatch = {
 				keyId: { id: Buffer.from('missing-key') },
 				mutations: [],
 				version: { version: 1 as any },
@@ -32,7 +32,7 @@ describe('App State Sync', () => {
 		})
 
 		it('decodeSyncdSnapshot throws with isMissingKey on missing snapshot key', async () => {
-			const snapshot: proto.ISyncdSnapshot = {
+			const snapshot: waproto.ISyncdSnapshot = {
 				version: { version: 1 as any },
 				records: [],
 				keyId: { id: Buffer.from('missing-key') },
@@ -48,7 +48,7 @@ describe('App State Sync', () => {
 		})
 
 		it('decodeSyncdMutations throws with isMissingKey on missing mutation key', async () => {
-			const records: proto.ISyncdRecord[] = [
+			const records: waproto.ISyncdRecord[] = [
 				{
 					keyId: { id: Buffer.from('missing-key') },
 					value: { blob: Buffer.alloc(64) },

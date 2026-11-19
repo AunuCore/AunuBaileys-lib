@@ -3,12 +3,13 @@ import { spawn } from 'child_process'
 import * as Crypto from 'crypto'
 import { once } from 'events'
 import { createReadStream, createWriteStream, promises as fs, WriteStream } from 'fs'
+import type { ClientRequest } from 'http'
 import type { Agent } from 'https'
 import { tmpdir } from 'os'
 import { join } from 'path'
 import { Readable, Transform } from 'stream'
 import { URL } from 'url'
-import { proto } from '../../WAProto/index.js'
+import { waproto } from '../../WAProto/index.js'
 import { DEFAULT_ORIGIN, MEDIA_HKDF_KEY_MAPPING, MEDIA_PATH_MAP, type MediaType } from '../Defaults'
 import type {
 	BaileysEventMap,
@@ -30,6 +31,33 @@ import type { ILogger } from './logger'
 import { readImageDimensions } from './safe-fetch'
 
 const getTmpFilesDirectory = () => tmpdir()
+
+// AunuBaileys (2.3.0, HB-392): media timeout values used to reach
+// AbortSignal.timeout() raw — 0 aborted every fetch instantly and
+// NaN/negative/Infinity threw a synchronous RangeError, while a fired
+// signal surfaced as a raw DOMException TimeoutError with no
+// statusCode. Sanitise like the upload path's effectiveTimeoutMs
+// (finite positive wins, anything else falls back) and translate
+// aborts to Boom 408 at the fetch choke point (getHttpStream).
+export const sanitizeMediaTimeoutMs = (value: unknown, fallback = 120_000): number =>
+	typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : fallback
+
+export const isMediaAbortError = (error: unknown): boolean => {
+	const name = (error as { name?: unknown } | null)?.name
+	return name === 'TimeoutError' || name === 'AbortError'
+}
+
+export const destroyQuietly = (stream: unknown): void => {
+	// AunuBaileys (2.3.0, HB-208 addendum): catch blocks called
+	// stream.destroy() bare — for an unusable `stream` member the
+	// destroy itself threw and the tmp-file unlink after it never
+	// ran, leaking a 0-byte file per failed call.
+	try {
+		;(stream as { destroy?: () => void } | null)?.destroy?.()
+	} catch {
+		// a broken stream must never mask the original error or skip cleanup
+	}
+}
 
 // AunuBaileys (P2e port from v6): exported for the sticker-pack builder in
 // messages.ts, and the @napi-rs/image backend is probed like in v6 — a host
@@ -157,8 +185,10 @@ export const getRawMediaUploadData = async (
 			fileLength
 		}
 	} catch (error) {
+		// AunuBaileys (2.3.0, HB-208 addendum): destroy quietly — a
+		// throwing destroy here used to skip the unlink below.
 		fileWriteStream.destroy()
-		stream.destroy()
+		destroyQuietly(stream)
 		try {
 			await fs.unlink(filePath)
 		} catch {
@@ -522,11 +552,40 @@ export const getStream = async (item: WAMediaUpload, opts?: RequestInit & { maxC
 	}
 
 	if ('stream' in item) {
-		return { stream: item.stream, type: 'readable' } as const
+		// AunuBaileys (2.3.0, HB-208 addendum): the guard only tested
+		// that the key EXISTS — {stream: null/42/{}} (and even a bare
+		// string, whose characters were silently encrypted as media)
+		// passed and exploded downstream as raw TypeErrors. Only a
+		// real readable (async-iterable) stream is usable.
+		const candidate = (item as { stream?: unknown }).stream
+		const isUsableStream =
+			candidate instanceof Readable ||
+			(!!candidate &&
+				typeof candidate === 'object' &&
+				typeof (candidate as { [Symbol.asyncIterator]?: unknown })[Symbol.asyncIterator] === 'function')
+		if (!isUsableStream) {
+			throw new Boom('Invalid media: "stream" must be a readable stream', { statusCode: 400 })
+		}
+
+		return { stream: candidate as Readable, type: 'readable' } as const
 	}
 
 	if (typeof item.url !== 'string' && !(item.url instanceof URL)) {
 		throw new Boom('Invalid media: expected a Buffer, a stream, or an object with a url', { statusCode: 400 })
+	}
+
+	// AunuBaileys (2.3.0, HB-208 addendum): a URL object with a
+	// non-file/non-http scheme (e.g. ftp:) fell through to
+	// createReadStream and threw a raw TypeError about the scheme.
+	if (item.url instanceof URL && !['http:', 'https:', 'data:', 'file:'].includes(item.url.protocol)) {
+		throw new Boom(`Invalid media URL scheme: ${item.url.protocol}`, { statusCode: 400 })
+	}
+
+	if (typeof item.url === 'string' && /^[a-zA-Z][a-zA-Z0-9+.-]*:\/\//.test(item.url)) {
+		const scheme = item.url.slice(0, item.url.indexOf(':') + 1).toLowerCase()
+		if (!['http:', 'https:', 'data:', 'file:'].includes(scheme)) {
+			throw new Boom(`Invalid media URL scheme: ${scheme}`, { statusCode: 400 })
+		}
 	}
 
 	const urlStr = item.url.toString()
@@ -595,14 +654,38 @@ export async function generateThumbnail(
 }
 
 export const getHttpStream = async (url: string | URL, options: RequestInit & { isStream?: true } = {}) => {
-	const response = await fetch(url.toString(), {
-		dispatcher: options.dispatcher,
-		method: 'GET',
-		headers: options.headers as HeadersInit,
-		signal: options.signal
-	})
+	let response: Response
+	try {
+		response = await fetch(url.toString(), {
+			dispatcher: options.dispatcher,
+			method: 'GET',
+			headers: options.headers as HeadersInit,
+			signal: options.signal
+		})
+	} catch (error) {
+		// AunuBaileys (2.3.0, HB-392): a fired timeout signal used to
+		// surface as a raw DOMException TimeoutError (no statusCode);
+		// hosts branch on Boom status codes, so translate it here.
+		if (isMediaAbortError(error)) {
+			throw new Boom(`Media download timed out fetching ${url}`, { statusCode: 408, data: { url } })
+		}
+
+		throw error
+	}
+
 	if (!response.ok) {
 		throw new Boom(`Failed to fetch stream from ${url}`, { statusCode: response.status, data: { url } })
+	}
+
+	// AunuBaileys (2.3.0, HB-384): 204/205 responses carry a null
+	// body — Readable.fromWeb(null) threw a raw TypeError with no
+	// statusCode. Fail with a Boom instead; the real status rides
+	// in `data` because Boom status codes must be >= 400.
+	if (!response.body) {
+		throw new Boom(`Failed to fetch stream from ${url}: empty response body`, {
+			statusCode: 502,
+			data: { url, status: response.status }
+		})
 	}
 
 	// @ts-ignore Node18+ Readable.fromWeb exists
@@ -896,7 +979,9 @@ export const encryptedStream = async (
 
 		encFileWriteStream.end()
 		originalFileStream?.end?.()
-		stream.destroy()
+		// AunuBaileys (2.3.0, HB-208 addendum): an async-iterable
+		// stream without destroy() must not fail a finished encrypt.
+		destroyQuietly(stream)
 
 		// Wait for write streams to fully flush to disk
 		// This helps reduce memory pressure by allowing OS to release buffers
@@ -917,13 +1002,17 @@ export const encryptedStream = async (
 		}
 	} catch (error) {
 		// destroy all streams with error
-		encFileWriteStream.destroy()
-		originalFileStream?.destroy?.()
-		aes.destroy()
-		hmac.destroy()
-		sha256Plain.destroy()
-		sha256Enc.destroy()
-		stream.destroy()
+		// AunuBaileys (2.3.0, HB-208 addendum): every destroy here is
+		// quiet — a throwing destroy (e.g. an unusable input stream)
+		// used to escape before the unlink below, leaking the tmp
+		// files this catch exists to clean up.
+		destroyQuietly(encFileWriteStream)
+		destroyQuietly(originalFileStream)
+		destroyQuietly(aes)
+		destroyQuietly(hmac)
+		destroyQuietly(sha256Plain)
+		destroyQuietly(sha256Enc)
+		destroyQuietly(stream)
 
 		try {
 			await fs.unlink(encFilePath)
@@ -1295,20 +1384,19 @@ export const uploadWithNodeHttp = async (
 	const fileSize = fileStats.size
 
 	return new Promise((resolve, reject) => {
-		// AunuBaileys (2.2.0, HB-302 addendum): the response phase got
-		// its total deadline in 2.1.0, but the REQUEST phase (sending
-		// the body to a stalling host) was bounded only by the socket
-		// inactivity timeout. One deadline now covers the send phase;
-		// it is cleared the moment a response starts (the response
-		// phase then runs under its own deadline below).
-		const requestDeadline = setTimeout(() => {
-			stream.destroy()
-			req.destroy()
-			reject(new Boom('Media upload timed out', { statusCode: 408 }))
-		}, timeoutMs || 120_000)
-		requestDeadline.unref?.()
-
-		const req = httpModule.request(
+		// AunuBaileys (2.3.0, HB-372): the request deadline used to be
+		// created BEFORE `req`/`stream` existed — when
+		// httpModule.request() threw synchronously (bad agent type,
+		// invalid header characters, …) the promise rejected cleanly
+		// but the orphaned timer later fired into the TDZ of both
+		// consts and crashed the process with a ReferenceError. The
+		// stream and request are created first now, a synchronous
+		// throw rejects with no timer outstanding, and the deadline
+		// is only armed once both exist.
+		const stream = createReadStream(filePath)
+		let req: ClientRequest
+		try {
+			req = httpModule.request(
 			{
 				hostname: parsedUrl.hostname,
 				port: parsedUrl.port || (parsedUrl.protocol === 'https:' ? 443 : 80),
@@ -1391,7 +1479,27 @@ export const uploadWithNodeHttp = async (
 					})
 				)
 			}
-		)
+			)
+		} catch (err) {
+			// AunuBaileys (2.3.0, HB-372): synchronous request()
+			// failure — no deadline exists yet, just clean up.
+			stream.destroy()
+			reject(err)
+			return
+		}
+
+		// AunuBaileys (2.2.0, HB-302 addendum): the response phase got
+		// its total deadline in 2.1.0, but the REQUEST phase (sending
+		// the body to a stalling host) was bounded only by the socket
+		// inactivity timeout. One deadline now covers the send phase;
+		// it is cleared the moment a response starts (the response
+		// phase then runs under its own deadline below).
+		const requestDeadline = setTimeout(() => {
+			stream.destroy()
+			req.destroy()
+			reject(new Boom('Media upload timed out', { statusCode: 408 }))
+		}, timeoutMs || 120_000)
+		requestDeadline.unref?.()
 
 		// AunuBaileys (2.2.0, HB-351): a failed or timed-out request
 		// used to leave the file stream open — one leaked fd per
@@ -1409,7 +1517,6 @@ export const uploadWithNodeHttp = async (
 			reject(new Error('Upload timeout'))
 		})
 
-		const stream = createReadStream(filePath)
 		stream.pipe(req)
 		stream.on('error', err => {
 			clearTimeout(requestDeadline)
@@ -1619,8 +1726,8 @@ const getMediaRetryKey = (mediaKey: Buffer | Uint8Array) => {
  * Generate a binary node that will request the phone to re-upload the media & return the newly uploaded URL
  */
 export const encryptMediaRetryRequest = (key: WAMessageKey, mediaKey: Buffer | Uint8Array, meId: string) => {
-	const recp: proto.IServerErrorReceipt = { stanzaId: key.id }
-	const recpBuffer = proto.ServerErrorReceipt.encode(recp).finish()
+	const recp: waproto.IServerErrorReceipt = { stanzaId: key.id }
+	const recpBuffer = waproto.ServerErrorReceipt.encode(recp).finish()
 
 	const iv = Crypto.randomBytes(12)
 	const retryKey = getMediaRetryKey(mediaKey)
@@ -1707,15 +1814,15 @@ export const decryptMediaRetryData = (
 ) => {
 	const retryKey = getMediaRetryKey(mediaKey)
 	const plaintext = aesDecryptGCM(ciphertext, retryKey, iv, Buffer.from(msgId))
-	return proto.MediaRetryNotification.decode(plaintext)
+	return waproto.MediaRetryNotification.decode(plaintext)
 }
 
 export const getStatusCodeForMediaRetry = (code: number) =>
-	MEDIA_RETRY_STATUS_MAP[code as proto.MediaRetryNotification.ResultType]
+	MEDIA_RETRY_STATUS_MAP[code as waproto.MediaRetryNotification.ResultType]
 
 const MEDIA_RETRY_STATUS_MAP = {
-	[proto.MediaRetryNotification.ResultType.SUCCESS]: 200,
-	[proto.MediaRetryNotification.ResultType.DECRYPTION_ERROR]: 412,
-	[proto.MediaRetryNotification.ResultType.NOT_FOUND]: 404,
-	[proto.MediaRetryNotification.ResultType.GENERAL_ERROR]: 418
+	[waproto.MediaRetryNotification.ResultType.SUCCESS]: 200,
+	[waproto.MediaRetryNotification.ResultType.DECRYPTION_ERROR]: 412,
+	[waproto.MediaRetryNotification.ResultType.NOT_FOUND]: 404,
+	[waproto.MediaRetryNotification.ResultType.GENERAL_ERROR]: 418
 } as const

@@ -1,6 +1,12 @@
 import makeWASocket from './Socket/index'
 
 export * from '../WAProto/index.js'
+// AunuBaileys (2.3.0): upstream renamed the generated namespace
+// proto -> waproto. The canonical export is `waproto`, but downstream
+// bots (Tenka) still import `proto` — keep it as a compatibility
+// alias so the rename does not break them; new code should use
+// `waproto` (or the `WAProto` alias from Types/Message).
+export { waproto as proto } from '../WAProto/index.js'
 export * from './Utils/index'
 export * from './Types/index'
 export * from './Defaults/index'

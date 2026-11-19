@@ -161,7 +161,7 @@ export const addTransactionCapability = (
 	state: SignalKeyStore,
 	logger: ILogger,
 	{ maxCommitRetries, delayBetweenTriesMs }: Partial<TransactionCapabilityOptions> = {}
-): SignalKeyStoreWithTransaction => {
+): SignalKeyStoreWithTransaction & { disposeTransactionStorage: () => void } => {
 	// AunuBaileys (2.1.0, HB-104 addendum + HB-333, donor v6 1.0.89): sanitise the retry budget at the boundary — a NaN/0/negative maxCommitRetries (classically Number('') from env) made commitWithRetry run ZERO attempts and silently drop the transaction's mutations, and Infinity wedged the transaction mutex forever on a failing store. Retries clamp to 1..10; a non-finite or negative delay falls back to the default.
 	const commitRetries =
 		typeof maxCommitRetries === 'number' && Number.isFinite(maxCommitRetries)
@@ -172,6 +172,9 @@ export const addTransactionCapability = (
 			? delayBetweenTriesMs
 			: 3000
 	const txStorage = new AsyncLocalStorage<TransactionContext>()
+	// AunuBaileys (2.3.0, HB-401): set by disposeTransactionStorage()
+	// so the release below runs at most once per store.
+	let txStorageDisposed = false
 
 	// Queues for concurrency control (keyed by signal data type - bounded set)
 	const keyQueues = new Map<string, SimpleQueue>()
@@ -418,6 +421,32 @@ export const addTransactionCapability = (
 		},
 
 		isInTransaction,
+
+		// AunuBaileys (2.3.0, HB-401, pola upstream PR #2911):
+		// an AsyncLocalStorage that has been enabled by run() stays
+		// in Node's process-wide list of enabled storages, taxing
+		// EVERY async resource created afterwards — and this store
+		// is created per socket, so a long-lived multi-session host
+		// accumulated one permanent entry per socket ever opened.
+		// Nothing ever released it. disable() exits the storage's
+		// contexts and drops it from that list. The socket calls
+		// this from end(), when the store's lifecycle is over: the
+		// storage is per-addTransactionCapability-call, so a
+		// reconnect (a fresh wrapper around the same auth state)
+		// gets a fresh storage and is unaffected; a transaction
+		// still in flight at teardown commits from its own context
+		// object, not via getStore(), so its commit still lands;
+		// and disable() is idempotent here via the flag (a stray
+		// later run() would simply re-enable the storage and keep
+		// working, never corrupt).
+		disposeTransactionStorage: () => {
+			if (txStorageDisposed) {
+				return
+			}
+
+			txStorageDisposed = true
+			txStorage.disable()
+		},
 
 		transaction: async (work, key) => {
 			const existing = txStorage.getStore()

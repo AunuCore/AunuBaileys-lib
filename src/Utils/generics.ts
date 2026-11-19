@@ -1,7 +1,7 @@
 import { Boom } from '@hapi/boom'
 import { createHash, randomBytes } from 'crypto'
 import type Long from 'long'
-import { proto } from '../../WAProto/index.js'
+import { waproto } from '../../WAProto/index.js'
 const baileysVersion = [2, 3000, 1043857760]
 import type {
 	BaileysEventEmitter,
@@ -107,7 +107,7 @@ export const generateParticipantHashV2 = (participants: string[]): string => {
 	return '2:' + sha256Hash.slice(0, 6)
 }
 
-export const encodeWAMessage = (message: proto.IMessage) => writeRandomPadMax16(proto.Message.encode(message).finish())
+export const encodeWAMessage = (message: waproto.IMessage) => writeRandomPadMax16(waproto.Message.encode(message).finish())
 
 export const generateRegistrationId = (): number => {
 	return Uint16Array.from(randomBytes(2))[0]! & 16383
@@ -389,11 +389,11 @@ export const generateMdTagPrefix = () => {
 	return `${bytes.readUInt16BE()}.${bytes.readUInt16BE(2)}-`
 }
 
-const STATUS_MAP: { [_: string]: proto.WebMessageInfo.Status } = {
-	sender: proto.WebMessageInfo.Status.SERVER_ACK,
-	played: proto.WebMessageInfo.Status.PLAYED,
-	read: proto.WebMessageInfo.Status.READ,
-	'read-self': proto.WebMessageInfo.Status.READ
+const STATUS_MAP: { [_: string]: waproto.WebMessageInfo.Status } = {
+	sender: waproto.WebMessageInfo.Status.SERVER_ACK,
+	played: waproto.WebMessageInfo.Status.PLAYED,
+	read: waproto.WebMessageInfo.Status.READ,
+	'read-self': waproto.WebMessageInfo.Status.READ
 }
 /**
  * Given a type of receipt, returns what the new status of the message should be
@@ -402,7 +402,7 @@ const STATUS_MAP: { [_: string]: proto.WebMessageInfo.Status } = {
 export const getStatusFromReceiptType = (type: string | undefined) => {
 	const status = STATUS_MAP[type!]
 	if (typeof type === 'undefined') {
-		return proto.WebMessageInfo.Status.DELIVERY_ACK
+		return waproto.WebMessageInfo.Status.DELIVERY_ACK
 	}
 
 	return status
@@ -548,6 +548,6 @@ export function bytesToCrockford(buffer: Buffer): string {
 	return crockford.join('')
 }
 
-export function encodeNewsletterMessage(message: proto.IMessage): Uint8Array {
-	return proto.Message.encode(message).finish()
+export function encodeNewsletterMessage(message: waproto.IMessage): Uint8Array {
+	return waproto.Message.encode(message).finish()
 }

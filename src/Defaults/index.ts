@@ -1,4 +1,4 @@
-import { proto } from '../../WAProto/index.js'
+import { waproto } from '../../WAProto/index.js'
 import { makeLibSignalRepository } from '../Signal/libsignal'
 import type { AuthenticationState, SocketConfig, WAVersion } from '../Types'
 import { Browsers } from '../Utils/browser-utils'
@@ -42,13 +42,13 @@ export const WA_CERT_DETAILS = {
 }
 
 export const PROCESSABLE_HISTORY_TYPES = [
-	proto.HistorySync.HistorySyncType.INITIAL_BOOTSTRAP,
-	proto.HistorySync.HistorySyncType.PUSH_NAME,
-	proto.HistorySync.HistorySyncType.RECENT,
-	proto.HistorySync.HistorySyncType.FULL,
-	proto.HistorySync.HistorySyncType.ON_DEMAND,
-	proto.HistorySync.HistorySyncType.NON_BLOCKING_DATA,
-	proto.HistorySync.HistorySyncType.INITIAL_STATUS_V3
+	waproto.HistorySync.HistorySyncType.INITIAL_BOOTSTRAP,
+	waproto.HistorySync.HistorySyncType.PUSH_NAME,
+	waproto.HistorySync.HistorySyncType.RECENT,
+	waproto.HistorySync.HistorySyncType.FULL,
+	waproto.HistorySync.HistorySyncType.ON_DEMAND,
+	waproto.HistorySync.HistorySyncType.NON_BLOCKING_DATA,
+	waproto.HistorySync.HistorySyncType.INITIAL_STATUS_V3
 ]
 
 export const DEFAULT_CACHE_TTLS = {
@@ -75,8 +75,8 @@ export const DEFAULT_CONNECTION_CONFIG: SocketConfig = {
 	markOnlineOnConnect: true,
 	syncFullHistory: true,
 	patchMessageBeforeSending: msg => msg,
-	shouldSyncHistoryMessage: ({ syncType }: proto.Message.IHistorySyncNotification) => {
-		return syncType !== proto.HistorySync.HistorySyncType.FULL
+	shouldSyncHistoryMessage: ({ syncType }: waproto.Message.IHistorySyncNotification) => {
+		return syncType !== waproto.HistorySync.HistorySyncType.FULL
 	},
 	shouldIgnoreJid: () => false,
 	linkPreviewImageThumbnailWidth: 192,

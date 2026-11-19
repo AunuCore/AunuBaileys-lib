@@ -1,5 +1,5 @@
 import { createHmac } from 'crypto'
-import { proto } from '../../WAProto/index.js'
+import { waproto } from '../../WAProto/index.js'
 import type { WAMessageContent, WAMessageKey } from '../Types'
 import type { BinaryNode } from '../WABinary'
 import { hkdf } from './crypto'
@@ -96,7 +96,7 @@ const WIRE = {
 	FIXED32: 5
 } as const
 
-export const shouldIncludeReportingToken = (message: proto.IMessage): boolean =>
+export const shouldIncludeReportingToken = (message: waproto.IMessage): boolean =>
 	!message.reactionMessage &&
 	!message.encReactionMessage &&
 	!message.encEventResponseMessage &&

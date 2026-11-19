@@ -1,5 +1,5 @@
 import { Boom } from '@hapi/boom';
-import { proto } from '../../WAProto/index.js';
+import { waproto } from '../../WAProto/index.js';
 import type { GroupMetadata, ParticipantAction, SocketConfig, WAMessageKey } from '../Types/index.js';
 import { type BinaryNode } from '../WABinary/index.js';
 export declare const makeGroupsSocket: (config: SocketConfig) => {
@@ -35,7 +35,7 @@ export declare const makeGroupsSocket: (config: SocketConfig) => {
      * @param key the key of the invite message, or optionally only provide the jid of the person who sent the invite
      * @param inviteMessage the message to accept
      */
-    groupAcceptInviteV4: (key: string | WAMessageKey, inviteMessage: proto.Message.IGroupInviteMessage) => Promise<any>;
+    groupAcceptInviteV4: (key: string | WAMessageKey, inviteMessage: waproto.Message.IGroupInviteMessage) => Promise<any>;
     groupGetInviteInfo: (code: string) => Promise<GroupMetadata>;
     groupToggleEphemeral: (jid: string, ephemeralExpiration: number) => Promise<void>;
     groupSettingUpdate: (jid: string, setting: "announcement" | "not_announcement" | "locked" | "unlocked") => Promise<void>;
@@ -98,7 +98,7 @@ export declare const makeGroupsSocket: (config: SocketConfig) => {
     resyncAppState: (collections: readonly ("critical_unblock_low" | "regular_high" | "regular_low" | "critical_block" | "regular")[], isInitialSync: boolean) => Promise<void>;
     chatModify: (mod: import("../Types/index.js").ChatModification, jid: string) => Promise<void>;
     cleanDirtyBits: (type: "account_sync" | "groups", fromTimestamp?: number | string) => Promise<void>;
-    addOrEditContact: (jid: string, contact: proto.SyncActionValue.IContactAction) => Promise<void>;
+    addOrEditContact: (jid: string, contact: waproto.SyncActionValue.IContactAction) => Promise<void>;
     removeContact: (jid: string) => Promise<void>;
     placeholderResendCache: import("../Types/index.js").CacheStore;
     addLabel: (jid: string, labels: import("../Types/Label.js").LabelActionBody) => Promise<void>;
@@ -156,7 +156,12 @@ export declare const makeGroupsSocket: (config: SocketConfig) => {
     };
     authState: {
         creds: import("../Types/index.js").AuthenticationCreds;
-        keys: import("../Types/index.js").SignalKeyStoreWithTransaction;
+        keys: import("../Types/index.js").SignalKeyStore & {
+            isInTransaction: () => boolean;
+            transaction<T>(exec: () => Promise<T>, key: string): Promise<T>;
+        } & {
+            disposeTransactionStorage: () => void;
+        };
     };
     aunuLid: import("../index.js").LIDStore;
     aunuIgnoreFilter: {

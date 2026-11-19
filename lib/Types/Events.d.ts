@@ -1,5 +1,5 @@
 import type { Boom } from '@hapi/boom';
-import { proto } from '../../WAProto/index.js';
+import { waproto } from '../../WAProto/index.js';
 import type { AuthenticationCreds, LIDMapping } from './Auth.js';
 import type { WACallEvent } from './Call.js';
 import type { Chat, ChatUpdate, PresenceData } from './Chat.js';
@@ -22,15 +22,15 @@ export type BaileysEventMap = {
         lidPnMappings?: LIDMapping[];
         isLatest?: boolean;
         progress?: number | null;
-        syncType?: proto.HistorySync.HistorySyncType | null;
-        pastParticipants?: proto.IPastParticipants[] | null;
+        syncType?: waproto.HistorySync.HistorySyncType | null;
+        pastParticipants?: waproto.IPastParticipants[] | null;
         chunkOrder?: number | null;
         peerDataRequestSessionId?: string | null;
     };
     /** signals history sync milestones (completion or stall) per sync type */
     'messaging-history.status': {
         /** which sync phase this status refers to */
-        syncType: proto.HistorySync.HistorySyncType;
+        syncType: waproto.HistorySync.HistorySyncType;
         /** the status of this sync phase */
         status: 'complete' | 'paused';
         /**
@@ -106,7 +106,7 @@ export type BaileysEventMap = {
     /** message was reacted to. If reaction was removed -- then "reaction.text" will be falsey */
     'messages.reaction': {
         key: WAMessageKey;
-        reaction: proto.IReaction;
+        reaction: waproto.IReaction;
     }[];
     'message-receipt.update': MessageUserReceiptUpdate[];
     'groups.upsert': GroupMetadata[];
@@ -232,22 +232,22 @@ export type BaileysEventMap = {
         value: string;
     } | {
         setting: 'disableLinkPreviews';
-        value: proto.SyncActionValue.IPrivacySettingDisableLinkPreviewsAction;
+        value: waproto.SyncActionValue.IPrivacySettingDisableLinkPreviewsAction;
     } | {
         setting: 'timeFormat';
-        value: proto.SyncActionValue.ITimeFormatAction;
+        value: waproto.SyncActionValue.ITimeFormatAction;
     } | {
         setting: 'privacySettingRelayAllCalls';
-        value: proto.SyncActionValue.IPrivacySettingRelayAllCalls;
+        value: waproto.SyncActionValue.IPrivacySettingRelayAllCalls;
     } | {
         setting: 'statusPrivacy';
-        value: proto.SyncActionValue.IStatusPrivacyAction;
+        value: waproto.SyncActionValue.IStatusPrivacyAction;
     } | {
         setting: 'notificationActivitySetting';
-        value: proto.SyncActionValue.NotificationActivitySettingAction.NotificationActivitySetting;
+        value: waproto.SyncActionValue.NotificationActivitySettingAction.NotificationActivitySetting;
     } | {
         setting: 'channelsPersonalisedRecommendation';
-        value: proto.SyncActionValue.IPrivacySettingChannelsPersonalisedRecommendationAction;
+        value: waproto.SyncActionValue.IPrivacySettingChannelsPersonalisedRecommendationAction;
     };
 };
 export type BufferedEventData = {
@@ -264,8 +264,8 @@ export type BufferedEventData = {
         empty: boolean;
         isLatest: boolean;
         progress?: number | null;
-        syncType?: proto.HistorySync.HistorySyncType;
-        pastParticipants?: proto.IPastParticipants[];
+        syncType?: waproto.HistorySync.HistorySyncType;
+        pastParticipants?: waproto.IPastParticipants[];
         chunkOrder?: number | null;
         peerDataRequestSessionId?: string;
     };
@@ -303,13 +303,13 @@ export type BufferedEventData = {
     messageReactions: {
         [key: string]: {
             key: WAMessageKey;
-            reactions: proto.IReaction[];
+            reactions: waproto.IReaction[];
         };
     };
     messageReceipts: {
         [key: string]: {
             key: WAMessageKey;
-            userReceipt: proto.IUserReceipt[];
+            userReceipt: waproto.IUserReceipt[];
         };
     };
     groupUpdates: {

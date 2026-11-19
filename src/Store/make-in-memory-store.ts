@@ -1,7 +1,7 @@
 // AunuCore fork backport: in-memory store dari Baileys 6.6.0, dikonversi ke ESM untuk basis 6.7.x
 // Ported to TypeScript for the AunuBaileys v7 tree (2.0.0); behaviour identical to the v6 module.
 import { closeSync, existsSync, fsyncSync, openSync, readFileSync, renameSync, writeFileSync } from 'fs'
-import { proto } from '../../WAProto/index.js'
+import { waproto } from '../../WAProto/index.js'
 import { KeyedDB } from './keyed-db.js'
 import type { Comparable } from './keyed-db.js'
 import { DEFAULT_CONNECTION_CONFIG } from '../Defaults/index.js'
@@ -246,6 +246,20 @@ const makeInMemoryStore = ({ logger: _logger, chatKey, labelAssociationKey }: Ba
 							const unreadCount = update.unreadCount
 							update = { ...update }
 							update.unreadCount = (chat.unreadCount || 0) + unreadCount
+						} else if (update.unreadCount === -1) {
+							// AunuBaileys (2.3.0, HB-393 addendum): -1 is
+							// the mark-unread SENTINEL (chat-utils: read
+							// ? 0 : -1 — "unread, count unknown"), not a
+							// count. Storing it literally poisoned the
+							// next real message's +1 delta into
+							// (-1) + 1 = 0 — a phantom read. Normalise
+							// it to "count unknown" (field cleared, the
+							// same end state the buffer's concatChats
+							// clamping produces) so the next delta
+							// counts from 0.
+							update = { ...update }
+							delete update.unreadCount
+							chat.unreadCount = undefined
 						}
 
 						Object.assign(chat, update)
@@ -272,7 +286,12 @@ const makeInMemoryStore = ({ logger: _logger, chatKey, labelAssociationKey }: Ba
 			}
 
 			// WhatsApp can store only up to 20 labels
-			if (labels.count() < 20) {
+			// AunuBaileys (2.3.0, HB-396): the cap gate used to count
+			// the label being edited itself, so at 20 labels a RENAME
+			// of an existing id — which adds nothing — was refused
+			// exactly like a brand-new label. An existing id always
+			// passes; the cap only gates genuinely new labels.
+			if (labels.findById(label.id) || labels.count() < 20) {
 				return labels.upsertById(label.id, label)
 			}
 
@@ -302,6 +321,34 @@ const makeInMemoryStore = ({ logger: _logger, chatKey, labelAssociationKey }: Ba
 				if (chats.get(item)) {
 					chats.deleteById(item)
 				}
+
+				// AunuBaileys (2.3.0, HB-373): the chat row was the
+				// only thing dropped — its messages, presences and
+				// label associations stayed behind, so loadMessage /
+				// mostRecentMessage / getChatLabels kept serving a
+				// chat that no longer exists and the structures grew
+				// with every deleted chat for the socket's lifetime.
+				delete messages[item]
+				delete presences[item]
+				for (const association of labelAssociations.filter((la: LabelAssociation) => la.chatId === item).all()) {
+					labelAssociations.delete(association)
+				}
+			}
+		})
+
+		ev.on('chats.lock', ({ id, locked }) => {
+			// AunuBaileys (2.3.0, HB-397): processSyncAction emits
+			// chats.lock for lockChatAction, but nothing consumed it
+			// and the store never persisted the state — a chat locked
+			// or unlocked on another device was invisible through
+			// store.chats. Persist it on the chat (Chat.locked). The
+			// field is not part of the chat sort key, so the update
+			// cannot collide on re-insert.
+			const result = chats.update(id, (chat: Chat) => {
+				chat.locked = locked
+			})
+			if (!result) {
+				logger.debug({ id, locked }, 'got lock update for non-existant chat')
 			}
 		})
 
@@ -506,7 +553,7 @@ const makeInMemoryStore = ({ logger: _logger, chatKey, labelAssociationKey }: Ba
 			const list = assertMessageList(jid)
 			for (const msg of entries) {
 				try {
-					list.upsert(proto.WebMessageInfo.fromObject(msg) as WAMessage, 'append')
+					list.upsert(waproto.WebMessageInfo.fromObject(msg) as WAMessage, 'append')
 				} catch (err) {
 					logger.warn({ jid, err }, 'aunu: skipped an unreadable message entry while loading the store')
 				}

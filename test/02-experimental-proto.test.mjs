@@ -37,7 +37,7 @@ test('(c) all 34 experimental methods exist and are callable on a constructed so
 })
 
 test('(c) proto round-trip: pollCreationMessageV6 with fields 9/10/11', () => {
-	const { proto } = lib
+	const { waproto: proto } = lib
 	const msg = proto.Message.create({
 		pollCreationMessageV6: {
 			name: 'Makan apa?',
@@ -73,7 +73,7 @@ test('(c) library poll path emits pollCreationMessageV6 when hideVoter/canAddOpt
 })
 
 test('(c) proto round-trip: plain message + stickerPackMessage shape', () => {
-	const { proto } = lib
+	const { waproto: proto } = lib
 	const bytes = proto.Message.encode(proto.Message.create({ conversation: 'halo' })).finish()
 	assert.equal(proto.Message.decode(bytes).conversation, 'halo')
 })

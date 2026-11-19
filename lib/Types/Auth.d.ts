@@ -1,4 +1,4 @@
-import type { proto } from '../../WAProto/index.js';
+import type { waproto } from '../../WAProto/index.js';
 import type { Contact } from './Contact.js';
 import type { MinimalMessage } from './Message.js';
 export type KeyPair = {
@@ -41,14 +41,14 @@ export type AccountSettings = {
     /** unarchive chats when a new message is received */
     unarchiveChats: boolean;
     /** the default mode to start new conversations with */
-    defaultDisappearingMode?: Pick<proto.IConversation, 'ephemeralExpiration' | 'ephemeralSettingTimestamp'>;
+    defaultDisappearingMode?: Pick<waproto.IConversation, 'ephemeralExpiration' | 'ephemeralSettingTimestamp'>;
 };
 export type AuthenticationCreds = SignalCreds & {
     readonly noiseKey: KeyPair;
     readonly pairingEphemeralKeyPair: KeyPair;
     advSecretKey: string;
     me?: Contact;
-    account?: proto.IADVSignedDeviceIdentity;
+    account?: waproto.IADVSignedDeviceIdentity;
     signalIdentities?: SignalIdentity[];
     myAppStateKeyId?: string;
     firstUnuploadedPreKeyId: number;
@@ -72,7 +72,7 @@ export type SignalDataTypeMap = {
     'sender-key-memory': {
         [jid: string]: boolean;
     };
-    'app-state-sync-key': proto.Message.IAppStateSyncKeyData;
+    'app-state-sync-key': waproto.Message.IAppStateSyncKeyData;
     'app-state-sync-version': LTHashState;
     'lid-mapping': string;
     'device-list': string[];

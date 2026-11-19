@@ -1,23 +1,23 @@
 import type { Readable } from 'stream'
 import type { URL } from 'url'
-import { proto } from '../../WAProto/index.js'
+import { waproto } from '../../WAProto/index.js'
 import type { MediaType } from '../Defaults'
 import type { BinaryNode } from '../WABinary'
 import type { GroupMetadata } from './GroupMetadata'
 import type { CacheStore } from './Socket'
 
 // export the WAMessage Prototypes
-export { proto as WAProto }
-export type WAMessage = proto.IWebMessageInfo & {
+export { waproto as WAProto }
+export type WAMessage = waproto.IWebMessageInfo & {
 	key: WAMessageKey
 	messageStubParameters?: any
 	category?: string
 	retryCount?: number
 }
-export type WAMessageContent = proto.IMessage
-export type WAContactMessage = proto.Message.IContactMessage
-export type WAContactsArrayMessage = proto.Message.IContactsArrayMessage
-export type WAMessageKey = proto.IMessageKey & {
+export type WAMessageContent = waproto.IMessage
+export type WAContactMessage = waproto.Message.IContactMessage
+export type WAContactsArrayMessage = waproto.Message.IContactsArrayMessage
+export type WAMessageKey = waproto.IMessageKey & {
 	remoteJidAlt?: string
 	remoteJidUsername?: string
 	participantAlt?: string
@@ -26,23 +26,23 @@ export type WAMessageKey = proto.IMessageKey & {
 	addressingMode?: string
 	isViewOnce?: boolean // TODO: remove out of the message key, place in WebMessageInfo
 }
-export type WATextMessage = proto.Message.IExtendedTextMessage
-export type WAContextInfo = proto.IContextInfo
-export type WALocationMessage = proto.Message.ILocationMessage
+export type WATextMessage = waproto.Message.IExtendedTextMessage
+export type WAContextInfo = waproto.IContextInfo
+export type WALocationMessage = waproto.Message.ILocationMessage
 export type WAGenericMediaMessage =
-	| proto.Message.IVideoMessage
-	| proto.Message.IImageMessage
-	| proto.Message.IAudioMessage
-	| proto.Message.IDocumentMessage
-	| proto.Message.IStickerMessage
-export const WAMessageStubType = proto.WebMessageInfo.StubType
-export const WAMessageStatus = proto.WebMessageInfo.Status
+	| waproto.Message.IVideoMessage
+	| waproto.Message.IImageMessage
+	| waproto.Message.IAudioMessage
+	| waproto.Message.IDocumentMessage
+	| waproto.Message.IStickerMessage
+export const WAMessageStubType = waproto.WebMessageInfo.StubType
+export const WAMessageStatus = waproto.WebMessageInfo.Status
 import type { ILogger } from '../Utils/logger'
 export type WAMediaPayloadURL = { url: URL | string }
 export type WAMediaPayloadStream = { stream: Readable }
 export type WAMediaUpload = Buffer | WAMediaPayloadStream | WAMediaPayloadURL
 /** Set of message types that are supported by the library */
-export type MessageType = keyof proto.Message
+export type MessageType = keyof waproto.Message
 
 export enum WAMessageAddressingMode {
 	PN = 'pn',
@@ -107,7 +107,7 @@ export interface WAUrlInfo {
 	title: string
 	description?: string
 	jpegThumbnail?: Buffer
-	highQualityThumbnail?: proto.Message.IImageMessage
+	highQualityThumbnail?: waproto.Message.IImageMessage
 	originalThumbnailUrl?: string
 }
 
@@ -120,7 +120,7 @@ type Mentionable = {
 }
 type Contextable = {
 	/** add contextInfo to the message */
-	contextInfo?: proto.IContextInfo
+	contextInfo?: waproto.IContextInfo
 }
 type ViewOnce = {
 	viewOnce?: boolean
@@ -235,7 +235,7 @@ export type GroupInviteInfo = {
 	subject: string
 }
 
-export type WASendableProduct = Omit<proto.Message.ProductMessage.IProductSnapshot, 'productImage'> & {
+export type WASendableProduct = Omit<waproto.Message.ProductMessage.IProductSnapshot, 'productImage'> & {
 	productImage: WAMediaUpload
 }
 
@@ -250,24 +250,24 @@ export type AIRichSubMessageContent = {
 	text?: string
 	code?: string
 	language?: string
-	table?: proto.IAIRichResponseTableMetadata
-	map?: proto.IAIRichResponseMapMetadata
-	mapMetadata?: proto.IAIRichResponseMapMetadata
+	table?: waproto.IAIRichResponseTableMetadata
+	map?: waproto.IAIRichResponseMapMetadata
+	mapMetadata?: waproto.IAIRichResponseMapMetadata
 	centerLatitude?: number
 	centerLongitude?: number
 	latitude?: number
 	longitude?: number
 	latitudeDelta?: number
 	longitudeDelta?: number
-	annotations?: proto.AIRichResponseMapMetadata.IAIRichResponseMapAnnotation[]
+	annotations?: waproto.AIRichResponseMapMetadata.IAIRichResponseMapAnnotation[]
 	showInfoList?: boolean
-	imageUrl?: string | proto.IAIRichResponseImageURL
+	imageUrl?: string | waproto.IAIRichResponseImageURL
 	url?: string
-	inlineImage?: string | proto.IAIRichResponseImageURL
+	inlineImage?: string | waproto.IAIRichResponseImageURL
 	imageText?: string
-	alignment?: proto.AIRichResponseInlineImageMetadata.AIRichResponseImageAlignment
+	alignment?: waproto.AIRichResponseInlineImageMetadata.AIRichResponseImageAlignment
 	tapLinkUrl?: string
-	raw?: proto.IAIRichResponseSubMessage
+	raw?: waproto.IAIRichResponseSubMessage
 }
 
 export type AnyRegularMessageContent = (
@@ -291,13 +291,13 @@ export type AnyRegularMessageContent = (
 	| {
 			contacts: {
 				displayName?: string
-				contacts: proto.Message.IContactMessage[]
+				contacts: waproto.Message.IContactMessage[]
 			}
 	  }
 	| {
 			location: WALocationMessage
 	  }
-	| { react: proto.Message.IReactionMessage }
+	| { react: waproto.Message.IReactionMessage }
 	| {
 			buttonReply: ButtonReplyInfo
 			type: 'template' | 'plain'
@@ -306,11 +306,11 @@ export type AnyRegularMessageContent = (
 			groupInvite: GroupInviteInfo
 	  }
 	| {
-			listReply: Omit<proto.Message.IListResponseMessage, 'contextInfo'>
+			listReply: Omit<waproto.Message.IListResponseMessage, 'contextInfo'>
 	  }
 	| {
 			pin: WAMessageKey
-			type: proto.PinInChat.Type
+			type: waproto.PinInChat.Type
 			/**
 			 * 24 hours, 7 days, 30 days
 			 */
@@ -465,7 +465,7 @@ export type MessageGenerationOptions = MessageContentGenerationOptions & Message
  */
 export type MessageUpsertType = 'append' | 'notify'
 
-export type MessageUserReceipt = proto.IUserReceipt
+export type MessageUserReceipt = waproto.IUserReceipt
 
 export type WAMessageUpdate = { update: Partial<WAMessage>; key: WAMessageKey }
 

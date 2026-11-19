@@ -1,5 +1,5 @@
 import { Boom } from '@hapi/boom'
-import { proto } from '../../WAProto/index.js'
+import { waproto } from '../../WAProto/index.js'
 import type {
 	AuthenticationCreds,
 	BaileysEventEmitter,
@@ -245,7 +245,7 @@ type EventContext = {
  * @returns list of SHA256 options
  */
 export function decryptPollVote(
-	{ encPayload, encIv }: proto.Message.IPollEncValue,
+	{ encPayload, encIv }: waproto.Message.IPollEncValue,
 	{ pollCreatorJid, pollMsgId, pollEncKey, voterJid }: PollContext
 ) {
 	const sign = Buffer.concat([
@@ -261,7 +261,7 @@ export function decryptPollVote(
 	const aad = toBinary(`${pollMsgId}\u0000${voterJid}`)
 
 	const decrypted = aesDecryptGCM(encPayload!, decKey, encIv!, aad)
-	return proto.Message.PollVoteMessage.decode(decrypted)
+	return waproto.Message.PollVoteMessage.decode(decrypted)
 
 	function toBinary(txt: string) {
 		return Buffer.from(txt)
@@ -275,7 +275,7 @@ export function decryptPollVote(
  * @returns event response message
  */
 export function decryptEventResponse(
-	{ encPayload, encIv }: proto.Message.IPollEncValue,
+	{ encPayload, encIv }: waproto.Message.IPollEncValue,
 	{ eventCreatorJid, eventMsgId, eventEncKey, responderJid }: EventContext
 ) {
 	const sign = Buffer.concat([
@@ -291,7 +291,7 @@ export function decryptEventResponse(
 	const aad = toBinary(`${eventMsgId}\u0000${responderJid}`)
 
 	const decrypted = aesDecryptGCM(encPayload!, decKey, encIv!, aad)
-	return proto.Message.EventResponseMessage.decode(decrypted)
+	return waproto.Message.EventResponseMessage.decode(decrypted)
 
 	function toBinary(txt: string) {
 		return Buffer.from(txt)
@@ -316,6 +316,8 @@ const processMessage = async (
 	// until pairing completes \u2014 a bare deref crashed history sync
 	// for unpaired states; the comparisons below tolerate undefined.
 	const meId = creds.me?.id ?? ''
+	// AunuBaileys (2.3.0, HB-391): own LID is needed alongside the PN id to recognise self in LID-addressed groups.
+	const meLid = creds.me?.lid ?? ''
 	const { accountSettings } = creds
 
 	const chat: Partial<Chat> = { id: jidNormalizedUser(getChatId(message.key)) }
@@ -361,11 +363,11 @@ const processMessage = async (
 		// for the reference architecture — whatsmeow's `handleProtocolMessage`
 		// only contains self-only types because edits are unwrapped from
 		// `EditedMessage` BEFORE this dispatch and revokes aren't routed here.
-		const SELF_ONLY_TYPES = new Set<proto.Message.ProtocolMessage.Type>([
-			proto.Message.ProtocolMessage.Type.HISTORY_SYNC_NOTIFICATION,
-			proto.Message.ProtocolMessage.Type.APP_STATE_SYNC_KEY_SHARE,
-			proto.Message.ProtocolMessage.Type.LID_MIGRATION_MAPPING_SYNC,
-			proto.Message.ProtocolMessage.Type.PEER_DATA_OPERATION_REQUEST_RESPONSE_MESSAGE
+		const SELF_ONLY_TYPES = new Set<waproto.Message.ProtocolMessage.Type>([
+			waproto.Message.ProtocolMessage.Type.HISTORY_SYNC_NOTIFICATION,
+			waproto.Message.ProtocolMessage.Type.APP_STATE_SYNC_KEY_SHARE,
+			waproto.Message.ProtocolMessage.Type.LID_MIGRATION_MAPPING_SYNC,
+			waproto.Message.ProtocolMessage.Type.PEER_DATA_OPERATION_REQUEST_RESPONSE_MESSAGE
 		])
 		if (
 			protocolMsg.type !== null &&
@@ -381,7 +383,7 @@ const processMessage = async (
 		}
 
 		switch (protocolMsg.type) {
-			case proto.Message.ProtocolMessage.Type.HISTORY_SYNC_NOTIFICATION:
+			case waproto.Message.ProtocolMessage.Type.HISTORY_SYNC_NOTIFICATION:
 				const histNotification = protocolMsg.historySyncNotification!
 				const process = shouldProcessHistoryMsg
 				const isLatest = !creds.processedHistoryMessages?.length
@@ -397,47 +399,56 @@ const processMessage = async (
 				)
 
 				if (process) {
-					// TODO: investigate
-					if (histNotification.syncType !== proto.HistorySync.HistorySyncType.ON_DEMAND) {
-						// AunuBaileys (HB-259, re-applied P3): every bare
-						// 'creds.update' emit is guarded \u2014 the event is not
-						// bufferable, so a throwing host listener (e.g. saveCreds)
-						// used to reject the surrounding stanza handler and lose
-						// the work that followed the emit. Log and continue.
-						try {
-							ev.emit('creds.update', {
-								// AunuBaileys (2.1.0, HB-306): v6 capped this list at 50 — restore the cap so a long history sync cannot grow creds without bound.
-								processedHistoryMessages: [
-									...(creds.processedHistoryMessages || []).slice(-49),
-									{ key: message.key, messageTimestamp: message.messageTimestamp }
-								]
-							})
-						} catch (err) {
-							
+					// AunuBaileys (2.3.0, HB-388): download and process FIRST, mark processed only after success — the old order emitted the processedHistoryMessages mark before downloadAndProcessHistorySyncNotification, so a failed inflate/download lost the chunk silently (receipt already sent, no redelivery) while creds already claimed it processed. A download failure is now logged and swallowed instead of rejecting upsertMessage, leaving the chunk unmarked for a later sync.
+					let data: Awaited<ReturnType<typeof downloadAndProcessHistorySyncNotification>> | undefined
+					try {
+						data = await downloadAndProcessHistorySyncNotification(histNotification, options, logger)
+					} catch (err) {
+						logger?.warn(
+							{ err, msgId: message.key.id },
+							'failed to download/process history sync notification — chunk not marked processed'
+						)
+					}
+
+					if (data) {
+						if (data.lidPnMappings?.length) {
+							logger?.debug({ count: data.lidPnMappings.length }, 'processing LID-PN mappings from history sync')
+							await signalRepository.lidMapping
+								.storeLIDPNMappings(data.lidPnMappings)
+								.catch(err => logger?.warn({ err }, 'failed to store LID-PN mappings from history sync'))
 						}
+
+						await storeTcTokensFromHistorySync(data.chats, signalRepository, keyStore, logger)
+
+						// TODO: investigate
+						if (histNotification.syncType !== waproto.HistorySync.HistorySyncType.ON_DEMAND) {
+							// AunuBaileys (HB-259, re-applied P3): every bare
+							// 'creds.update' emit is guarded \u2014 the event is not
+							// bufferable, so a throwing host listener (e.g. saveCreds)
+							// used to reject the surrounding stanza handler and lose
+							// the work that followed the emit. Log and continue.
+							try {
+								ev.emit('creds.update', {
+									// AunuBaileys (2.1.0, HB-306): v6 capped this list at 50 — restore the cap so a long history sync cannot grow creds without bound.
+									processedHistoryMessages: [
+										...(creds.processedHistoryMessages || []).slice(-49),
+										{ key: message.key, messageTimestamp: message.messageTimestamp }
+									]
+								})
+							} catch (err) {}
+						}
+
+						ev.emit('messaging-history.set', {
+							...data,
+							isLatest: histNotification.syncType !== waproto.HistorySync.HistorySyncType.ON_DEMAND ? isLatest : undefined,
+							chunkOrder: histNotification.chunkOrder,
+							peerDataRequestSessionId: histNotification.peerDataRequestSessionId
+						})
 					}
-
-					const data = await downloadAndProcessHistorySyncNotification(histNotification, options, logger)
-
-					if (data.lidPnMappings?.length) {
-						logger?.debug({ count: data.lidPnMappings.length }, 'processing LID-PN mappings from history sync')
-						await signalRepository.lidMapping
-							.storeLIDPNMappings(data.lidPnMappings)
-							.catch(err => logger?.warn({ err }, 'failed to store LID-PN mappings from history sync'))
-					}
-
-					await storeTcTokensFromHistorySync(data.chats, signalRepository, keyStore, logger)
-
-					ev.emit('messaging-history.set', {
-						...data,
-						isLatest: histNotification.syncType !== proto.HistorySync.HistorySyncType.ON_DEMAND ? isLatest : undefined,
-						chunkOrder: histNotification.chunkOrder,
-						peerDataRequestSessionId: histNotification.peerDataRequestSessionId
-					})
 				}
 
 				break
-			case proto.Message.ProtocolMessage.Type.APP_STATE_SYNC_KEY_SHARE:
+			case waproto.Message.ProtocolMessage.Type.APP_STATE_SYNC_KEY_SHARE:
 				const keys = protocolMsg.appStateSyncKeyShare!.keys
 				if (keys?.length) {
 					let newAppStateSyncKeyId = ''
@@ -492,7 +503,7 @@ const processMessage = async (
 				}
 
 				break
-			case proto.Message.ProtocolMessage.Type.REVOKE:
+			case waproto.Message.ProtocolMessage.Type.REVOKE:
 				// AunuBaileys (2.1.0, HB-311): a REVOKE without a key used to throw here — skip the emit instead.
 				if (!protocolMsg.key?.id) {
 					logger?.warn({ protocolMsg }, 'recv REVOKE without a message key — skipping')
@@ -508,13 +519,13 @@ const processMessage = async (
 					}
 				])
 				break
-			case proto.Message.ProtocolMessage.Type.EPHEMERAL_SETTING:
+			case waproto.Message.ProtocolMessage.Type.EPHEMERAL_SETTING:
 				Object.assign(chat, {
 					ephemeralSettingTimestamp: toNumber(message.messageTimestamp),
 					ephemeralExpiration: protocolMsg.ephemeralExpiration || null
 				})
 				break
-			case proto.Message.ProtocolMessage.Type.PEER_DATA_OPERATION_REQUEST_RESPONSE_MESSAGE:
+			case waproto.Message.ProtocolMessage.Type.PEER_DATA_OPERATION_REQUEST_RESPONSE_MESSAGE:
 				const response = protocolMsg.peerDataOperationRequestResponseMessage!
 				if (response) {
 					// TODO: IMPLEMENT HISTORY SYNC ETC (sticker uploads etc.).
@@ -528,7 +539,7 @@ const processMessage = async (
 
 						//eslint-disable-next-line max-depth
 						try {
-							const webMessageInfo = proto.WebMessageInfo.decode(retryResponse.webMessageInfoBytes)
+							const webMessageInfo = waproto.WebMessageInfo.decode(retryResponse.webMessageInfoBytes)
 							const msgId = webMessageInfo.key?.id
 							// Retrieve cached original message data (preserves LID details,
 							// timestamps, etc. that the phone may omit in its PDO response)
@@ -567,7 +578,7 @@ const processMessage = async (
 				}
 
 				break
-			case proto.Message.ProtocolMessage.Type.MESSAGE_EDIT:
+			case waproto.Message.ProtocolMessage.Type.MESSAGE_EDIT:
 				ev.emit('messages.update', [
 					{
 						// flip the sender / fromMe properties because they're in the perspective of the sender
@@ -585,7 +596,7 @@ const processMessage = async (
 					}
 				])
 				break
-			case proto.Message.ProtocolMessage.Type.GROUP_MEMBER_LABEL_CHANGE:
+			case waproto.Message.ProtocolMessage.Type.GROUP_MEMBER_LABEL_CHANGE:
 				const labelAssociationMsg = protocolMsg.memberLabel
 				if (labelAssociationMsg?.label) {
 					ev.emit('group.member-tag.update', {
@@ -598,10 +609,10 @@ const processMessage = async (
 				}
 
 				break
-			case proto.Message.ProtocolMessage.Type.LID_MIGRATION_MAPPING_SYNC:
+			case waproto.Message.ProtocolMessage.Type.LID_MIGRATION_MAPPING_SYNC:
 				const encodedPayload = protocolMsg.lidMigrationMappingSyncMessage?.encodedMappingPayload!
 				const { pnToLidMappings, chatDbMigrationTimestamp } =
-					proto.LIDMigrationMappingSyncPayload.decode(encodedPayload)
+					waproto.LIDMigrationMappingSyncPayload.decode(encodedPayload)
 				logger?.debug({ pnToLidMappings, chatDbMigrationTimestamp }, 'got lid mappings and chat db migration timestamp')
 				const pairs = []
 				for (const { pn, latestLid, assignedLid } of pnToLidMappings) {
@@ -617,7 +628,7 @@ const processMessage = async (
 				}
 		}
 	} else if (content?.reactionMessage) {
-		const reaction: proto.IReaction = {
+		const reaction: waproto.IReaction = {
 			...content.reactionMessage,
 			key: message.key
 		}
@@ -727,7 +738,16 @@ const processMessage = async (
 			})
 		}
 
-		const participantsIncludesMe = () => participants.find(jid => areJidsSameUser(meId, jid.phoneNumber)) // ADD SUPPORT FOR LID
+		// AunuBaileys (2.3.0, HB-391): compare me.lid against the participant's id/lid as well as me.id against phoneNumber/id — a lid-only stanza carries no phone_number, so self add/remove/leave in a LID group was never recognised and chat.readOnly stayed wrong. Guard both sides of every comparison so areJidsSameUser(undefined, undefined) === true cannot false-positive on a malformed entry.
+		const participantsIncludesMe = () =>
+			participants.find(
+				p =>
+					!!p &&
+					((!!meId && !!p.phoneNumber && areJidsSameUser(meId, p.phoneNumber)) ||
+						(!!meId && !!p.id && areJidsSameUser(meId, p.id)) ||
+						(!!meLid && !!p.id && areJidsSameUser(meLid, p.id)) ||
+						(!!meLid && !!p.lid && areJidsSameUser(meLid, p.lid)))
+			)
 
 		// AunuBaileys (2.2.0, HB-320 addendum): the tolerant parse
 		// HB-320 gave CHANGE_NUMBER, shared by every sibling case

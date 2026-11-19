@@ -1,7 +1,7 @@
 import { Boom } from '@hapi/boom'
 import { randomBytes } from 'crypto'
 import Long from 'long'
-import { proto } from '../../WAProto/index.js'
+import { waproto } from '../../WAProto/index.js'
 import {
 	DEFAULT_CACHE_TTLS,
 	KEY_BUNDLE_TYPE,
@@ -83,6 +83,7 @@ import {
 	getBinaryNodeChildren,
 	getBinaryNodeChildString,
 	getBinaryNodeChildUInt,
+	isHostedPnUser,
 	isJidGroup,
 	isJidNewsletter,
 	isJidStatusBroadcast,
@@ -150,6 +151,32 @@ export const makeMessagesRecvSocket = (config: SocketConfig) => {
 
 	const getLIDForPN = signalRepository.lidMapping.getLIDForPN.bind(signalRepository.lidMapping)
 
+	// AunuBaileys (2.3.0, HB-94 addendum): canonical wire address
+	// for per-peer keyed state (session-recreate throttle, base-key
+	// detection, decrypt-failure strike counts). The same peer
+	// reaches those maps under whichever JID spelling the stanza
+	// carried (PN at one call site, LID at another), which split
+	// every key in two — the 1-hour recreate throttle was bypassed
+	// and base-key collisions were missed. Resolve PN spellings
+	// through the same LID mapping loadSession/storeSession use;
+	// ANY failure or absent mapping falls back to the raw address
+	// (today's behaviour) — this helper never throws.
+	const canonicalSignalAddr = async (jid: string): Promise<string> => {
+		const raw = signalRepository.jidToSignalProtocolAddress(jid)
+		try {
+			if (isPnUser(jid) || isHostedPnUser(jid)) {
+				const lid = await getLIDForPN(jid)
+				if (lid) {
+					return signalRepository.jidToSignalProtocolAddress(lid)
+				}
+			}
+		} catch {
+			// fall through to the raw address
+		}
+
+		return raw
+	}
+
 	/** this mutex ensures that each retryRequest will wait for the previous one to finish */
 	const retryMutex = makeMutex()
 
@@ -191,7 +218,7 @@ export const makeMessagesRecvSocket = (config: SocketConfig) => {
 			throw new Boom('Not authenticated')
 		}
 
-		const pdoMessage: proto.Message.IPeerDataOperationRequestMessage = {
+		const pdoMessage: waproto.Message.IPeerDataOperationRequestMessage = {
 			historySyncOnDemandRequest: {
 				chatJid: oldestMsgKey.remoteJid,
 				oldestMsgFromMe: oldestMsgKey.fromMe,
@@ -199,7 +226,7 @@ export const makeMessagesRecvSocket = (config: SocketConfig) => {
 				oldestMsgTimestampMs: oldestMsgTimestamp,
 				onDemandMsgCount: count
 			},
-			peerDataOperationRequestType: proto.Message.PeerDataOperationRequestType.HISTORY_SYNC_ON_DEMAND
+			peerDataOperationRequestType: waproto.Message.PeerDataOperationRequestType.HISTORY_SYNC_ON_DEMAND
 		}
 
 		return sendPeerDataOperationMessage(pdoMessage)
@@ -235,7 +262,7 @@ export const makeMessagesRecvSocket = (config: SocketConfig) => {
 					messageKey
 				}
 			],
-			peerDataOperationRequestType: proto.Message.PeerDataOperationRequestType.PLACEHOLDER_MESSAGE_RESEND
+			peerDataOperationRequestType: waproto.Message.PeerDataOperationRequestType.PLACEHOLDER_MESSAGE_RESEND
 		}
 
 		// AunuBaileys (2.1.0, sweep): this timer callback is a floating
@@ -563,8 +590,8 @@ export const makeMessagesRecvSocket = (config: SocketConfig) => {
 								typeof plaintextNode.content === 'string'
 									? Buffer.from(plaintextNode.content, 'binary')
 									: Buffer.from(plaintextNode.content as Uint8Array)
-							const messageProto = proto.Message.decode(contentBuf).toJSON()
-							const fullMessage = proto.WebMessageInfo.fromObject({
+							const messageProto = waproto.Message.decode(contentBuf).toJSON()
+							const fullMessage = waproto.WebMessageInfo.fromObject({
 								key: {
 									remoteJid: from,
 									id: child.attrs.message_id || child.attrs.server_id,
@@ -642,7 +669,7 @@ export const makeMessagesRecvSocket = (config: SocketConfig) => {
 					const buf = Buffer.isBuffer(plaintextNode.content)
 						? plaintextNode.content
 						: Buffer.from(plaintextNode.content as Uint8Array)
-					const message = proto.Message.decode(buf).toJSON()
+					const message = waproto.Message.decode(buf).toJSON()
 					content = { type, message, ...(mediaType ? { mediaType } : {}) }
 				} catch (err) {
 					logger.error({ err }, 'Failed to decode newsletter status plaintext')
@@ -813,20 +840,50 @@ export const makeMessagesRecvSocket = (config: SocketConfig) => {
 		let shouldRecreateSession = false
 		let recreateReason = ''
 
-		if (enableAutoSessionRecreation && messageRetryManager && retryCount > 1) {
+		// AunuBaileys (2.3.0, HB-380): the immediate-recreate MAC
+		// branch in shouldRecreateSession was dead — no caller ever
+		// passed the error code, and parseRetryErrorCode had no
+		// callers at all. Extract the code from a <retry> child when
+		// the stanza carries one and wire it through (a stanza
+		// without one keeps the old behaviour exactly).
+		const retryErrorCode =
+			messageRetryManager?.parseRetryErrorCode(getBinaryNodeChild(node, 'retry')?.attrs?.error) ?? undefined
+
+		if (
+			enableAutoSessionRecreation &&
+			messageRetryManager &&
+			(retryCount > 1 || messageRetryManager.isMacError(retryErrorCode))
+		) {
 			try {
 				// Check if we have a session with this JID
-				const sessionId = signalRepository.jidToSignalProtocolAddress(fromJid)
 				const hasSession = await signalRepository.validateSession(fromJid)
-				const result = messageRetryManager.shouldRecreateSession(fromJid, hasSession.exists)
-				shouldRecreateSession = result.recreate
-				recreateReason = result.reason
+				// AunuBaileys (2.3.0, HB-371): 'validation error'
+				// means the session store FAILED TO ANSWER (transient
+				// read error) — existence is unknown, and treating it
+				// as "no session" deleted a healthy session here.
+				// Unknown never deletes.
+				if (hasSession.reason === 'validation error') {
+					logger.debug({ fromJid, retryCount }, 'session validation inconclusive (store error); not recreating')
+				} else {
+					// AunuBaileys (2.3.0, HB-94 addendum): throttle key
+					// is the canonical wire address, not the raw JID.
+					const result = messageRetryManager.shouldRecreateSession(
+						await canonicalSignalAddr(fromJid),
+						hasSession.exists,
+						retryErrorCode
+					)
+					shouldRecreateSession = result.recreate
+					recreateReason = result.reason
 
-				if (shouldRecreateSession) {
-					logger.debug({ fromJid, retryCount, reason: recreateReason }, 'recreating session for retry')
-					// Delete existing session to force recreation
-					await authState.keys.set({ session: { [sessionId]: null } })
-					forceIncludeKeys = true
+					if (shouldRecreateSession) {
+						logger.debug({ fromJid, retryCount, reason: recreateReason }, 'recreating session for retry')
+						// Delete existing session to force recreation
+						// AunuBaileys (2.3.0, HB-377): through
+						// deleteSession, which resolves the LID wire
+						// key — the raw-address keys.set missed it.
+						await signalRepository.deleteSession([fromJid])
+						forceIncludeKeys = true
+					}
 				}
 			} catch (error) {
 				logger.warn({ error, fromJid }, 'failed to check session recreation')
@@ -1090,8 +1147,28 @@ export const makeMessagesRecvSocket = (config: SocketConfig) => {
 		const actingParticipantPn = fullNode.attrs.participant_pn
 		const actingParticipantUsername = fullNode.attrs.participant_username
 
-		const affectedParticipantLid = getBinaryNodeChild(child, 'participant')?.attrs?.jid || actingParticipantLid!
-		const affectedParticipantPn = getBinaryNodeChild(child, 'participant')?.attrs?.phone_number || actingParticipantPn!
+		// AunuBaileys (2.3.0, HB-2026-1112-40 addendum 3): the two
+		// lines below used to read the participant child's attrs
+		// RAW (jid / phone_number only) while the modify and
+		// add/remove branches in this same function already used
+		// participantIdOf's fallback chain (jid → phone_number →
+		// lid). A membership-request participant carrying only a
+		// lid was therefore replaced by the ACTOR in the stub
+		// params (the requester vanished; the admin was recorded
+		// as the requester), and in the revoked branch a
+		// double-malformed stanza made affected === acting ===
+		// undefined, which areJidsSameUser scores as EQUAL — every
+		// such revocation was misreported as 'revoked' instead of
+		// 'rejected'. Run the affected participant through the
+		// same chain (attrs.lid is its third source), falling back
+		// to the actor only when the chain resolves nothing.
+		const affectedParticipantAttrs = getBinaryNodeChild(child, 'participant')?.attrs
+		const affectedResolvedId = affectedParticipantAttrs ? participantIdOf(affectedParticipantAttrs) : undefined
+		const affectedParticipantLid = affectedResolvedId ?? actingParticipantLid!
+		const affectedParticipantPn =
+			affectedParticipantAttrs?.phone_number ||
+			(isPnUser(affectedResolvedId) ? affectedResolvedId : undefined) ||
+			actingParticipantPn!
 
 		switch (child?.tag) {
 			case 'create':
@@ -1121,7 +1198,7 @@ export const makeMessagesRecvSocket = (config: SocketConfig) => {
 			case 'not_ephemeral':
 				msg.message = {
 					protocolMessage: {
-						type: proto.Message.ProtocolMessage.Type.EPHEMERAL_SETTING,
+						type: waproto.Message.ProtocolMessage.Type.EPHEMERAL_SETTING,
 						ephemeralExpiration: +(child.attrs.expiration || 0)
 					}
 				}
@@ -1219,7 +1296,12 @@ export const makeMessagesRecvSocket = (config: SocketConfig) => {
 				]
 				break
 			case 'revoked_membership_requests':
-				const isDenied = areJidsSameUser(affectedParticipantLid, actingParticipantLid)
+				// AunuBaileys (2.3.0, HB-2026-1112-40 addendum 3):
+				// never let an unresolved id reach areJidsSameUser —
+				// (undefined, undefined) compares EQUAL there, which
+				// labelled every double-malformed revocation
+				// 'revoked' (self-revocation) instead of 'rejected'.
+				const isDenied = !!affectedParticipantLid && areJidsSameUser(affectedParticipantLid, actingParticipantLid)
 				// TODO: LIDMAPPING SUPPORT
 				msg.messageStubType = WAMessageStubType.GROUP_MEMBERSHIP_JOIN_APPROVAL_REQUEST_NON_ADMIN_ADD
 				msg.messageStubParameters = [
@@ -1650,9 +1732,9 @@ export const makeMessagesRecvSocket = (config: SocketConfig) => {
 		const msgId = ids[0]
 
 		// Try to get messages from cache first, then fallback to getMessage
-		const msgs: (proto.IMessage | undefined)[] = []
+		const msgs: (waproto.IMessage | undefined)[] = []
 		for (const id of ids) {
-			let msg: proto.IMessage | undefined
+			let msg: waproto.IMessage | undefined
 
 			// Try to get from retry cache first if enabled
 			if (messageRetryManager) {
@@ -1677,7 +1759,7 @@ export const makeMessagesRecvSocket = (config: SocketConfig) => {
 				try {
 					msg =
 						(await getMessage({ ...key, id })) ??
-						(sentMessageCacheFor(config, jid => aunuLid?.getAltJid(jid)).get(remoteJid, id) as proto.IMessage | undefined)
+						(sentMessageCacheFor(config, jid => aunuLid?.getAltJid(jid)).get(remoteJid, id) as waproto.IMessage | undefined)
 				} catch (err) {
 					logger.warn({ err, jid: remoteJid, id }, 'aunu: getMessage failed for one id in a retry batch; treating it as unavailable and continuing with the rest')
 					msg = undefined
@@ -1699,7 +1781,11 @@ export const makeMessagesRecvSocket = (config: SocketConfig) => {
 		// prevents the first message decryption failure
 		const sendToAll = !jidDecode(participant)?.device
 
-		const sessionId = signalRepository.jidToSignalProtocolAddress(participant)
+		// AunuBaileys (2.3.0, HB-94 addendum): the base-key map
+		// below is keyed by this address — canonicalise it, or the
+		// PN and LID spellings of the same peer split the map and
+		// collisions are missed (see canonicalSignalAddr).
+		const sessionId = await canonicalSignalAddr(participant)
 		let injectedFromBundle = false
 
 		const bundle = extractE2ESessionFromRetryReceipt(receiptNode)
@@ -1722,7 +1808,10 @@ export const makeMessagesRecvSocket = (config: SocketConfig) => {
 						{ participant, stored: info.registrationId, received: receivedRegId },
 						'reg id mismatch on retry without bundle, deleting session'
 					)
-					await authState.keys.set({ session: { [sessionId]: null } })
+					// AunuBaileys (2.3.0, HB-377): deleteSession
+					// resolves the LID wire key; the raw-address
+					// keys.set here missed it (silent no-op).
+					await signalRepository.deleteSession([participant])
 				}
 			}
 		}
@@ -1736,7 +1825,9 @@ export const makeMessagesRecvSocket = (config: SocketConfig) => {
 				} else if (retryCount > BASE_KEY_CHECK_RETRY) {
 					if (messageRetryManager.hasSameBaseKey(sessionId, msgId, info.baseKey)) {
 						logger.warn({ participant, retryCount }, 'base key collision on retry, forcing fresh session')
-						await authState.keys.set({ session: { [sessionId]: null } })
+						// AunuBaileys (2.3.0, HB-377): resolved
+						// delete (see the reg-id mismatch site above).
+						await signalRepository.deleteSession([participant])
 					}
 
 					messageRetryManager.deleteBaseKey(sessionId, msgId)
@@ -1747,16 +1838,36 @@ export const makeMessagesRecvSocket = (config: SocketConfig) => {
 		let shouldRecreateSession = false
 		let recreateReason = ''
 
-		if (enableAutoSessionRecreation && messageRetryManager && retryCount > 1 && !injectedFromBundle) {
+		// AunuBaileys (2.3.0, HB-380): wire the retry receipt's
+		// error code into shouldRecreateSession — the MAC branch
+		// was dead code while no caller passed it, so a receipt
+		// carrying error="7" (Bad MAC, session definitely out of
+		// sync) waited out the 1-hour throttle like a plain retry.
+		const retryErrorCode = messageRetryManager?.parseRetryErrorCode(retryNode?.attrs?.error) ?? undefined
+
+		if (
+			enableAutoSessionRecreation &&
+			messageRetryManager &&
+			(retryCount > 1 || messageRetryManager.isMacError(retryErrorCode)) &&
+			!injectedFromBundle
+		) {
 			try {
 				const hasSession = await signalRepository.validateSession(participant)
-				const result = messageRetryManager.shouldRecreateSession(participant, hasSession.exists)
-				shouldRecreateSession = result.recreate
-				recreateReason = result.reason
+				// AunuBaileys (2.3.0, HB-371): a 'validation error'
+				// verdict means existence is UNKNOWN (store read
+				// failed) — never delete on it.
+				if (hasSession.reason === 'validation error') {
+					logger.debug({ participant, retryCount }, 'session validation inconclusive (store error); not recreating')
+				} else {
+					const result = messageRetryManager.shouldRecreateSession(sessionId, hasSession.exists, retryErrorCode)
+					shouldRecreateSession = result.recreate
+					recreateReason = result.reason
 
-				if (shouldRecreateSession) {
-					logger.debug({ participant, retryCount, reason: recreateReason }, 'recreating session for outgoing retry')
-					await authState.keys.set({ session: { [sessionId]: null } })
+					if (shouldRecreateSession) {
+						logger.debug({ participant, retryCount, reason: recreateReason }, 'recreating session for outgoing retry')
+						// AunuBaileys (2.3.0, HB-377): resolved delete.
+						await signalRepository.deleteSession([participant])
+					}
 				}
 			} catch (error) {
 				logger.warn({ error, participant }, 'failed to check session recreation for outgoing retry')
@@ -1781,6 +1892,47 @@ export const makeMessagesRecvSocket = (config: SocketConfig) => {
 
 			if (msg && (await willSendMessageAgain(ids[i], participant))) {
 				await updateSendMessageAgainCount(ids[i], participant)
+
+				// AunuBaileys (2.3.0, HB-375): the retry cache holds
+				// the message as the host originally handed it over —
+				// PRE-patch — and relayMessage's isRetryResend branch
+				// encrypts that raw message directly, so the peer
+				// received different content on a resend than on the
+				// first send (and the DSM echo wrapped the raw inner
+				// message too). The normal send path runs
+				// patchMessageBeforeSending before encrypting; run
+				// the same hook here, once, over the message that is
+				// about to be resent. A hook failure or an unusable
+				// result falls back to the raw message (a resend of
+				// the original beats no resend); a per-jid array
+				// result contributes only the participant's entry.
+				let msgToResend = msg
+				if (config.patchMessageBeforeSending) {
+					try {
+						const patched = await config.patchMessageBeforeSending(msg, [participant])
+						if (Array.isArray(patched)) {
+							// Per-jid results carry { recipientJid, message }
+							// entries at runtime (the shape
+							// createParticipantNodes destructures).
+							const entries = patched as unknown as Array<{
+								recipientJid?: string
+								message?: waproto.IMessage
+							}>
+							const entry = entries.find(p => p?.recipientJid && areJidsSameUser(p.recipientJid, participant))
+							if (entry?.message) {
+								msgToResend = entry.message
+							}
+						} else if (patched && typeof patched === 'object' && Object.keys(patched).length > 0) {
+							msgToResend = patched
+						}
+					} catch (err) {
+						logger.warn(
+							{ err, jid: remoteJid, id: ids[i] },
+							'aunu: patchMessageBeforeSending failed for a retry resend; resending the original message'
+						)
+					}
+				}
+
 				const msgRelayOpts: MessageRelayOptions = { messageId: ids[i] }
 
 				if (sendToAll) {
@@ -1799,7 +1951,7 @@ export const makeMessagesRecvSocket = (config: SocketConfig) => {
 				// with the rest. (The FETCH stage above got the
 				// same isolation in P3 as HB-107.)
 				try {
-					await relayMessage(key.remoteJid!, msg, msgRelayOpts)
+					await relayMessage(key.remoteJid!, msgToResend, msgRelayOpts)
 				} catch (err) {
 					logger.warn(
 						{ err, jid: key.remoteJid, id: ids[i] },
@@ -1823,7 +1975,7 @@ export const makeMessagesRecvSocket = (config: SocketConfig) => {
 		const remoteJid = !isNodeFromMe || isJidGroup(attrs.from) ? attrs.from : attrs.recipient
 		const fromMe = !attrs.recipient || ((attrs.type === 'retry' || attrs.type === 'sender') && isNodeFromMe)
 
-		const key: proto.IMessageKey = {
+		const key: waproto.IMessageKey = {
 			remoteJid,
 			id: '',
 			fromMe,
@@ -1844,12 +1996,12 @@ export const makeMessagesRecvSocket = (config: SocketConfig) => {
 						typeof status !== 'undefined' &&
 						// basically, we only want to know when a message from us has been delivered to/read by the other person
 						// or another device of ours has read some messages
-						(status >= proto.WebMessageInfo.Status.SERVER_ACK || !isNodeFromMe)
+						(status >= waproto.WebMessageInfo.Status.SERVER_ACK || !isNodeFromMe)
 					) {
 						if (isJidGroup(remoteJid) || isJidStatusBroadcast(remoteJid!)) {
 							if (attrs.participant) {
 								const updateKey: keyof MessageUserReceipt =
-									status === proto.WebMessageInfo.Status.DELIVERY_ACK ? 'receiptTimestamp' : 'readTimestamp'
+									status === waproto.WebMessageInfo.Status.DELIVERY_ACK ? 'receiptTimestamp' : 'readTimestamp'
 								ev.emit(
 									'message-receipt.update',
 									ids.map(id => ({
@@ -1948,7 +2100,7 @@ export const makeMessagesRecvSocket = (config: SocketConfig) => {
 						msg.participant ??= node.attrs.participant
 						msg.messageTimestamp = +node.attrs.t!
 
-						const fullMsg = proto.WebMessageInfo.fromObject(msg) as WAMessage
+						const fullMsg = waproto.WebMessageInfo.fromObject(msg) as WAMessage
 						await upsertMessage(fullMsg, 'append')
 					}
 				})
@@ -2063,7 +2215,14 @@ export const makeMessagesRecvSocket = (config: SocketConfig) => {
 						return
 					}
 
-					const addr = signalRepository.jidToSignalProtocolAddress(author)
+					// AunuBaileys (2.3.0, HB-94 addendum): the strike
+					// counter is keyed by the CANONICAL wire address —
+					// the raw spelling split one author's failures
+					// across PN and LID keys, doubling the failures
+					// needed to reach the reset threshold. (Facet (c)
+					// of the addendum: applied as key consistency; its
+					// alternating-spelling trigger is not proven.)
+					const addr = await canonicalSignalAddr(author)
 					const failKey = isGroupMsg ? `sk:${msg.key.remoteJid}:${addr}` : addr
 					const fails = (decryptFailCounts.get(failKey) || 0) + 1
 
@@ -2085,7 +2244,33 @@ export const makeMessagesRecvSocket = (config: SocketConfig) => {
 					// forms (PN <-> LID alt) when known. A heal-step
 					// failure is logged and never blocks the retry
 					// receipt that follows.
-					const sessionLayerFailure = isUnrecoverableSessionError(msg?.messageStubParameters?.[0])
+					let sessionLayerFailure = isUnrecoverableSessionError(msg?.messageStubParameters?.[0])
+					// AunuBaileys (2.3.0, addendum HB-371 faset 2):
+					// 'No matching sessions found for message' is
+					// libsignal's AGGREGATE from decryptWithSessions —
+					// it is also what a plain Bad MAC on an EXISTING
+					// session produces (the real 'Bad MAC' text only
+					// reaches libsignal's console, never the thrown
+					// error). Classifying it as an unrecoverable
+					// session-layer failure reset healthy sessions on
+					// the FIRST Bad MAC and made the 3-strike Bad MAC
+					// path below unreachable for WhisperMessage. The
+					// aggregate only proves "no session" when there is
+					// provably no session record: demote it to the
+					// strike-counted class whenever a record exists —
+					// or whenever existence cannot be proven either
+					// way (validation error = unknown, never delete).
+					if (sessionLayerFailure && /no matching sessions found/i.test(msg?.messageStubParameters?.[0] || '')) {
+						try {
+							const validation = await signalRepository.validateSession(author)
+							if (validation.exists || validation.reason !== 'no session') {
+								sessionLayerFailure = false
+							}
+						} catch {
+							sessionLayerFailure = false
+						}
+					}
+
 					let healed = false
 					try {
 						const resetE2ESession = async () => {
@@ -2145,6 +2330,11 @@ export const makeMessagesRecvSocket = (config: SocketConfig) => {
 						messageId: node.attrs.id!,
 						timestamp: Date.now()
 					})
+
+					// AunuBaileys (2.3.0, HB-374): the caller forwards
+					// this into the retry receipt as forceIncludeKeys —
+					// see the CIPHERTEXT branch below.
+					return healed
 				}
 
 				if (msg.key?.remoteJid && msg.key?.id && msg.message && messageRetryManager) {
@@ -2152,7 +2342,7 @@ export const makeMessagesRecvSocket = (config: SocketConfig) => {
 				}
 
 				// message failed to decrypt
-				if (msg.messageStubType === proto.WebMessageInfo.StubType.CIPHERTEXT && msg.category !== 'peer') {
+				if (msg.messageStubType === waproto.WebMessageInfo.StubType.CIPHERTEXT && msg.category !== 'peer') {
 					if (msg?.messageStubParameters?.[0] === MISSING_KEYS_ERROR_TEXT) {
 						// AunuBaileys (1.0.82, HB-206, re-applied P3b): the 487 NACK stays,
 						// but the failure first flows through the counting / self-heal
@@ -2214,7 +2404,7 @@ export const makeMessagesRecvSocket = (config: SocketConfig) => {
 						// Upsert the CIPHERTEXT stub as a placeholder (like WA Web's processPlaceholderMsg),
 						// and store the requestId in stubParameters[1] so users can correlate
 						// with the incoming PDO response event.
-						const cleanKey: proto.IMessageKey = {
+						const cleanKey: waproto.IMessageKey = {
 							remoteJid: msg.key.remoteJid,
 							fromMe: msg.key.fromMe,
 							id: msg.key.id,
@@ -2277,7 +2467,20 @@ export const makeMessagesRecvSocket = (config: SocketConfig) => {
 						} else {
 							logger.debug('[handleMessage] Attempting retry request for failed decryption')
 
-							await emitDecryptFailure()
+							// AunuBaileys (2.3.0, HB-374): when the
+							// self-heal just reset the session, the
+							// retry receipt MUST carry fresh keys —
+							// at retryCount 1 none of sendRetryRequest's
+							// key-inclusion conditions held, so the
+							// peer re-encrypted under the session we
+							// had just deleted and the resend was
+							// guaranteed to fail (one round-trip and
+							// one retry-budget unit burned). The same
+							// applied when the 3-strike reset was
+							// triggered by a DIFFERENT message id than
+							// this one (strikes count per author, the
+							// receipt counts per message).
+							const healedBeforeRetry = (await emitDecryptFailure()) ?? false
 
 							// WAWeb only retry-receipts here; server emits PreKeyLow if prekeys run low.
 							await retryMutex.mutex(async () => {
@@ -2288,7 +2491,7 @@ export const makeMessagesRecvSocket = (config: SocketConfig) => {
 								}
 
 								const encNode = getBinaryNodeChild(node, 'enc')
-								await sendRetryRequest(node, !encNode)
+								await sendRetryRequest(node, !encNode || healedBeforeRetry)
 								if (retryRequestDelayMs) {
 									await delay(retryRequestDelayMs)
 								}
@@ -2673,7 +2876,7 @@ export const makeMessagesRecvSocket = (config: SocketConfig) => {
 			return
 		}
 
-			const protoMsg = proto.WebMessageInfo.fromObject(msg) as WAMessage
+			const protoMsg = waproto.WebMessageInfo.fromObject(msg) as WAMessage
 			// AunuBaileys (2.2.0, HB-356): this listener is the choke
 			// point — an upsert rejection here used to escape the
 			// emit as an unhandled rejection. The call event itself

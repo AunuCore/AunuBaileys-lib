@@ -1,5 +1,5 @@
 import EventEmitter from 'events'
-import type { proto } from '../../WAProto/index.js'
+import type { waproto } from '../../WAProto/index.js'
 import type {
 	BaileysEvent,
 	BaileysEventEmitter,
@@ -161,6 +161,15 @@ export const makeEventBuffer = (logger: ILogger): BaileysBufferableEventEmitter 
 					flush()
 				}
 			}, BUFFER_TIMEOUT_MS)
+		} else if (flushPendingTimeout) {
+			// AunuBaileys (2.3.0, HB-359 addendum): new work starting in
+			// the SAME session supersedes a debounced flush armed by
+			// work that already finished — left armed, the timer fired
+			// mid-work (its generation guard still matched) and ended
+			// the session under the replacement work. The new work's
+			// own completion arms a fresh timer.
+			clearTimeout(flushPendingTimeout)
+			flushPendingTimeout = null
 		}
 
 		// Always increment count when requested
@@ -169,6 +178,21 @@ export const makeEventBuffer = (logger: ILogger): BaileysBufferableEventEmitter 
 
 	function flush() {
 		if (!isBuffering) {
+			return false
+		}
+
+		// AunuBaileys (2.3.0, HB-359 addendum): a NESTED flush must not
+		// end an outer buffering session. processNodeWithBuffer pairs
+		// buffer()/flush() around every live stanza, so the first live
+		// stanza inside an outer session (initial sync, offline drain)
+		// used to flush everything, clear the 30s session timeout and
+		// leave the rest of the window unbuffered. Release one nesting
+		// level instead — the buffered data stays for the outer
+		// owner's flush, which proceeds once the count is back to <= 1
+		// (createBufferedFunction completions flush at 0 the same way).
+		if (bufferCount > 1) {
+			bufferCount -= 1
+			logger.debug({ bufferCount }, 'nested flush: released one buffer level, session continues')
 			return false
 		}
 
@@ -303,7 +327,15 @@ export const makeEventBuffer = (logger: ILogger): BaileysBufferableEventEmitter 
 					if (bufferCount === 1) {
 						const generation = bufferGeneration
 						setTimeout(() => {
-							if (isBuffering && bufferCount === 1 && generation === bufferGeneration) {
+							// AunuBaileys (2.3.0, HB-359 addendum): the
+							// fire-time guard used to require
+							// bufferCount === 1 — satisfied EXACTLY when
+							// replacement work had started in the same
+							// session (the finally below already dropped
+							// the count to 0, new work raised it back to
+							// 1), so the timer flushed mid-work. Only
+							// flush when no work is running anymore.
+							if (isBuffering && bufferCount === 0 && generation === bufferGeneration) {
 								flush()
 							}
 						}, 100) // Small delay to allow nested buffers
@@ -319,10 +351,16 @@ export const makeEventBuffer = (logger: ILogger): BaileysBufferableEventEmitter 
 						if (!flushPendingTimeout) {
 							const generation = bufferGeneration
 							flushPendingTimeout = setTimeout(() => {
-								if (generation === bufferGeneration) {
+								flushPendingTimeout = null
+								// AunuBaileys (2.3.0, HB-359 addendum):
+								// the generation alone does not prove the
+								// session is idle — replacement work in
+								// the same generation raises the count
+								// again, and this timer must not flush
+								// underneath it. That work's completion
+								// arms its own timer.
+								if (generation === bufferGeneration && bufferCount === 0) {
 									flush()
-								} else {
-									flushPendingTimeout = null
 								}
 							}, 100)
 						}
@@ -396,14 +434,25 @@ function append<E extends BufferableEvent>(
 				const id = chat.id || ''
 				const existingChat = data.historySets.chats[id]
 				if (existingChat) {
-					existingChat.endOfHistoryTransferType = chat.endOfHistoryTransferType
+					// AunuBaileys (2.3.0, HB-394): the same chat can
+					// legitimately arrive twice in one session
+					// (INITIAL_BOOTSTRAP, then RECENT) and the second
+					// snapshot is the fresher one — activity between
+					// the two generations makes its fields newer. Only
+					// endOfHistoryTransferType used to be copied; the
+					// rest (name, conversationTimestamp, unreadCount,
+					// archived, ...) was discarded and the flush
+					// delivered the stale first copy. Merge the new
+					// snapshot's present fields over the stored one.
+					Object.assign(existingChat, trimUndefined(chat))
+					absorbingChatUpdate(existingChat, true)
 				}
 
 				if (!existingChat && !historyCache.has(id)) {
 					data.historySets.chats[id] = chat
 					addHistoryCacheKey(historyCache, id)
 
-					absorbingChatUpdate(chat)
+					absorbingChatUpdate(chat, true)
 				}
 			}
 
@@ -433,9 +482,9 @@ function append<E extends BufferableEvent>(
 			data.historySets.empty = false
 			data.historySets.syncType = eventData.syncType
 			if (eventData.pastParticipants?.length) {
-				const merged = new Map<string, proto.IPastParticipants>()
-				const sigOf = (p: proto.IPastParticipant) => `${p.userJid || ''}:${p.leaveTs || ''}:${p.leaveReason || ''}`
-				const ingest = (entry: proto.IPastParticipants) => {
+				const merged = new Map<string, waproto.IPastParticipants>()
+				const sigOf = (p: waproto.IPastParticipant) => `${p.userJid || ''}:${p.leaveTs || ''}:${p.leaveReason || ''}`
+				const ingest = (entry: waproto.IPastParticipants) => {
 					const key = entry.groupJid ?? JSON.stringify(entry)
 					const existing = merged.get(key)
 					if (!existing) {
@@ -539,6 +588,24 @@ function append<E extends BufferableEvent>(
 				if (data.historySets.chats[chatId]) {
 					delete data.historySets.chats[chatId]
 				}
+
+				// AunuBaileys (2.3.0, HB-404): a message that arrived
+				// BEFORE the delete in this session is pre-delete —
+				// consolidateEvents emits chats.delete BEFORE
+				// messages.upsert in fixed category order, so without
+				// this the flush delivered the delete first and the
+				// older upsert after it, and the store's notify
+				// handler recreated the chat with a phantom unread
+				// (append type: the message itself survived
+				// loadMessage). Drop every buffered message event for
+				// this chat, the mirror of the keys-form
+				// messages.delete dropping its upsert above. Only
+				// events already buffered are dropped — a message
+				// arriving AFTER the delete in the same session is
+				// newer and must still recreate the chat, which the
+				// fixed emit order already delivers correctly
+				// (delete, then upsert).
+				dropBufferedMessagesForChat(chatId)
 			}
 
 			break
@@ -590,6 +657,20 @@ function append<E extends BufferableEvent>(
 		case 'messages.upsert':
 			const { messages, type } = eventData as BaileysEventMap['messages.upsert']
 			for (const message of messages) {
+				// AunuBaileys (2.3.0, HB-379): a clear-chat
+				// ({ all: true }) buffered EARLIER in this session must
+				// not wipe a message that arrived after it. Flush emits
+				// the consolidated map first and the delete-all events
+				// after it regardless of arrival order, so without this
+				// the newer message was delivered and then cleared.
+				// The later upsert cancels the pending delete-all for
+				// its chat — the reverse order already resolves at
+				// append time (a later keys-delete drops the upsert).
+				const remoteJid = message.key.remoteJid
+				if (remoteJid && data.messageDeleteAll[remoteJid]) {
+					delete data.messageDeleteAll[remoteJid]
+				}
+
 				const key = stringifyMessageKey(message.key)
 				let existing = data.messageUpserts[key]?.message
 				if (!existing) {
@@ -733,7 +814,39 @@ function append<E extends BufferableEvent>(
 			throw new Error(`"${event}" cannot be buffered`)
 	}
 
-	function absorbingChatUpdate(existing: Chat) {
+	function dropBufferedMessagesForChat(chatId: string) {
+		for (const keyStr of Object.keys(data.messageUpserts)) {
+			if (data.messageUpserts[keyStr]?.message.key.remoteJid === chatId) {
+				delete data.messageUpserts[keyStr]
+			}
+		}
+
+		for (const keyStr of Object.keys(data.messageUpdates)) {
+			if (data.messageUpdates[keyStr]?.key.remoteJid === chatId) {
+				delete data.messageUpdates[keyStr]
+			}
+		}
+
+		for (const keyStr of Object.keys(data.messageReactions)) {
+			if (data.messageReactions[keyStr]?.key.remoteJid === chatId) {
+				delete data.messageReactions[keyStr]
+			}
+		}
+
+		for (const keyStr of Object.keys(data.messageReceipts)) {
+			if (data.messageReceipts[keyStr]?.key.remoteJid === chatId) {
+				delete data.messageReceipts[keyStr]
+			}
+		}
+
+		for (const keyStr of Object.keys(data.historySets.messages)) {
+			if (data.historySets.messages[keyStr]?.key.remoteJid === chatId) {
+				delete data.historySets.messages[keyStr]
+			}
+		}
+	}
+
+	function absorbingChatUpdate(existing: Chat, fromHistorySet = false) {
 		const chatId = existing.id || ''
 		const update = data.chatUpdates[chatId]
 		if (update) {
@@ -741,7 +854,23 @@ function append<E extends BufferableEvent>(
 			if (conditionMatches) {
 				delete update.conditional
 				logger.debug({ chatId }, 'absorbed chat update in existing chat')
+				// AunuBaileys (2.3.0, HB-393): capture BEFORE the merge
+				// — concatChats assigns the merged result back into the
+				// update object, overwriting its unreadCount.
+				const updateUnreadCount = update.unreadCount
 				Object.assign(existing, concatChats(update as Chat, existing))
+				// AunuBaileys (2.3.0, HB-393): a pending app-state
+				// update absorbed into a HISTORY snapshot overlays
+				// state newer than the snapshot itself — an absolute
+				// unreadCount (0 mark-read, -1 mark-unread) in such an
+				// update must win over the snapshot's count, not be
+				// summed into it by concatChats. Live upserts are not
+				// snapshots: a message arriving after the read must
+				// still count, so this only applies to history chats.
+				if (fromHistorySet && typeof updateUnreadCount === 'number' && updateUnreadCount <= 0) {
+					existing.unreadCount = updateUnreadCount
+				}
+
 				delete data.chatUpdates[chatId]
 			} else if (conditionMatches === false) {
 				logger.debug({ chatId }, 'chat update condition fail, removing')
@@ -754,7 +883,13 @@ function append<E extends BufferableEvent>(
 		// decrement chat unread counter
 		// if the message has already been marked read by us
 		const chatId = message.key.remoteJid!
-		const chat = data.chatUpdates[chatId] || data.chatUpserts[chatId]
+		// AunuBaileys (2.3.0, HB-390): the chat may live ONLY in the
+		// history set — messaging-history.set stores it there, and a
+		// chats.update for it merges into that same object instead of
+		// creating a chatUpdates entry. The old lookup missed those
+		// chats entirely, so a READ receipt during history sync never
+		// decremented and the flushed chat kept a phantom +1.
+		const chat = data.historySets.chats[chatId] || data.chatUpdates[chatId] || data.chatUpserts[chatId]
 		if (
 			isRealMessage(message) &&
 			shouldIncrementChatUnread(message) &&
@@ -864,7 +999,13 @@ function concatChats<C extends Partial<Chat>>(a: C, b: Partial<Chat>) {
 
 	if (typeof a.unreadCount === 'number' && typeof b.unreadCount === 'number') {
 		b = { ...b }
-		if (b.unreadCount! >= 0) {
+		// AunuBaileys (2.3.0, HB-393): unreadCount 0 is an ABSOLUTE
+		// mark-read value (processSyncAction emits read ? 0 : -1), not
+		// a delta — summing it into the pending count swallowed the
+		// read whole (N + 0 = N) and the flushed chat stayed unread.
+		// Only positive counts are deltas and accumulate; 0 assigns,
+		// and a negative sentinel keeps passing through untouched.
+		if (b.unreadCount! > 0) {
 			b.unreadCount = Math.max(b.unreadCount!, 0) + Math.max(a.unreadCount, 0)
 		}
 	}

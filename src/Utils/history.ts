@@ -1,7 +1,7 @@
 import { pipeline } from 'stream/promises'
 import { promisify } from 'util'
 import { createInflate, inflate } from 'zlib'
-import { proto } from '../../WAProto/index.js'
+import { waproto } from '../../WAProto/index.js'
 import type { Chat, Contact, LIDMapping, WAMessage } from '../Types'
 import { WAMessageStubType } from '../Types'
 import { isHostedLidUser, isHostedPnUser, isLidUser, isPnUser } from '../WABinary'
@@ -12,7 +12,7 @@ import { downloadContentFromMessage } from './messages-media'
 
 const inflatePromise = promisify(inflate)
 
-const extractPnFromMessages = (messages: proto.IHistorySyncMsg[]): string | undefined => {
+const extractPnFromMessages = (messages: waproto.IHistorySyncMsg[]): string | undefined => {
 	for (const msgItem of messages) {
 		const message = msgItem.message
 		// Only extract from outgoing messages (fromMe: true) in 1:1 chats
@@ -30,7 +30,7 @@ const extractPnFromMessages = (messages: proto.IHistorySyncMsg[]): string | unde
 	return undefined
 }
 
-export const downloadHistory = async (msg: proto.Message.IHistorySyncNotification, options: RequestInit) => {
+export const downloadHistory = async (msg: waproto.Message.IHistorySyncNotification, options: RequestInit) => {
 	const stream = await downloadContentFromMessage(msg, 'md-msg-hist', { options })
 	// Pipe decrypted stream directly through zlib inflate
 	// This avoids allocating an intermediate buffer for the compressed data
@@ -40,11 +40,11 @@ export const downloadHistory = async (msg: proto.Message.IHistorySyncNotificatio
 	await pipeline(stream, inflater)
 
 	const buffer = Buffer.concat(chunks)
-	const syncData = proto.HistorySync.decode(buffer)
+	const syncData = waproto.HistorySync.decode(buffer)
 	return syncData
 }
 
-export const processHistoryMessage = (item: proto.IHistorySync, logger?: ILogger) => {
+export const processHistoryMessage = (item: waproto.IHistorySync, logger?: ILogger) => {
 	const messages: WAMessage[] = []
 	const contacts: Contact[] = []
 	const chats: Chat[] = []
@@ -60,10 +60,10 @@ export const processHistoryMessage = (item: proto.IHistorySync, logger?: ILogger
 	}
 
 	switch (item.syncType) {
-		case proto.HistorySync.HistorySyncType.INITIAL_BOOTSTRAP:
-		case proto.HistorySync.HistorySyncType.RECENT:
-		case proto.HistorySync.HistorySyncType.FULL:
-		case proto.HistorySync.HistorySyncType.ON_DEMAND:
+		case waproto.HistorySync.HistorySyncType.INITIAL_BOOTSTRAP:
+		case waproto.HistorySync.HistorySyncType.RECENT:
+		case waproto.HistorySync.HistorySyncType.FULL:
+		case waproto.HistorySync.HistorySyncType.ON_DEMAND:
 			for (const chat of item.conversations! as Chat[]) {
 				contacts.push({
 					id: chat.id!,
@@ -129,7 +129,7 @@ export const processHistoryMessage = (item: proto.IHistorySync, logger?: ILogger
 			}
 
 			break
-		case proto.HistorySync.HistorySyncType.PUSH_NAME:
+		case waproto.HistorySync.HistorySyncType.PUSH_NAME:
 			for (const c of item.pushnames!) {
 				contacts.push({ id: c.id!, notify: c.pushname! })
 			}
@@ -149,13 +149,13 @@ export const processHistoryMessage = (item: proto.IHistorySync, logger?: ILogger
 }
 
 export const downloadAndProcessHistorySyncNotification = async (
-	msg: proto.Message.IHistorySyncNotification,
+	msg: waproto.Message.IHistorySyncNotification,
 	options: RequestInit,
 	logger?: ILogger
 ) => {
-	let historyMsg: proto.HistorySync
+	let historyMsg: waproto.HistorySync
 	if (msg.initialHistBootstrapInlinePayload) {
-		historyMsg = proto.HistorySync.decode(await inflatePromise(msg.initialHistBootstrapInlinePayload))
+		historyMsg = waproto.HistorySync.decode(await inflatePromise(msg.initialHistBootstrapInlinePayload))
 	} else {
 		historyMsg = await downloadHistory(msg, options)
 	}
@@ -163,7 +163,7 @@ export const downloadAndProcessHistorySyncNotification = async (
 	return processHistoryMessage(historyMsg, logger)
 }
 
-export const getHistoryMsg = (message: proto.IMessage) => {
+export const getHistoryMsg = (message: waproto.IMessage) => {
 	const normalizedContent = !!message ? normalizeMessageContent(message) : undefined
 	const anyHistoryMsg = normalizedContent?.protocolMessage?.historySyncNotification!
 

@@ -75,6 +75,22 @@
  * 29. A2UI widget — `aunuSendA2UI`: send a declarative A2UI widget
  *     (Text/Image/Video/Button/Card/Column/Row) as an interactive
  *     message carrying `bloksWidget`.
+ * 36. Emoji sticker — `aunuSendEmojiSticker`: render one emoji
+ *     (single codepoint, VS16, skin tone or ZWJ sequence) as a large
+ *     transparent 512x512 WebP sticker from its Twemoji asset and
+ *     send it as a sticker message.
  */
+export declare const AUNU_EMOJI_STICKER_SIZE = 512;
+export declare const AUNU_TWEMOJI_ASSET_BASE_URL = "https://cdn.jsdelivr.net/gh/twitter/twemoji@14.0.2/assets/72x72/";
+/**
+ * Twemoji asset file name for one emoji: its codepoints as lowercase
+ * hex joined with '-'. U+FE0F (VS16) is dropped UNLESS the sequence
+ * contains a ZWJ (U+200D) — that is Twemoji's own file-naming rule
+ * (a lone heart is `2764.png`, while the rainbow-flag ZWJ sequence
+ * keeps its selector: `1f3f3-fe0f-200d-1f308.png`). Throws Boom 400
+ * for an empty or structurally invalid emoji string.
+ */
+export declare const aunuEmojiTwemojiFileName: (emoji: any) => string;
+export declare const aunuEmojiTwemojiAssetUrl: (emoji: any, assetBaseUrl: any) => string;
 export declare const attachAunuExperimental: (sock: any) => any;
 //# sourceMappingURL=aunu-experimental.d.ts.map

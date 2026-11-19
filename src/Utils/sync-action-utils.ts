@@ -1,4 +1,4 @@
-import { proto } from '../../WAProto/index.js'
+import { waproto } from '../../WAProto/index.js'
 import type { BaileysEventEmitter, BaileysEventMap, Contact } from '../Types'
 import { isLidUser, isPnUser } from '../WABinary'
 import type { ILogger } from './logger'
@@ -20,7 +20,7 @@ export type SyncActionResult = ContactsUpsertResult | LidMappingUpdateResult
  * Pure function - no side effects.
  */
 export const processContactAction = (
-	action: proto.SyncActionValue.IContactAction,
+	action: waproto.SyncActionValue.IContactAction,
 	id: string | undefined,
 	logger?: ILogger
 ): SyncActionResult[] => {

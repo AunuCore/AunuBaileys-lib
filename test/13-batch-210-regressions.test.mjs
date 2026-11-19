@@ -16,7 +16,7 @@ import { EventEmitter } from 'node:events'
 import { spawn } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 import { lib, makeOfflineSocket, fakeOpenTransport, waitFor, sleep, endQuietly, silentLogger, tmpDir } from './helpers.mjs'
-import { proto } from '../WAProto/index.js'
+import { waproto } from '../WAProto/index.js'
 import { encodeBinaryNode, decodeBinaryNode } from '../lib/WABinary/index.js'
 import { addTransactionCapability, initAuthCreds } from '../lib/Utils/auth-utils.js'
 import { makeLibSignalRepository } from '../lib/Signal/libsignal.js'
@@ -76,7 +76,7 @@ const decodeSentFrames = async sent => {
 const plaintextStanza = (from, recipient, id, extraAttrs = {}) => ({
 	tag: 'message',
 	attrs: { id, from, recipient, t: String(Math.floor(Date.now() / 1000)), type: 'text', ...extraAttrs },
-	content: [{ tag: 'plaintext', attrs: {}, content: proto.Message.encode({ conversation: 'hi' }).finish() }]
+	content: [{ tag: 'plaintext', attrs: {}, content: waproto.Message.encode({ conversation: 'hi' }).finish() }]
 })
 
 const setupSocket = async (t, extra = {}) => {
@@ -187,7 +187,7 @@ test('HB-334 (control): a delivered receipt for an incoming DM still routes to t
 	sock.ws.emit('CB:message', {
 		tag: 'message',
 		attrs: { id: 'HB334IN', from: PEER, t: String(Math.floor(Date.now() / 1000)), type: 'text' },
-		content: [{ tag: 'plaintext', attrs: {}, content: proto.Message.encode({ conversation: 'hi' }).finish() }]
+		content: [{ tag: 'plaintext', attrs: {}, content: waproto.Message.encode({ conversation: 'hi' }).finish() }]
 	})
 	const receipt = await waitFor(async () => findReceipt(sent), 8000).then(ok => (ok ? findReceipt(sent) : null))
 	assert.ok(receipt, 'no receipt frame was sent for the incoming DM')
@@ -209,7 +209,7 @@ const syncKeys = () => expandAppStateKeys(APP_STATE_KEY.keyData)
 // Replicates chat-utils generateMac (op byte + keyId + data + length,
 // HMAC-SHA512 truncated to 32) so hand-built records pass validateMacs.
 const valueMac = (operation, encContent, keyIdBytes, valueMacKey) => {
-	const opByte = operation === proto.SyncdMutation.SyncdOperation.SET ? 0x01 : 0x02
+	const opByte = operation === waproto.SyncdMutation.SyncdOperation.SET ? 0x01 : 0x02
 	const keyData = new Uint8Array(1 + keyIdBytes.length)
 	keyData[0] = opByte
 	keyData.set(keyIdBytes, 1)
@@ -227,7 +227,7 @@ const buildRecord = (syncActionBytes, indexBytes, withMac) => {
 	const encContent = aesEncrypt(syncActionBytes, keys.valueEncryptionKey)
 	const keyIdBytes = Buffer.from(MY_KEY_ID, 'base64')
 	const mac = withMac
-		? valueMac(proto.SyncdMutation.SyncdOperation.SET, encContent, keyIdBytes, keys.valueMacKey)
+		? valueMac(waproto.SyncdMutation.SyncdOperation.SET, encContent, keyIdBytes, keys.valueMacKey)
 		: Crypto.randomBytes(32)
 	return {
 		keyId: { id: keyIdBytes },
@@ -240,11 +240,11 @@ const buildRecord = (syncActionBytes, indexBytes, withMac) => {
 
 const goodIndex = ['conversation', 'jid-good', 'archive']
 const goodIndexBytes = Buffer.from(JSON.stringify(goodIndex))
-const goodActionBytes = () => proto.SyncActionData.encode({ index: goodIndexBytes }).finish()
+const goodActionBytes = () => waproto.SyncActionData.encode({ index: goodIndexBytes }).finish()
 
 test('sweep 1: a record with an unparseable SyncActionData index is skipped, the good record still applies', async () => {
 	const initial = newLTHashState()
-	const bad = buildRecord(proto.SyncActionData.encode({ index: Buffer.from('not-json{{{') }).finish(), Buffer.from('not-json{{{'), false)
+	const bad = buildRecord(waproto.SyncActionData.encode({ index: Buffer.from('not-json{{{') }).finish(), Buffer.from('not-json{{{'), false)
 	const good = buildRecord(goodActionBytes(), goodIndexBytes, false)
 	const seen = []
 	const result = await decodeSyncdMutations(
@@ -270,14 +270,14 @@ test('sweep 1: a throwing onMutation does not abort the patch', async () => {
 	const initial = newLTHashState()
 	const { record: good1 } = await (async () => {
 		const { patch } = await encodeSyncdPatch(
-			{ type: 'regular', index: ['conversation', 'jid-1', 'archive'], syncAction: { archiveChatAction: { archived: true } }, apiVersion: 0, operation: proto.SyncdMutation.SyncdOperation.SET },
+			{ type: 'regular', index: ['conversation', 'jid-1', 'archive'], syncAction: { archiveChatAction: { archived: true } }, apiVersion: 0, operation: waproto.SyncdMutation.SyncdOperation.SET },
 			MY_KEY_ID, initial, getAppStateSyncKey
 		)
 		return { record: patch.mutations[0].record }
 	})()
 	const { record: good2 } = await (async () => {
 		const { patch } = await encodeSyncdPatch(
-			{ type: 'regular', index: ['conversation', 'jid-2', 'archive'], syncAction: { archiveChatAction: { archived: true } }, apiVersion: 0, operation: proto.SyncdMutation.SyncdOperation.SET },
+			{ type: 'regular', index: ['conversation', 'jid-2', 'archive'], syncAction: { archiveChatAction: { archived: true } }, apiVersion: 0, operation: waproto.SyncdMutation.SyncdOperation.SET },
 			MY_KEY_ID, initial, getAppStateSyncKey
 		)
 		return { record: patch.mutations[0].record }
@@ -304,7 +304,7 @@ test('sweep 1: a record without an index is skipped under validateMacs (not a ra
 	await decodeSyncdMutations([control], initial, getAppStateSyncKey, m => seenControl.push(m.index), true)
 	assert.deepEqual(seenControl, [goodIndex], 'control record with a valid index must apply under validateMacs')
 
-	const noIndex = buildRecord(proto.SyncActionData.encode({}).finish(), null, true)
+	const noIndex = buildRecord(waproto.SyncActionData.encode({}).finish(), null, true)
 	const seen = []
 	const result = await decodeSyncdMutations(
 		[noIndex], initial, getAppStateSyncKey, m => seen.push(m.index), true
@@ -402,7 +402,7 @@ const stubCtx = () => ({
 
 const joinApprovalMsg = stubParameters => ({
 	key: { remoteJid: GROUP, id: 'STUB1', fromMe: false, participant: PEER },
-	messageStubType: proto.WebMessageInfo.StubType.GROUP_MEMBERSHIP_JOIN_APPROVAL_REQUEST_NON_ADMIN_ADD,
+	messageStubType: waproto.WebMessageInfo.StubType.GROUP_MEMBERSHIP_JOIN_APPROVAL_REQUEST_NON_ADMIN_ADD,
 	messageStubParameters: stubParameters,
 	messageTimestamp: Math.floor(Date.now() / 1000)
 })
@@ -523,7 +523,7 @@ const HOSTED_PN = '6281234567890@hosted'
 test('HB-335: generateLoginNode tolerates an undefined browser/version (falls back to the bundled defaults)', () => {
 	const loginUndefinedBrowser = generateLoginNode(PN, { ...DEFAULT_CONNECTION_CONFIG, browser: undefined })
 	assert.equal(loginUndefinedBrowser.userAgent.appVersion.primary, 2)
-	assert.equal(loginUndefinedBrowser.userAgent.platform, proto.ClientPayload.UserAgent.Platform.WEB)
+	assert.equal(loginUndefinedBrowser.userAgent.platform, waproto.ClientPayload.UserAgent.Platform.WEB)
 	const loginUndefinedVersion = generateLoginNode(PN, { ...DEFAULT_CONNECTION_CONFIG, version: undefined })
 	assert.equal(loginUndefinedVersion.userAgent.appVersion.primary, 2)
 	assert.equal(loginUndefinedVersion.userAgent.appVersion.secondary, 3000)
@@ -548,16 +548,16 @@ test('HB-335 (control): generateLoginNode with the defaults and with a valid cus
 		},
 		{ primary: 2, secondary: 3000, tertiary: 999 }
 	)
-	assert.equal(custom.userAgent.platform, proto.ClientPayload.UserAgent.Platform.WEB)
+	assert.equal(custom.userAgent.platform, waproto.ClientPayload.UserAgent.Platform.WEB)
 	const android = generateLoginNode(PN, { ...DEFAULT_CONNECTION_CONFIG, browser: ['X', 'Android', ''] })
-	assert.equal(android.userAgent.platform, proto.ClientPayload.UserAgent.Platform.ANDROID)
+	assert.equal(android.userAgent.platform, waproto.ClientPayload.UserAgent.Platform.ANDROID)
 })
 
 test('HB-335: generateRegistrationNode tolerates an undefined/short browser and an undefined version', () => {
 	const creds = initAuthCreds()
 	// The companion DeviceProps are encoded into devicePairingData.deviceProps -
 	// decode them back to observe which browser the node carries.
-	const regOs = node => proto.DeviceProps.decode(node.devicePairingData.deviceProps).os
+	const regOs = node => waproto.DeviceProps.decode(node.devicePairingData.deviceProps).os
 	const noBrowser = generateRegistrationNode(creds, { ...DEFAULT_CONNECTION_CONFIG, browser: undefined })
 	assert.equal(regOs(noBrowser), 'Chrome')
 	const noVersion = generateRegistrationNode(creds, { ...DEFAULT_CONNECTION_CONFIG, version: undefined })

@@ -1,11 +1,11 @@
-import type { proto } from '../../WAProto/index.js';
+import type { waproto } from '../../WAProto/index.js';
 import type { ILogger } from './logger.js';
 export interface RecentMessageKey {
     to: string;
     id: string;
 }
 export interface RecentMessage {
-    message: proto.IMessage;
+    message: waproto.IMessage;
     timestamp: number;
 }
 export interface SessionRecreateHistory {
@@ -55,7 +55,7 @@ export declare class MessageRetryManager {
     /**
      * Add a recent message to the cache for retry handling
      */
-    addRecentMessage(to: string, id: string, message: proto.IMessage): void;
+    addRecentMessage(to: string, id: string, message: waproto.IMessage): void;
     /**
      * Get a recent message from the cache
      */

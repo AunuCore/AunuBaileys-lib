@@ -1,5 +1,5 @@
 import { platform, release } from 'os'
-import { proto } from '../../WAProto/index.js'
+import { waproto } from '../../WAProto/index.js'
 import type { BrowsersMap } from '../Types'
 
 const PLATFORM_MAP = {
@@ -27,6 +27,6 @@ export const Browsers: BrowsersMap = {
 }
 
 export const getPlatformId = (browser: string) => {
-	const platformType = proto.DeviceProps.PlatformType[browser.toUpperCase() as any]
+	const platformType = waproto.DeviceProps.PlatformType[browser.toUpperCase() as any]
 	return platformType ? platformType.toString() : '1' //chrome
 }

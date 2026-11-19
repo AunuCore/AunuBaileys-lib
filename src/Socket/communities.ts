@@ -1,5 +1,5 @@
 import { Boom } from '@hapi/boom'
-import { proto } from '../../WAProto/index.js'
+import { waproto } from '../../WAProto/index.js'
 import {
 	type GroupMetadata,
 	type GroupParticipant,
@@ -364,7 +364,7 @@ export const makeCommunitiesSocket = (config: SocketConfig) => {
 		 * @param inviteMessage the message to accept
 		 */
 		communityAcceptInviteV4: ev.createBufferedFunction(
-			async (key: string | WAMessageKey, inviteMessage: proto.Message.IGroupInviteMessage) => {
+			async (key: string | WAMessageKey, inviteMessage: waproto.Message.IGroupInviteMessage) => {
 				key = typeof key === 'string' ? { remoteJid: key } : key
 				// AunuBaileys (2.1.0, HB-21/22): an invite message missing its fields used to throw a raw TypeError from .toString() — reject it as a caller-visible Boom 400 instead.
 				// AunuBaileys (2.2.0, HB-2026-1112-22 addendum 2):
@@ -399,7 +399,7 @@ export const makeCommunitiesSocket = (config: SocketConfig) => {
 				// update the invite message to be expired
 				if (key.id) {
 					// create new invite message that is expired
-					inviteMessage = proto.Message.GroupInviteMessage.fromObject(inviteMessage)
+					inviteMessage = waproto.Message.GroupInviteMessage.fromObject(inviteMessage)
 					inviteMessage.inviteExpiration = 0
 					inviteMessage.inviteCode = ''
 					ev.emit('messages.update', [

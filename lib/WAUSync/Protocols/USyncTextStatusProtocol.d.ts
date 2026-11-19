@@ -7,7 +7,7 @@ export declare class USyncTextStatusProtocol implements USyncQueryProtocol {
     parser(node: BinaryNode): {
         text: string | null;
         emoji: string | null;
-        setAt: Date;
+        setAt: Date | undefined;
         expiresAt: Date | null;
     } | null;
 }

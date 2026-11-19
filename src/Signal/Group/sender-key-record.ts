@@ -164,6 +164,18 @@ export class SenderKeyRecord {
 					this.senderKeyStates.push(new SenderKeyState(null, null, null, null, null, null, clean))
 				}
 			}
+
+			// AunuBaileys (2.3.0, addendum HB-345): the MAX_STATES
+			// cap was enforced only on the ADD path (one shift per
+			// addSenderKeyState) — a stored record carrying more
+			// than 5 valid states loaded ALL of them and stayed
+			// over the cap (round-trip stable). States are ordered
+			// oldest → newest (getSenderKeyState() reads the tail),
+			// so keep the newest MAX_STATES, exactly what repeated
+			// adds would have converged to.
+			if (this.senderKeyStates.length > this.MAX_STATES) {
+				this.senderKeyStates.splice(0, this.senderKeyStates.length - this.MAX_STATES)
+			}
 		}
 	}
 

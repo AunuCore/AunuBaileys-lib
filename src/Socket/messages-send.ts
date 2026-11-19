@@ -1,5 +1,5 @@
 import { Boom } from '@hapi/boom'
-import { proto } from '../../WAProto/index.js'
+import { waproto } from '../../WAProto/index.js'
 import { BIZ_BOT_SUPPORT_PAYLOAD, DEFAULT_CACHE_TTLS, WA_DEFAULT_EPHEMERAL } from '../Defaults'
 import type {
 	AnyMessageContent,
@@ -379,16 +379,45 @@ export const makeMessagesSocket = (config: SocketConfig) => {
 			const lidResults = result.list.filter(a => !!a.lid)
 			if (lidResults.length > 0) {
 				logger.trace('Storing LID maps from device call')
-				await signalRepository.lidMapping.storeLIDPNMappings(lidResults.map(a => ({ lid: a.lid as string, pn: a.id })))
+				const pairs = lidResults.map(a => ({ lid: a.lid as string, pn: a.id }))
+
+				// AunuBaileys (2.3.0, HB-399): EVERY lid returned here
+				// used to be force-refreshed below, although the
+				// comment said "newly mapped" — with the short device
+				// cache this ran on nearly every send: force=true
+				// skips validateSession, fetches a fresh bundle and
+				// injectE2ESession closes the peer's open device-0
+				// session and reopens it as pending. Determine which
+				// pairs are genuinely new by reading the persisted
+				// 'lid-mapping' store first (the same source
+				// storeLIDPNMappings checks); only those get the
+				// force-refresh. If the read fails, fall back to the
+				// old all-LIDs behaviour rather than skipping a
+				// needed refresh.
+				let newLids = pairs.map(p => p.lid)
+				try {
+					const pnUsers = pairs.map(p => jidDecode(p.pn)?.user).filter((u): u is string => !!u)
+					const existing = pnUsers.length ? await authState.keys.get('lid-mapping', pnUsers) : {}
+					newLids = pairs
+						.filter(p => {
+							const pnUser = jidDecode(p.pn)?.user
+							const lidUser = jidDecode(p.lid)?.user
+							return !!pnUser && !!lidUser && existing[pnUser] !== lidUser
+						})
+						.map(p => p.lid)
+				} catch (e) {
+					logger.warn({ e }, 'failed to read existing LID mappings; force-refreshing all returned LIDs')
+				}
+
+				await signalRepository.lidMapping.storeLIDPNMappings(pairs)
 
 				// Force-refresh sessions for newly mapped LIDs to align identity addressing
 				try {
-					const lids = lidResults.map(a => a.lid as string)
-					if (lids.length) {
-						await assertSessions(lids, true)
+					if (newLids.length) {
+						await assertSessions(newLids, true)
 					}
 				} catch (e) {
-					logger.warn({ e, count: lidResults.length }, 'failed to assert sessions for newly mapped LIDs')
+					logger.warn({ e, count: newLids.length }, 'failed to assert sessions for newly mapped LIDs')
 				}
 			}
 
@@ -474,7 +503,7 @@ export const makeMessagesSocket = (config: SocketConfig) => {
 			jid,
 			{
 				protocolMessage: {
-					type: proto.Message.ProtocolMessage.Type.GROUP_MEMBER_LABEL_CHANGE,
+					type: waproto.Message.ProtocolMessage.Type.GROUP_MEMBER_LABEL_CHANGE,
 					memberLabel: {
 						label: memberLabel?.slice(0, 30),
 						labelTimestamp: unixTimestampSeconds()
@@ -571,17 +600,17 @@ export const makeMessagesSocket = (config: SocketConfig) => {
 	}
 
 	const sendPeerDataOperationMessage = async (
-		pdoMessage: proto.Message.IPeerDataOperationRequestMessage
+		pdoMessage: waproto.Message.IPeerDataOperationRequestMessage
 	): Promise<string> => {
 		//TODO: for later, abstract the logic to send a Peer Message instead of just PDO - useful for App State Key Resync with phone
 		if (!authState.creds.me?.id) {
 			throw new Boom('Not authenticated')
 		}
 
-		const protocolMessage: proto.IMessage = {
+		const protocolMessage: waproto.IMessage = {
 			protocolMessage: {
 				peerDataOperationRequestMessage: pdoMessage,
-				type: proto.Message.ProtocolMessage.Type.PEER_DATA_OPERATION_REQUEST_MESSAGE
+				type: waproto.Message.ProtocolMessage.Type.PEER_DATA_OPERATION_REQUEST_MESSAGE
 			}
 		}
 
@@ -614,19 +643,19 @@ export const makeMessagesSocket = (config: SocketConfig) => {
 	// guards the ORIGINAL message and HB-212/HB-267 guard patch
 	// ARRAYS; the scalar/undefined result was never checked. A valid
 	// patched message is a non-empty plain object, like HB-253's test.
-	const assertValidPatchedMessage = (patched: unknown): proto.IMessage => {
+	const assertValidPatchedMessage = (patched: unknown): waproto.IMessage => {
 		if (!patched || typeof patched !== 'object' || Array.isArray(patched) || !Object.keys(patched).length) {
 			throw new Boom('patchMessageBeforeSending must return a non-empty message object', { statusCode: 400 })
 		}
 
-		return patched as proto.IMessage
+		return patched as waproto.IMessage
 	}
 
 	const createParticipantNodes = async (
 		recipientJids: string[],
-		message: proto.IMessage,
+		message: waproto.IMessage,
 		extraAttrs?: BinaryNode['attrs'],
-		dsmMessage?: proto.IMessage
+		dsmMessage?: waproto.IMessage
 	) => {
 		if (!recipientJids.length) {
 			return { nodes: [] as BinaryNode[], shouldIncludeDeviceIdentity: false }
@@ -716,10 +745,41 @@ export const makeMessagesSocket = (config: SocketConfig) => {
 						const ownLidUser = meLidUser
 
 						const isOwnUser = targetUser === ownPnUser || (ownLidUser && targetUser === ownLidUser)
-						const isExactSenderDevice = jid === meId || (meLid && jid === meLid)
+						// AunuBaileys (2.3.0, HB-403 addendum): the skip
+						// used to compare raw JID strings — jidEncode
+						// drops device 0, so a bare me.lid IS the
+						// device-0 JID as a string and the phone was
+						// skipped as the "exact sender device" (the
+						// HB-375 DSM fix made this site reachable: the
+						// echo used to arrive pre-wrapped). Compare the
+						// decoded (user, device) pair instead — mirror
+						// of the HB-403 partition fix in relayMessage.
+						const candidate = jidDecode(jid)
+						const senderDevice = jidDecode(meId)?.device ?? 0
+						const isExactSenderDevice =
+							!!candidate &&
+							(candidate.user === ownPnUser || (ownLidUser && candidate.user === ownLidUser)) &&
+							(candidate.device ?? 0) === senderDevice
 
 						if (isOwnUser && !isExactSenderDevice) {
-							msgToEncrypt = dsmMessage
+							// AunuBaileys (2.3.0, HB-375): the DSM envelope
+							// used to be encrypted verbatim — its inner
+							// message was the ORIGINAL message, so our own
+							// devices saw the pre-patch content while the
+							// peer received the patched text. Wrap this
+							// recipient's patched message in the envelope
+							// instead; the envelope's own fields
+							// (destinationJid, messageContextInfo) are
+							// preserved.
+							msgToEncrypt = dsmMessage.deviceSentMessage
+								? {
+										...dsmMessage,
+										deviceSentMessage: {
+											...dsmMessage.deviceSentMessage,
+											message: patchedMessage
+										}
+									}
+								: dsmMessage
 							logger.debug({ jid, targetUser }, 'Using DSM for own device')
 						}
 					}
@@ -766,7 +826,7 @@ export const makeMessagesSocket = (config: SocketConfig) => {
 
 	const relayMessage = async (
 		jid: string,
-		message: proto.IMessage,
+		message: waproto.IMessage,
 		{
 			messageId: msgId,
 			participant,
@@ -814,9 +874,9 @@ export const makeMessagesSocket = (config: SocketConfig) => {
 		const destinationJid = !isStatus ? finalJid : statusJid
 		const binaryNodeContent: BinaryNode[] = []
 		const devices: DeviceWithJid[] = []
-		let reportingMessage: proto.IMessage | undefined
+		let reportingMessage: waproto.IMessage | undefined
 
-		const meMsg: proto.IMessage = {
+		const meMsg: waproto.IMessage = {
 			deviceSentMessage: {
 				destinationJid,
 				message
@@ -831,16 +891,20 @@ export const makeMessagesSocket = (config: SocketConfig) => {
 				additionalAttributes = { ...additionalAttributes, device_fanout: 'false' }
 			}
 
-			const decodedParticipantJid = jidDecode(participant.jid)
-			if (!decodedParticipantJid) {
+			if (!jidDecode(participant.jid)) {
 				throw new Boom(`Invalid participant jid: ${participant.jid}`, { statusCode: 400 })
 			}
-			const { user, device } = decodedParticipantJid
-			devices.push({
-				user,
-				device,
-				jid: participant.jid
-			})
+
+			// AunuBaileys (2.3.0, HB-400): the retry participant used
+			// to ALSO be pushed into the fan-out `devices` list — the
+			// regular fan-out then encrypted the message for them
+			// into <participants>, and the isRetryResend block below
+			// encrypted it AGAIN into a direct <enc>: the same
+			// message encrypted twice for one device (server error
+			// 479, DMs and groups alike). The retry block is the one
+			// and only encryption for the participant; it asserts
+			// their session itself (see below). (Distinct mechanism
+			// from HB-375, which is about pre-patch content.)
 		}
 
 		// AunuBaileys (1.0.83, HB-178, re-applied P3b): the stanza built inside
@@ -872,7 +936,7 @@ export const makeMessagesSocket = (config: SocketConfig) => {
 				// an empty post while sendMessage resolved as success.
 				assertValidPatchedMessage(patched)
 
-				const bytes = encodeNewsletterMessage(patched as proto.IMessage)
+				const bytes = encodeNewsletterMessage(patched as waproto.IMessage)
 				binaryNodeContent.push({
 					tag: 'plaintext',
 					attrs: {},
@@ -1013,7 +1077,7 @@ export const makeMessagesSocket = (config: SocketConfig) => {
 				if (senderKeyRecipients.length) {
 					logger.debug({ senderKeyJids: senderKeyRecipients }, 'sending new sender key')
 
-					const senderKeyMsg: proto.IMessage = {
+					const senderKeyMsg: waproto.IMessage = {
 						senderKeyDistributionMessage: {
 							axolotlSenderKeyDistributionMessage: senderKeyDistributionMessage,
 							groupId: destinationJid
@@ -1107,9 +1171,21 @@ export const makeMessagesSocket = (config: SocketConfig) => {
 
 				const { user: ownUser } = ownDecoded
 				if (!participant) {
+					// AunuBaileys (2.3.0, HB-269 addendum 2): the
+					// .find dereferenced item.recipientJid without a
+					// guard — a null/undefined entry in the per-jid
+					// patch array threw a raw TypeError inside the
+					// transaction callback and killed the whole DM
+					// relay before any device enumeration. Skip bad
+					// entries (the sendMessagesAgain pattern); a null
+					// first entry falls back to the first usable one
+					// and to undefined, which the reporting-token
+					// site below already tolerates via ?.
 					const patchedForReporting = await patchMessageBeforeSending(message, [jid])
 					reportingMessage = Array.isArray(patchedForReporting)
-						? patchedForReporting.find(item => item.recipientJid === jid) || patchedForReporting[0]
+						? patchedForReporting.find(item => item?.recipientJid === jid) ||
+							patchedForReporting.find(item => item != null) ||
+							undefined
 						: patchedForReporting
 				}
 
@@ -1167,11 +1243,49 @@ export const makeMessagesSocket = (config: SocketConfig) => {
 				const allRecipients: string[] = []
 				const meRecipients: string[] = []
 				const otherRecipients: string[] = []
-				const { user: mePnUser } = jidDecode(meId)!
-				const { user: meLidUser } = meLid ? jidDecode(meLid)! : { user: null }
+				// AunuBaileys (2.3.0, HB-282 addendum, sites 2+4): both
+				// own identities were destructured through bare
+				// jidDecode(...)! — a malformed stored me.id/me.lid
+				// threw a raw TypeError here. The site-3 guard above
+				// only validates ownId (meLid on the @lid branch, meId
+				// otherwise), so the OTHER identity was never checked.
+				// Guard both, consistent with site 3 (Boom 401).
+				const mePnDecoded = jidDecode(meId)
+				const meLidDecoded = meLid ? jidDecode(meLid) : undefined
+				if (!mePnDecoded || (meLid && !meLidDecoded)) {
+					throw new Boom('Not authenticated', { statusCode: 401 })
+				}
 
+				const { user: mePnUser } = mePnDecoded
+				const { user: meLidUser } = meLidDecoded ?? { user: null }
+
+				// AunuBaileys (2.3.0, HB-403): the sender device
+				// number — me.id carries it (e.g. :42 for a
+				// companion); a bare me.id means the sender IS
+				// device 0. jidDecode returns undefined for a
+				// device-0 JID, hence the ?? 0 normalisation on
+				// both sides.
+				const senderDevice = mePnDecoded.device ?? 0
 				for (const { user, jid } of devices) {
-					const isExactSenderDevice = jid === meId || (meLid && jid === meLid)
+					// AunuBaileys (2.3.0, HB-403): the skip used to
+					// compare raw JID strings — but jidEncode drops
+					// device 0, so a device-0 JID IS the bare user
+					// JID as a string. me.lid is bare by nature
+					// while me.id carries the companion device
+					// number, so for LID chats the phone itself
+					// (device 0) was skipped as the "exact sender
+					// device": the DSM echo to the phone vanished
+					// for every LID DM, and a LID self-chat with
+					// only device 0 resolved with an empty stanza.
+					// Compare the decoded (user, device) pair
+					// instead — skip only the device that is
+					// actually sending, under either identity
+					// (PN or LID addressing of the same device).
+					const candidate = jidDecode(jid)
+					const isExactSenderDevice =
+						!!candidate &&
+						(candidate.user === mePnUser || (meLidUser !== null && candidate.user === meLidUser)) &&
+						(candidate.device ?? 0) === senderDevice
 					if (isExactSenderDevice) {
 						logger.debug({ jid, meId, meLid }, 'Skipping exact sender device (whatsmeow pattern)')
 						continue
@@ -1218,8 +1332,13 @@ export const makeMessagesSocket = (config: SocketConfig) => {
 				// independently and fail only when the side that must
 				// deliver produced nothing.
 				const [meSettled, otherSettled] = await Promise.allSettled([
-					// For own devices: use DSM if available (1:1 chats only)
-					createParticipantNodes(meRecipients, meMsg || message, extraAttrs),
+					// For own devices: use DSM if available (1:1 chats only).
+					// AunuBaileys (2.3.0, HB-375): the plain message goes
+					// through the same patch + DSM-wrap path as the
+					// otherRecipients call — passing the pre-built meMsg
+					// wrapper as the message to patch left the DSM inner
+					// content unpatched (the hook only saw the wrapper).
+					createParticipantNodes(meRecipients, message, extraAttrs, meMsg),
 					createParticipantNodes(otherRecipients, message, extraAttrs, meMsg)
 				])
 
@@ -1293,6 +1412,12 @@ export const makeMessagesSocket = (config: SocketConfig) => {
 							}
 						})
 					: encodeWAMessage(messageToSend)
+
+				// AunuBaileys (2.3.0, HB-400): the fan-out used to
+				// assert the participant's session as a side effect of
+				// encrypting for them; with the fan-out push gone, the
+				// retry encryption asserts it explicitly.
+				await assertSessions([participant!.jid])
 
 				const { type, ciphertext: encryptedContent } = await signalRepository.encryptMessage({
 					data: encodedMessageToSend,
@@ -1499,8 +1624,19 @@ export const makeMessagesSocket = (config: SocketConfig) => {
 			// AunuBaileys (2.2.0, HB-71 addendum): only now — the
 			// stanza is on the wire — may the sender-key-memory map
 			// be persisted (see the group branch).
+			// AunuBaileys (2.3.0, HB-387): the persist used to be a
+			// BARE await — a host store failure rejected relayMessage
+			// for a message already on the wire AND skipped the
+			// sent-message cache, message-secret registration and
+			// retry-manager entry below. The in-memory map stays
+			// correct for this session and a restart redistributes,
+			// so a persist failure is a warning, never a failed send.
 			if (persistSenderKeyMemory) {
-				await persistSenderKeyMemory()
+				try {
+					await persistSenderKeyMemory()
+				} catch (err) {
+					logger.warn({ err }, 'aunu: failed to persist sender-key memory after a successful send; continuing')
+				}
 			}
 
 			sentMessageCacheFor(config).add(jid, msgId, message)
@@ -1516,7 +1652,7 @@ export const makeMessagesSocket = (config: SocketConfig) => {
 		return msgId
 	}
 
-	const getMessageType = (message: proto.IMessage) => {
+	const getMessageType = (message: waproto.IMessage) => {
 		const normalizedMessage = normalizeMessageContent(message)
 		if (!normalizedMessage) return 'text'
 
@@ -1544,7 +1680,7 @@ export const makeMessagesSocket = (config: SocketConfig) => {
 		return 'text'
 	}
 
-	const getMediaType = (message: proto.IMessage) => {
+	const getMediaType = (message: waproto.IMessage) => {
 		if (message.imageMessage) {
 			return 'image'
 		} else if (message.videoMessage) {
@@ -1673,8 +1809,8 @@ export const makeMessagesSocket = (config: SocketConfig) => {
 						} else {
 							try {
 								const media = decryptMediaRetryData(result.media!, mediaKey, result.key.id!)
-								if (media.result !== proto.MediaRetryNotification.ResultType.SUCCESS) {
-									const resultStr = proto.MediaRetryNotification.ResultType[media.result!]
+								if (media.result !== waproto.MediaRetryNotification.ResultType.SUCCESS) {
+									const resultStr = waproto.MediaRetryNotification.ResultType[media.result!]
 									throw new Boom(`Media re-upload failed by device (${resultStr})`, {
 										data: media,
 										statusCode: getStatusCodeForMediaRetry(media.result!) || 404

@@ -59,8 +59,16 @@ export const executeWMexQuery = async <T>(
 			throw new Boom('Failed to parse MEX response as JSON', { statusCode: 502, data: result })
 		}
 
-		if (Array.isArray(data.errors) && data.errors.length > 0) {
-			const errorMessages = data.errors.map(err => err.message || 'Unknown error').join(', ')
+		// AunuBaileys (2.3.0, HB-382): the parsed body itself can be
+		// `null` (a literal `null` is valid JSON) and individual
+		// `errors` entries can be null — both dereferenced bare
+		// below and escaped as raw TypeErrors instead of the Boom
+		// every other server-shape failure in this sweep produces.
+		// Optional-chain both: a null body falls through to the
+		// Boom 400 at the bottom, and a null error entry reads as
+		// 'Unknown error' with the sanitised 500 code.
+		if (Array.isArray(data?.errors) && data.errors.length > 0) {
+			const errorMessages = data.errors.map(err => err?.message || 'Unknown error').join(', ')
 			// length > 0 was just checked, so [0] exists — the `!` states that invariant.
 			const firstError = data.errors[0]!
 			// AunuBaileys (1.0.87, HB-211, re-applied P3): the server's
@@ -69,7 +77,7 @@ export const executeWMexQuery = async <T>(
 			// against the installed @hapi/boom: a string statusCode
 			// throws "First argument must be a number"). Sanitise like
 			// HB-42: only a numeric HTTP code survives, else 500.
-			const rawErrorCode = Number(firstError.extensions?.error_code)
+			const rawErrorCode = Number(firstError?.extensions?.error_code)
 			const errorCode = Number.isInteger(rawErrorCode) && rawErrorCode >= 400 && rawErrorCode <= 599 ? rawErrorCode : 500
 			throw new Boom(`GraphQL server error: ${errorMessages}`, { statusCode: errorCode, data: firstError })
 		}

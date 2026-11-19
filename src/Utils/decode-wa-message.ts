@@ -1,5 +1,5 @@
 import { Boom } from '@hapi/boom'
-import { proto } from '../../WAProto/index.js'
+import { waproto } from '../../WAProto/index.js'
 import type { WAMessage, WAMessageKey } from '../Types'
 import type { SignalRepositoryWithLIDStore } from '../Types/Signal'
 import {
@@ -361,7 +361,7 @@ export function decodeMessageNode(stanza: BinaryNode, meId: string | undefined, 
 	}
 
 	if (key.fromMe) {
-		fullMessage.status = proto.WebMessageInfo.Status.SERVER_ACK
+		fullMessage.status = waproto.WebMessageInfo.Status.SERVER_ACK
 	}
 
 	return {
@@ -427,8 +427,8 @@ export const decryptMessageNode = (
 						// the actual message — skip the certificate and
 						// carry on.
 						try {
-							const cert = proto.VerifiedNameCertificate.decode(content)
-							const details = proto.VerifiedNameCertificate.Details.decode(cert.details!)
+							const cert = waproto.VerifiedNameCertificate.decode(content)
+							const details = waproto.VerifiedNameCertificate.Details.decode(cert.details!)
 							fullMessage.verifiedBizName = details.verifiedName
 						} catch {}
 					}
@@ -492,7 +492,7 @@ export const decryptMessageNode = (
 									// message for content that was never read.
 									// Leave a CIPHERTEXT stub, like any other
 									// undecrypted content.
-									fullMessage.messageStubType = proto.WebMessageInfo.StubType.CIPHERTEXT
+									fullMessage.messageStubType = waproto.WebMessageInfo.StubType.CIPHERTEXT
 									fullMessage.messageStubParameters = [`msmsg streaming partial skipped (edit=${botType})`]
 									break
 								}
@@ -543,12 +543,12 @@ export const decryptMessageNode = (
 									// stub is the trace; messages-recv excludes
 									// the msmsg class from retry/fail counting
 									// (HB-170).
-									fullMessage.messageStubType = proto.WebMessageInfo.StubType.CIPHERTEXT
+									fullMessage.messageStubType = waproto.WebMessageInfo.StubType.CIPHERTEXT
 									fullMessage.messageStubParameters = ['msmsg: no candidate messageSecret found']
 									break
 								}
 
-								const msMsg = proto.MessageSecretMessage.decode(content)
+								const msMsg = waproto.MessageSecretMessage.decode(content)
 								const helperKey = {
 									participant: author,
 									meId: metaTargetSenderJid || (meLid ? `${meLid.split(':')[0]}@lid` : undefined),
@@ -596,10 +596,10 @@ export const decryptMessageNode = (
 							continue
 						}
 
-						let msg: proto.IMessage =
+						let msg: waproto.IMessage =
 							e2eType === 'msmsg'
 								? decodeDecryptedMsmsgMessage(msgBuffer)
-								: proto.Message.decode(e2eType !== 'plaintext' ? unpadRandomMax16(msgBuffer) : msgBuffer)
+								: waproto.Message.decode(e2eType !== 'plaintext' ? unpadRandomMax16(msgBuffer) : msgBuffer)
 						const outerMessageContextInfo = msg.messageContextInfo
 						msg = msg.deviceSentMessage?.message || msg
 						// deviceSentMessage.message may omit messageContextInfo (which carries the
@@ -636,7 +636,7 @@ export const decryptMessageNode = (
 
 						logger.error(errorContext, 'failed to decrypt message')
 
-						fullMessage.messageStubType = proto.WebMessageInfo.StubType.CIPHERTEXT
+						fullMessage.messageStubType = waproto.WebMessageInfo.StubType.CIPHERTEXT
 						fullMessage.messageStubParameters = [err.message.toString()]
 					}
 				}
@@ -646,14 +646,14 @@ export const decryptMessageNode = (
 			// several <enc> nodes; when at least one decrypted, the message
 			// is real — a CIPHERTEXT stub left behind by a sibling node's
 			// failure must not poison it.
-			if (fullMessage.message && fullMessage.messageStubType === proto.WebMessageInfo.StubType.CIPHERTEXT) {
+			if (fullMessage.message && fullMessage.messageStubType === waproto.WebMessageInfo.StubType.CIPHERTEXT) {
 				delete fullMessage.messageStubType
 				delete fullMessage.messageStubParameters
 			}
 
 			// if nothing was found to decrypt
 			if (!decryptables && !fullMessage.key?.isViewOnce) {
-				fullMessage.messageStubType = proto.WebMessageInfo.StubType.CIPHERTEXT
+				fullMessage.messageStubType = waproto.WebMessageInfo.StubType.CIPHERTEXT
 				fullMessage.messageStubParameters = [NO_MESSAGE_FOUND_ERROR_TEXT]
 			}
 		}

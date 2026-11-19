@@ -1,4 +1,4 @@
-import type { proto } from '../../WAProto'
+import type { waproto } from '../../WAProto'
 
 export type DayOfWeekBussines = 'sun' | 'mon' | 'tue' | 'wed' | 'thu' | 'fri' | 'sat'
 
@@ -17,4 +17,4 @@ export type UpdateBussinesProfileProps = {
 	}
 }
 
-export type QuickReplyAction = proto.SyncActionValue.IQuickReplyAction & { timestamp?: string }
+export type QuickReplyAction = waproto.SyncActionValue.IQuickReplyAction & { timestamp?: string }

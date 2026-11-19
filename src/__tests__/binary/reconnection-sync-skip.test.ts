@@ -1,5 +1,5 @@
 import { jest } from '@jest/globals'
-import { proto, type WAMessage } from '../..'
+import { waproto as proto, type WAMessage } from '../..'
 import { DEFAULT_CONNECTION_CONFIG } from '../../Defaults'
 import makeWASocket from '../../Socket'
 import { makeSession, mockWebSocket } from '../TestUtils/session'

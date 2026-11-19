@@ -67,7 +67,21 @@ export class GroupCipher {
 			senderKeyMessage.getCipherText()
 		)
 
-		await this.senderKeyStore.storeSenderKey(this.senderKeyName, record)
+		// AunuBaileys (2.3.0, addendum HB-350): the post-decrypt
+		// store was a bare await — a store failure threw out of
+		// decrypt() and discarded plaintext that had ALREADY been
+		// recovered, and the resulting stub fed the 3-strike
+		// self-heal against a healthy E2E session. Persisting the
+		// advanced sender-key state is bookkeeping: on failure the
+		// next message simply re-derives from the stored state (a
+		// replayed message key is still held by the state we
+		// loaded). Keep the plaintext.
+		try {
+			await this.senderKeyStore.storeSenderKey(this.senderKeyName, record)
+		} catch {
+			// plaintext already recovered — see the comment above
+		}
+
 		return plaintext
 	}
 

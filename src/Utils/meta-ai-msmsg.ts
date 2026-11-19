@@ -3,7 +3,7 @@
 // JavaScript module of the same name — behaviour and HB/version
 // annotations preserved verbatim; types are intentionally loose here
 // and tighten in a later pass.
-import { proto } from '../../WAProto/index.js';
+import { waproto } from '../../WAProto/index.js';
 import { aesDecryptGCM, hkdf } from './crypto.js';
 import { unpadRandomMax16 } from './generics.js';
 
@@ -77,7 +77,7 @@ export const decodeDecryptedMsmsgMessage = (decrypted) => {
     const buf = toBuffer(decrypted);
     try {
         const unpadded = Buffer.from(unpadRandomMax16(buf));
-        const decoded = proto.Message.decode(unpadded);
+        const decoded = waproto.Message.decode(unpadded);
         const hasContent = Object.keys(decoded).some(k => k !== 'messageContextInfo' && decoded[k] != null);
         if (hasContent) {
             return decoded;
@@ -86,7 +86,7 @@ export const decodeDecryptedMsmsgMessage = (decrypted) => {
     catch {
         // not padded — fall through and decode the raw buffer
     }
-    return proto.Message.decode(buf);
+    return waproto.Message.decode(buf);
 };
 /**
  * Decrypts <enc type="msmsg"> bot messages.

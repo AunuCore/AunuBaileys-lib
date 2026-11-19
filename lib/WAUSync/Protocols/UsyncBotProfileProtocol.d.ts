@@ -21,6 +21,6 @@ export declare class USyncBotProfileProtocol implements USyncQueryProtocol {
     name: string;
     getQueryElement(): BinaryNode;
     getUserElement(user: USyncUser): BinaryNode;
-    parser(node: BinaryNode): BotProfileInfo;
+    parser(node: BinaryNode): BotProfileInfo | null;
 }
 //# sourceMappingURL=UsyncBotProfileProtocol.d.ts.map

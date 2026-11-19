@@ -2,7 +2,7 @@ import { Boom } from '@hapi/boom'
 import { randomBytes } from 'crypto'
 import { URL } from 'url'
 import { promisify } from 'util'
-import { proto } from '../../WAProto/index.js'
+import { waproto } from '../../WAProto/index.js'
 import {
 	DEF_CALLBACK_PREFIX,
 	DEF_TAG_PREFIX,
@@ -285,6 +285,24 @@ export const makeSocket = (config: SocketConfig) => {
 
 	/** send a query, and wait for its response. auto-generates message ID if not provided */
 	const query = async (node: BinaryNode, timeoutMs?: number) => {
+		// AunuBaileys (2.3.0, HB-383 + addendum): a host-built node
+		// without `attrs` (or with null attrs) died here as a bare
+		// TypeError before anything was sent — encodeBinaryNode
+		// already tolerates a missing attrs (`attrs || {}`), so
+		// default it the same way. A non-object attrs (string,
+		// number, array) can never become a valid attribute map —
+		// assigning `.id` onto it throws a strict-mode TypeError —
+		// so reject it descriptively as a Boom 400 instead.
+		if (!node || typeof node !== 'object') {
+			throw new Boom('query: node must be a binary node object', { statusCode: 400 })
+		}
+
+		if (node.attrs === null || typeof node.attrs === 'undefined') {
+			node.attrs = {}
+		} else if (typeof node.attrs !== 'object' || Array.isArray(node.attrs)) {
+			throw new Boom('query: node.attrs must be an object', { statusCode: 400 })
+		}
+
 		if (!node.attrs.id) {
 			node.attrs.id = generateMessageTag()
 		}
@@ -573,17 +591,17 @@ export const makeSocket = (config: SocketConfig) => {
 
 	/** connection handshake */
 	const validateConnection = async () => {
-		let helloMsg: proto.IHandshakeMessage = {
+		let helloMsg: waproto.IHandshakeMessage = {
 			clientHello: { ephemeral: ephemeralKeyPair.public }
 		}
-		helloMsg = proto.HandshakeMessage.fromObject(helloMsg)
+		helloMsg = waproto.HandshakeMessage.fromObject(helloMsg)
 
 		logger.info({ browser, helloMsg }, 'connected to WA')
 
-		const init = proto.HandshakeMessage.encode(helloMsg).finish()
+		const init = waproto.HandshakeMessage.encode(helloMsg).finish()
 
 		const result = await awaitNextMessage<Uint8Array>(init)
-		const handshake = proto.HandshakeMessage.decode(result)
+		const handshake = waproto.HandshakeMessage.decode(result)
 
 		logger.trace({ handshake }, 'handshake recv from WA')
 
@@ -596,7 +614,7 @@ export const makeSocket = (config: SocketConfig) => {
 		const resolvedVersion = resolveSocketVersion(config, latestVersionOverride)
 		const connectConfig: SocketConfig = resolvedVersion === config.version ? config : { ...config, version: resolvedVersion }
 
-		let node: proto.IClientPayload
+		let node: waproto.IClientPayload
 		if (!creds.me) {
 			node = generateRegistrationNode(creds, connectConfig)
 			logger.info({ node }, 'not logged in, attempting registration...')
@@ -605,9 +623,9 @@ export const makeSocket = (config: SocketConfig) => {
 			logger.info({ node }, 'logging in...')
 		}
 
-		const payloadEnc = noise.encrypt(proto.ClientPayload.encode(node).finish())
+		const payloadEnc = noise.encrypt(waproto.ClientPayload.encode(node).finish())
 		await sendRawMessage(
-			proto.HandshakeMessage.encode({
+			waproto.HandshakeMessage.encode({
 				clientFinish: {
 					static: keyEnc,
 					payload: payloadEnc
@@ -688,15 +706,30 @@ export const makeSocket = (config: SocketConfig) => {
 		const uploadLogic = async (retryCount: number): Promise<void> => {
 			logger.info({ count, retryCount }, 'uploading pre-keys')
 
+			// AunuBaileys (2.3.0, HB-386): only `nextPreKeyId` may
+			// advance inside the transaction — it is the collision
+			// guard for key generation. `firstUnuploadedPreKeyId`
+			// is the advertisement pointer (getNextPreKeys only
+			// ever offers [firstUnuploaded, +count)), and advancing
+			// it before the upload was even attempted orphaned the
+			// whole batch on failure: every retry generated a FRESH
+			// batch and the failed one stayed on disk forever,
+			// never offered again. Defer it until the server has
+			// accepted the node — a retry then re-reads and
+			// re-offers the SAME stored batch instead of minting a
+			// new one.
+			let pendingFirstUnuploadedPreKeyId: number | undefined
 			// Generate and save pre-keys atomically (prevents ID collisions on retry)
 			const node = await keys.transaction(async () => {
 				logger.debug({ requestedCount: count }, 'generating pre-keys with requested count')
 				const { update, node } = await getNextPreKeysNode({ creds, keys }, count)
-				// Update credentials immediately to prevent duplicate IDs on retry
-				try {
-					ev.emit('creds.update', update)
-				} catch (err) {
-					logger.error({ err }, 'error in creds.update listener \u2014 continuing')
+				pendingFirstUnuploadedPreKeyId = update.firstUnuploadedPreKeyId
+				if (typeof update.nextPreKeyId === 'number') {
+					try {
+						ev.emit('creds.update', { nextPreKeyId: update.nextPreKeyId })
+					} catch (err) {
+						logger.error({ err }, 'error in creds.update listener \u2014 continuing')
+					}
 				}
 				return node
 			}, creds?.me?.id || 'upload-pre-keys')
@@ -704,15 +737,34 @@ export const makeSocket = (config: SocketConfig) => {
 			// Upload to server (outside transaction, can fail without affecting local keys)
 			try {
 				await query(node)
+				// AunuBaileys (2.3.0, HB-386): the upload landed —
+				// only now may the advertisement pointer move past
+				// this batch.
+				if (typeof pendingFirstUnuploadedPreKeyId === 'number') {
+					try {
+						ev.emit('creds.update', { firstUnuploadedPreKeyId: pendingFirstUnuploadedPreKeyId })
+					} catch (err) {
+						logger.error({ err }, 'error in creds.update listener \u2014 continuing')
+					}
+				}
+
 				logger.info({ count }, 'uploaded pre-keys successfully')
 			} catch (uploadError) {
 				logger.error({ uploadError: (uploadError as Error).toString(), count }, 'Failed to upload pre-keys to server')
 
 				// Recurse into uploadLogic; calling uploadPreKeys would await its own in-flight promise.
-				if (retryCount < 3) {
+				// AunuBaileys (2.3.0, HB-386 addendum): end() must stop
+				// the retry loop — a dead socket minting further
+				// batches in the background only burns key ids and
+				// writes files nobody will ever upload.
+				if (retryCount < 3 && !closed) {
 					const backoffDelay = Math.min(1000 * Math.pow(2, retryCount), 10000)
 					logger.info(`Retrying pre-key upload in ${backoffDelay}ms`)
 					await new Promise(resolve => setTimeout(resolve, backoffDelay))
+					if (closed) {
+						throw uploadError
+					}
+
 					return uploadLogic(retryCount + 1)
 				}
 
@@ -954,7 +1006,34 @@ export const makeSocket = (config: SocketConfig) => {
 		ws.removeAllListeners('open')
 		ws.removeAllListeners('message')
 
-		signalRepository.close?.()
+		// AunuBaileys (2.3.0, HB-376): `makeSignalRepository` is a
+		// public config option — a host repository whose close()
+		// throws (or returns a rejecting promise) is ordinary host
+		// code, and this was the ONLY unguarded step in end(): a
+		// sync throw aborted the teardown before the transport
+		// closed and before the close update was emitted (and every
+		// end() call site is `void end(...)`, so it surfaced as an
+		// unhandled rejection), while an async rejection floated
+		// unhandled. Log and continue, like every other step here.
+		try {
+			void Promise.resolve(signalRepository.close?.()).catch((err: unknown) => {
+				logger.error({ err }, 'error in signal repository close \u2014 continuing')
+			})
+		} catch (err) {
+			logger.error({ err }, 'error in signal repository close \u2014 continuing')
+		}
+
+		// AunuBaileys (2.3.0, HB-401): end() is this socket's
+		// lifecycle end — release its transaction AsyncLocalStorage
+		// (see disposeTransactionStorage in auth-utils). The wrapper
+		// is per-socket, so this cannot affect a reconnect's fresh
+		// wrapper; guarded like the close above so a failure here
+		// can never abort the teardown either.
+		try {
+			keys.disposeTransactionStorage?.()
+		} catch (err) {
+			logger.error({ err }, 'error disposing transaction storage \u2014 continuing')
+		}
 
 		if (!ws.isClosed && !ws.isClosing) {
 			try {
@@ -1411,6 +1490,18 @@ ws.on('error', mapWebSocketError(end))
 			updateServerTimeOffset(stanza)
 			const { reply, creds: updatedCreds } = configureSuccessfulPairing(stanza, creds)
 
+			// AunuBaileys (2.3.0, HB-389): pairing just succeeded —
+			// the QR chain has nothing left to do. It used to keep
+			// cycling on the shared qrTimer (only end() and
+			// CB:success cleared it), emitting QRs for an already
+			// paired session and, when the refs ran out before a
+			// delayed <success> arrived, killing the healthy fresh
+			// login with 'QR refs attempts ended'. Stop the chain
+			// here, and reset the flag so a later pair-device IQ on
+			// this socket is not ignored as a duplicate.
+			clearTimeout(qrTimer)
+			qrChainActive = false
+
 			logger.info(
 				{ me: updatedCreds.me, platform: updatedCreds.platform },
 				'pairing configured successfully, expect to restart the connection...'
@@ -1449,10 +1540,24 @@ ws.on('error', mapWebSocketError(end))
 
 		logger.info('opened connection to WA')
 		clearTimeout(qrTimer) // will never happen in all likelyhood -- but just in case WA sends success on first try
+		// AunuBaileys (2.3.0, HB-389): reset the chain flag alongside
+		// the timer — a stale `qrChainActive` made every later
+		// pair-device IQ on this socket a silently ignored
+		// 'duplicate', so a re-pairing request never produced a QR.
+		qrChainActive = false
 
 		try {
 			// AunuBaileys (2.1.0, HB-315): a CB:success without a lid attr used to wipe a known me.lid to undefined — and persist the loss.
-			ev.emit('creds.update', { me: { ...authState.creds.me!, lid: node.attrs.lid ?? authState.creds.me?.lid } })
+			// AunuBaileys (2.3.0, HB-315 addendum): with `creds.me`
+			// itself undefined (a partial creds restore), the spread
+			// produced a partial `{ lid }` / `{}` me that was then
+			// PERSISTED — the next boot took the login path on a
+			// truthy me with no id and looped on Boom 400. A success
+			// stanza carries no identity of its own, so when there
+			// is no complete me to update there is nothing to emit.
+			if (authState.creds.me?.id) {
+				ev.emit('creds.update', { me: { ...authState.creds.me, lid: node.attrs.lid ?? authState.creds.me.lid } })
+			}
 		} catch (err) {
 			logger.error({ err }, 'error in creds.update listener \u2014 continuing')
 		}
@@ -1477,7 +1582,16 @@ ws.on('error', mapWebSocketError(end))
 					// PN→LID, because migrateSession's only source is
 					// this list. Union with what is already stored.
 					const existingDeviceList = await authState.keys.get('device-list', [user])
-					const knownDevices = existingDeviceList[user] ?? []
+					// AunuBaileys (2.3.0, HB-317 addendum): second read
+					// site of the stored device-list — migrateSession
+					// got the HB-317 Array.isArray guard, this one did
+					// not: a stored string was spread into a persisted
+					// char array (or passed includes() silently), and
+					// a stored number threw, skipping the union and
+					// the migration. A non-array value is corrupt
+					// state: start from an empty list.
+					const storedDevices = existingDeviceList[user]
+					const knownDevices: string[] = Array.isArray(storedDevices) ? storedDevices : []
 					const currentDevice = device?.toString() || '0'
 					await authState.keys.set({
 						'device-list': {

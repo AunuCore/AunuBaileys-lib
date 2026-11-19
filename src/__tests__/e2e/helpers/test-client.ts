@@ -10,7 +10,7 @@ import makeWASocket, {
 	DisconnectReason,
 	jidNormalizedUser,
 	makeCacheableSignalKeyStore,
-	type proto,
+	type waproto,
 	useMultiFileAuthState
 } from '../../../index'
 import { postQrToMockPhone } from './mock-phone'
@@ -20,7 +20,7 @@ const DEFAULT_ADV_SECRET_KEY = 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA='
 const DEFAULT_TIMEOUT_MS = 30_000
 
 export type Socket = ReturnType<typeof makeWASocket>
-export type WAMessageInfo = proto.IWebMessageInfo
+export type WAMessageInfo = waproto.IWebMessageInfo
 export type MessagePredicate = (msg: WAMessageInfo) => boolean
 
 export interface TestClientOptions {

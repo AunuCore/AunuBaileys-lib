@@ -1,8 +1,8 @@
-import { proto } from '../../../WAProto/index.js'
+import { waproto } from '../../../WAProto/index.js'
 import { makeLtHashGenerator } from '../../Utils/chat-utils'
 
-const SET = proto.SyncdMutation.SyncdOperation.SET
-const REMOVE = proto.SyncdMutation.SyncdOperation.REMOVE
+const SET = waproto.SyncdMutation.SyncdOperation.SET
+const REMOVE = waproto.SyncdMutation.SyncdOperation.REMOVE
 
 describe('makeLtHashGenerator', () => {
 	const makeIndex = (id: string) => Buffer.from(id)

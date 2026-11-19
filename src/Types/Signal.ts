@@ -1,4 +1,4 @@
-import { proto } from '../../WAProto/index.js'
+import { waproto } from '../../WAProto/index.js'
 import type { LIDMappingStore } from '../Signal/lid-mapping'
 
 type DecryptGroupSignalOpts = {
@@ -8,7 +8,7 @@ type DecryptGroupSignalOpts = {
 }
 
 type ProcessSenderKeyDistributionMessageOpts = {
-	item: proto.Message.ISenderKeyDistributionMessage
+	item: waproto.Message.ISenderKeyDistributionMessage
 	authorJid: string
 }
 

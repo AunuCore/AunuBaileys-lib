@@ -1,5 +1,5 @@
-import { proto } from '../../WAProto/index.js';
-export declare const decodeDecryptedMsmsgMessage: (decrypted: any) => proto.Message;
+import { waproto } from '../../WAProto/index.js';
+export declare const decodeDecryptedMsmsgMessage: (decrypted: any) => waproto.Message;
 /**
  * Decrypts <enc type="msmsg"> bot messages.
  *

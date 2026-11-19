@@ -1,5 +1,5 @@
 import type Long from 'long';
-import { proto } from '../../WAProto/index.js';
+import { waproto } from '../../WAProto/index.js';
 import type { BaileysEventEmitter, BaileysEventMap, ConnectionState, WACallUpdateType, WAMessageKey, WAVersion } from '../Types/index.js';
 import { type BinaryNode } from '../WABinary/index.js';
 export declare const BufferJSON: {
@@ -11,7 +11,7 @@ export declare const isStringNullOrEmpty: (value: string | null | undefined) => 
 export declare const writeRandomPadMax16: (msg: Uint8Array) => Buffer<ArrayBuffer>;
 export declare const unpadRandomMax16: (e: Uint8Array | Buffer) => Uint8Array<ArrayBuffer>;
 export declare const generateParticipantHashV2: (participants: string[]) => string;
-export declare const encodeWAMessage: (message: proto.IMessage) => Buffer<ArrayBuffer>;
+export declare const encodeWAMessage: (message: waproto.IMessage) => Buffer<ArrayBuffer>;
 export declare const generateRegistrationId: () => number;
 export declare const encodeBigEndian: (e: number, t?: number) => Uint8Array<ArrayBuffer>;
 export declare const toNumber: (t: Long | number | null | undefined) => number;
@@ -62,7 +62,7 @@ export declare const generateMdTagPrefix: () => string;
  * Given a type of receipt, returns what the new status of the message should be
  * @param type type from receipt
  */
-export declare const getStatusFromReceiptType: (type: string | undefined) => proto.WebMessageInfo.Status | undefined;
+export declare const getStatusFromReceiptType: (type: string | undefined) => waproto.WebMessageInfo.Status | undefined;
 /**
  * Stream errors generally provide a reason, map that to a baileys DisconnectReason
  * @param reason the string reason given, eg. "conflict"
@@ -84,5 +84,5 @@ export declare function trimUndefined(obj: {
     [_: string]: any;
 };
 export declare function bytesToCrockford(buffer: Buffer): string;
-export declare function encodeNewsletterMessage(message: proto.IMessage): Uint8Array;
+export declare function encodeNewsletterMessage(message: waproto.IMessage): Uint8Array;
 //# sourceMappingURL=generics.d.ts.map

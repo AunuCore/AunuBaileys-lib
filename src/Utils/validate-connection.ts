@@ -1,6 +1,6 @@
 import { Boom } from '@hapi/boom'
 import { createHash } from 'crypto'
-import { proto } from '../../WAProto/index.js'
+import { waproto } from '../../WAProto/index.js'
 import {
 	KEY_BUNDLE_TYPE,
 	WA_ADV_ACCOUNT_SIG_PREFIX,
@@ -19,7 +19,7 @@ import { createSignalIdentity } from './signal'
 const isKeyMaterial = (value: unknown): value is Uint8Array | string =>
 	value instanceof Uint8Array || typeof value === 'string'
 
-const getUserAgent = (config: SocketConfig): proto.ClientPayload.IUserAgent => {
+const getUserAgent = (config: SocketConfig): waproto.ClientPayload.IUserAgent => {
 	// AunuBaileys (2.1.0, HB-335): restores the v6 1.0.70 guard (HB-65/HB-81),
 	// lost in the v7 rebase - a host overriding version/browser with
 	// undefined threw a raw TypeError here. The makeWASocket boundary
@@ -34,9 +34,9 @@ const getUserAgent = (config: SocketConfig): proto.ClientPayload.IUserAgent => {
 			tertiary: version[2]
 		},
 		platform: browserName.toLocaleLowerCase().includes('android')
-			? proto.ClientPayload.UserAgent.Platform.ANDROID
-			: proto.ClientPayload.UserAgent.Platform.WEB,
-		releaseChannel: proto.ClientPayload.UserAgent.ReleaseChannel.RELEASE,
+			? waproto.ClientPayload.UserAgent.Platform.ANDROID
+			: waproto.ClientPayload.UserAgent.Platform.WEB,
+		releaseChannel: waproto.ClientPayload.UserAgent.ReleaseChannel.RELEASE,
 		osVersion: '0.1',
 		device: 'Desktop',
 		osBuildNumber: '0.1',
@@ -49,12 +49,12 @@ const getUserAgent = (config: SocketConfig): proto.ClientPayload.IUserAgent => {
 }
 
 const PLATFORM_MAP = {
-	'Mac OS': proto.ClientPayload.WebInfo.WebSubPlatform.DARWIN,
-	Windows: proto.ClientPayload.WebInfo.WebSubPlatform.WIN_HYBRID
+	'Mac OS': waproto.ClientPayload.WebInfo.WebSubPlatform.DARWIN,
+	Windows: waproto.ClientPayload.WebInfo.WebSubPlatform.WIN_HYBRID
 }
 
-const getWebInfo = (config: SocketConfig): proto.ClientPayload.IWebInfo => {
-	let webSubPlatform = proto.ClientPayload.WebInfo.WebSubPlatform.WEB_BROWSER
+const getWebInfo = (config: SocketConfig): waproto.ClientPayload.IWebInfo => {
+	let webSubPlatform = waproto.ClientPayload.WebInfo.WebSubPlatform.WEB_BROWSER
 	if (
 		config.syncFullHistory &&
 		PLATFORM_MAP[config.browser?.[0] as keyof typeof PLATFORM_MAP] &&
@@ -67,9 +67,9 @@ const getWebInfo = (config: SocketConfig): proto.ClientPayload.IWebInfo => {
 }
 
 const getClientPayload = (config: SocketConfig) => {
-	const payload: proto.IClientPayload = {
-		connectType: proto.ClientPayload.ConnectType.WIFI_UNKNOWN,
-		connectReason: proto.ClientPayload.ConnectReason.USER_ACTIVATED,
+	const payload: waproto.IClientPayload = {
+		connectType: waproto.ClientPayload.ConnectType.WIFI_UNKNOWN,
+		connectReason: waproto.ClientPayload.ConnectReason.USER_ACTIVATED,
 		userAgent: getUserAgent(config)
 	}
 
@@ -84,7 +84,7 @@ const getClientPayload = (config: SocketConfig) => {
 	return payload
 }
 
-export const generateLoginNode = (userJid: string, config: SocketConfig): proto.IClientPayload => {
+export const generateLoginNode = (userJid: string, config: SocketConfig): waproto.IClientPayload => {
 	// AunuBaileys (1.0.70, HB-43 + 1.0.79 HB-234 facet, re-applied
 	// P3b): an undecodable own JID used to throw a bare TypeError
 	// here and loop the reconnect on every boot; a decodable but
@@ -112,7 +112,7 @@ export const generateLoginNode = (userJid: string, config: SocketConfig): proto.
 		throw new Boom(`Invalid own JID for login node: ${userJid}`, { statusCode: 400 })
 	}
 
-	const payload: proto.IClientPayload = {
+	const payload: waproto.IClientPayload = {
 		...getClientPayload(config),
 		passive: true,
 		pull: true,
@@ -121,18 +121,18 @@ export const generateLoginNode = (userJid: string, config: SocketConfig): proto.
 		// TODO: investigate (hard set as false atm)
 		lidDbMigrated: false
 	}
-	return proto.ClientPayload.fromObject(payload)
+	return waproto.ClientPayload.fromObject(payload)
 }
 
-const getPlatformType = (platform: string): proto.DeviceProps.PlatformType => {
+const getPlatformType = (platform: string): waproto.DeviceProps.PlatformType => {
 	const platformType = platform.toUpperCase()
 	if (platformType === 'ANDROID') {
-		return proto.DeviceProps.PlatformType.ANDROID_PHONE
+		return waproto.DeviceProps.PlatformType.ANDROID_PHONE
 	}
 
 	return (
-		proto.DeviceProps.PlatformType[platformType as keyof typeof proto.DeviceProps.PlatformType] ||
-		proto.DeviceProps.PlatformType.CHROME
+		waproto.DeviceProps.PlatformType[platformType as keyof typeof waproto.DeviceProps.PlatformType] ||
+		waproto.DeviceProps.PlatformType.CHROME
 	)
 }
 
@@ -174,7 +174,7 @@ export const generateRegistrationNode = (
 		.update(safeVersion.join('.')) // join as string
 		.digest()
 
-	const companion: proto.IDeviceProps = {
+	const companion: waproto.IDeviceProps = {
 		os: config.browser?.[0] || 'Chrome',
 		platformType: getPlatformType(config.browser?.[1] || 'Chrome'),
 		requireFullSync: config.syncFullHistory,
@@ -202,9 +202,9 @@ export const generateRegistrationNode = (
 		}
 	}
 
-	const companionProto = proto.DeviceProps.encode(companion).finish()
+	const companionProto = waproto.DeviceProps.encode(companion).finish()
 
-	const registerPayload: proto.IClientPayload = {
+	const registerPayload: waproto.IClientPayload = {
 		...getClientPayload(config),
 		passive: false,
 		pull: false,
@@ -223,7 +223,7 @@ export const generateRegistrationNode = (
 		}
 	}
 
-	return proto.ClientPayload.fromObject(registerPayload)
+	return waproto.ClientPayload.fromObject(registerPayload)
 }
 
 export const configureSuccessfulPairing = (
@@ -281,10 +281,10 @@ export const configureSuccessfulPairing = (
 	}
 	const lid = deviceNode.attrs.lid
 
-	const { details, hmac, accountType } = proto.ADVSignedDeviceIdentityHMAC.decode(deviceIdentityNode.content as Buffer)
+	const { details, hmac, accountType } = waproto.ADVSignedDeviceIdentityHMAC.decode(deviceIdentityNode.content as Buffer)
 
 	let hmacPrefix = Buffer.from([])
-	if (accountType !== undefined && accountType === proto.ADVEncryptionType.HOSTED) {
+	if (accountType !== undefined && accountType === waproto.ADVEncryptionType.HOSTED) {
 		hmacPrefix = WA_ADV_HOSTED_ACCOUNT_SIG_PREFIX
 	}
 
@@ -293,13 +293,13 @@ export const configureSuccessfulPairing = (
 		throw new Boom('Invalid account signature')
 	}
 
-	const account = proto.ADVSignedDeviceIdentity.decode(details!)
+	const account = waproto.ADVSignedDeviceIdentity.decode(details!)
 	const { accountSignatureKey, accountSignature, details: deviceDetails } = account
 
-	const deviceIdentity = proto.ADVDeviceIdentity.decode(deviceDetails!)
+	const deviceIdentity = waproto.ADVDeviceIdentity.decode(deviceDetails!)
 
 	const accountSignaturePrefix =
-		deviceIdentity.deviceType === proto.ADVEncryptionType.HOSTED
+		deviceIdentity.deviceType === waproto.ADVEncryptionType.HOSTED
 			? WA_ADV_HOSTED_ACCOUNT_SIG_PREFIX
 			: WA_ADV_ACCOUNT_SIG_PREFIX
 	// AunuBaileys (1.0.78, HB-157, re-applied P3b): Buffer.concat
@@ -326,6 +326,17 @@ export const configureSuccessfulPairing = (
 	const identity = createSignalIdentity(lid!, accountSignatureKey!)
 	const accountEnc = encodeSignedDeviceIdentity(account, false)
 
+	// AunuBaileys (2.3.0, HB-239 addendum): `keyIndex` is an
+	// optional proto field — protobufjs leaves it null when the
+	// device-identity omits it, and the bare `keyIndex!.toString()`
+	// in the reply below died as a raw TypeError, ending a pairing
+	// that had otherwise fully succeeded. Reject descriptively
+	// instead. The check must be `!= null`, not truthiness:
+	// keyIndex 0 is a legal index.
+	if (deviceIdentity.keyIndex == null) {
+		throw new Boom('Missing keyIndex on the device identity in pair success stanza', { data: stanza })
+	}
+
 	const reply: BinaryNode = {
 		tag: 'iq',
 		attrs: {
@@ -340,7 +351,7 @@ export const configureSuccessfulPairing = (
 				content: [
 					{
 						tag: 'device-identity',
-						attrs: { 'key-index': deviceIdentity.keyIndex!.toString() },
+						attrs: { 'key-index': deviceIdentity.keyIndex.toString() },
 						content: accountEnc
 					}
 				]
@@ -361,7 +372,7 @@ export const configureSuccessfulPairing = (
 	}
 }
 
-export const encodeSignedDeviceIdentity = (account: proto.IADVSignedDeviceIdentity, includeSignatureKey: boolean) => {
+export const encodeSignedDeviceIdentity = (account: waproto.IADVSignedDeviceIdentity, includeSignatureKey: boolean) => {
 	account = { ...account }
 	// set to null if we are not to include the signature key
 	// or if we are including the signature key but it is empty
@@ -369,5 +380,5 @@ export const encodeSignedDeviceIdentity = (account: proto.IADVSignedDeviceIdenti
 		account.accountSignatureKey = null
 	}
 
-	return proto.ADVSignedDeviceIdentity.encode(account).finish()
+	return waproto.ADVSignedDeviceIdentity.encode(account).finish()
 }

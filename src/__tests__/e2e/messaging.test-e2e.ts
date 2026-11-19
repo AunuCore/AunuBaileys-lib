@@ -1,5 +1,5 @@
 import { jest } from '@jest/globals'
-import { proto } from '../../index'
+import { waproto } from '../../index'
 import { TestClient } from './helpers/test-client'
 
 jest.setTimeout(60_000)
@@ -47,7 +47,7 @@ describe('Messaging (DM)', () => {
 		await received
 
 		const revokeReceived = bob.waitForMessage(
-			m => m.message?.protocolMessage?.type === proto.Message.ProtocolMessage.Type.REVOKE
+			m => m.message?.protocolMessage?.type === waproto.Message.ProtocolMessage.Type.REVOKE
 		)
 		await alice.sock.sendMessage(bob.meJid, { delete: sent!.key })
 
