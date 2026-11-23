@@ -184,7 +184,15 @@ export const parseAndInjectE2ESessions = async (
 		}
 
 		const value = getBinaryNodeChildBuffer(key, 'value')
-		if (!value) {
+		// AunuBaileys (2.4.0, HB-367 addendum): a <value> that is
+		// not exactly 32 bytes is not key material — the sibling
+		// extractE2ESessionFromRetryReceipt rejects the same
+		// lengths, but this path used to pass a 31-byte value
+		// through generateSignalPubKey and inject a phantom
+		// session that looked healthy locally (validateSession
+		// passed) yet failed at the peer with a Bad MAC. Treat a
+		// wrong-length value like a missing one.
+		if (!value || value.length !== 32) {
 			return undefined
 		}
 
@@ -223,8 +231,26 @@ export const parseAndInjectE2ESessions = async (
 					const key = getBinaryNodeChild(node, 'key')
 					const identity = getBinaryNodeChildBuffer(node, 'identity')
 					const jid = node.attrs.jid
-					if (!jid || !identity) {
-						throw new Error('key-bundle entry is missing jid or identity')
+					// AunuBaileys (2.4.0, HB-367 addendum): the
+					// identity key is key material too — a bundle
+					// whose <identity> is not exactly 32 bytes
+					// injects the same phantom session as a short
+					// pre-key (see extractKey above); the retry-
+					// receipt sibling rejects it the same way.
+					if (!jid || !identity || identity.length !== 32) {
+						throw new Error('key-bundle entry is missing jid or identity, or its identity is not 32 bytes')
+					}
+
+					// A signed pre-key is what the session is built
+					// on: a present-but-unusable <skey> (missing or
+					// wrong-length <value>, bad <id>) must skip the
+					// entry here instead of injecting a session
+					// without one. An absent <key> stays optional —
+					// libsignal accepts a session with no one-time
+					// pre-key.
+					const signedPreKey = extractKey(signedKey)
+					if (!signedPreKey) {
+						throw new Error('key-bundle entry has no valid signed pre-key')
 					}
 
 					const registrationId = getBinaryNodeChildUInt(node, 'registration', 4)
@@ -246,7 +272,7 @@ export const parseAndInjectE2ESessions = async (
 						session: {
 							registrationId: registrationId!,
 							identityKey: generateSignalPubKey(identity),
-							signedPreKey: extractKey(signedKey)!,
+							signedPreKey,
 							preKey: extractKey(key)
 						}
 					})

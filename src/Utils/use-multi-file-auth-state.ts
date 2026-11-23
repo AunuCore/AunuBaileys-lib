@@ -1,5 +1,5 @@
 import { Mutex } from './mutex'
-import { mkdir, open, readFile, readdir, rename, stat, unlink, writeFile } from 'fs/promises'
+import { chmod, mkdir, open, readFile, readdir, rename, stat, unlink, writeFile } from 'fs/promises'
 import type { ILogger } from './logger'
 import { join } from 'path'
 import { waproto } from '../../WAProto/index.js'
@@ -44,11 +44,38 @@ const getFileLock = (path: string): Mutex => {
  * */
 // AunuBaileys (HB-151, re-applied P3): the shape a complete creds
 // state must have at load (see the load site below).
+// AunuBaileys (2.4.0, HB-2026-1113-143 addendum 2 + HB-151 facets
+// 3/4): key material is checked by DECODED LENGTH, not just type —
+// Curve keys are exactly 32 bytes private / 32 or 33 bytes public
+// (33 = version-prefixed), the signed-pre-key signature is 64 bytes
+// and advSecretKey decodes to 32 bytes. String material is base64
+// (the HB-157 house format, same decoding as keyMaterialToBuffer).
+const keyMaterialLength = (value: any): number | undefined =>
+	Buffer.isBuffer(value) ? value.length : typeof value === 'string' ? Buffer.from(value, 'base64').length : undefined
 const isCredsKeyPair = (kp: any) =>
 	!!kp &&
 	typeof kp === 'object' &&
-	(Buffer.isBuffer(kp.private) || typeof kp.private === 'string') &&
-	(Buffer.isBuffer(kp.public) || typeof kp.public === 'string')
+	keyMaterialLength(kp.private) === 32 &&
+	(keyMaterialLength(kp.public) === 32 || keyMaterialLength(kp.public) === 33)
+// AunuBaileys (2.4.0, HB-315 addendum 2): when `me` is present it
+// must carry an own JID the login path can actually use — the same
+// rules generateLoginNode enforces (all-digit user, user server,
+// finite device). A partial me ({}, { lid }, { id: 123 },
+// { id: 'abc@…' }) used to pass this gate and loop every boot on
+// Boom 400 'Invalid own JID for login node'.
+const isValidOwnJid = (id: any): boolean => {
+	if (typeof id !== 'string') {
+		return false
+	}
+
+	const match = /^(\d+)(?::(\d+))?@s\.whatsapp\.net$/.exec(id)
+	if (!match) {
+		return false
+	}
+
+	const userValue = BigInt(match[1]!)
+	return userValue > 0n && userValue <= 9223372036854775807n
+}
 const isValidCredsShape = (creds: any) =>
 	!!creds &&
 	typeof creds === 'object' &&
@@ -56,12 +83,32 @@ const isValidCredsShape = (creds: any) =>
 	isCredsKeyPair(creds.noiseKey) &&
 	isCredsKeyPair(creds.signedIdentityKey) &&
 	isCredsKeyPair(creds.signedPreKey?.keyPair) &&
-	(Buffer.isBuffer(creds.signedPreKey?.signature) || typeof creds.signedPreKey?.signature === 'string') &&
+	keyMaterialLength(creds.signedPreKey?.signature) === 64 &&
 	Number.isFinite(creds.signedPreKey?.keyId) &&
 	Number.isFinite(creds.registrationId) &&
 	typeof creds.advSecretKey === 'string' &&
-	creds.advSecretKey.length > 0 &&
-	isCredsKeyPair(creds.pairingEphemeralKeyPair)
+	Buffer.from(creds.advSecretKey, 'base64').length === 32 &&
+	isCredsKeyPair(creds.pairingEphemeralKeyPair) &&
+	// AunuBaileys (2.4.0, HB-151 facet 6 + facet 1): a present
+	// processedHistoryMessages must be an array — a string/number
+	// poisoned the first history chunk's isLatest classification
+	// and spread into per-character entries on persist.
+	(creds.processedHistoryMessages === undefined || Array.isArray(creds.processedHistoryMessages)) &&
+	// AunuBaileys (2.4.0, HB-151 facet 2, SAPUAN): a present
+	// accountSyncCounter must be a finite number — a string turned
+	// the `+ 1` increments at the sync sites into concatenation.
+	(creds.accountSyncCounter === undefined || Number.isFinite(creds.accountSyncCounter)) &&
+	// AunuBaileys (2.4.0, HB-151 facet 3b, SAPUAN): a present
+	// registered flag must be boolean — the string 'false' read
+	// truthy and blocked pairing as 'already registered'.
+	(creds.registered === undefined || typeof creds.registered === 'boolean') &&
+	// AunuBaileys (2.4.0, HB-151 facet 5, SAPUAN): a present
+	// routingInfo must be a Buffer — any other truthy value made
+	// makeNoiseHandler compute Buffer.alloc(NaN) and throw a bare
+	// RangeError at every socket construction.
+	(creds.routingInfo === undefined || creds.routingInfo === null || Buffer.isBuffer(creds.routingInfo)) &&
+	// AunuBaileys (2.4.0, HB-315 addendum 2): see isValidOwnJid.
+	(creds.me === undefined || creds.me === null || isValidOwnJid(creds.me?.id))
 
 export const useMultiFileAuthState = async (
 	folder: string,
@@ -167,8 +214,18 @@ export const useMultiFileAuthState = async (
 			)
 		}
 	} else {
-		await mkdir(folder, { recursive: true })
+		// AunuBaileys (2.4.0, HB-116 addendum, run-0813): the auth
+		// folder itself must not be world-listable — HB-116 closed
+		// the FILES at 0600 but the folder was created with the OS
+		// default (0755), leaking peer JIDs via file names + mtimes.
+		await mkdir(folder, { recursive: true, mode: 0o700 })
 	}
+
+	// AunuBaileys (2.4.0, HB-116 addendum): a pre-existing folder
+	// keeps its old mode after the mkdir fix above, so tighten it on
+	// every boot as well. Best-effort: a filesystem that refuses the
+	// chmod must not brick auth loading.
+	await chmod(folder, 0o700).catch(() => {})
 
 	// AunuBaileys (2.2.0, HB-2026-1112-14 addendum): sweep tmp
 	// files orphaned by crashed/killed writers (the per-write
@@ -179,7 +236,39 @@ export const useMultiFileAuthState = async (
 		await Promise.all(
 			entries
 				.filter(name => name.includes('.tmp-'))
-				.map(name => unlink(join(folder, name)).catch(() => {}))
+				.map(async name => {
+					// AunuBaileys (2.4.0, HB-2026-1112-14 addendum 2,
+					// SAPUAN): the indiscriminate sweep also deleted
+					// tmp files of writers still alive in another
+					// process (or a second socket in this one) sharing
+					// the folder — their rename then failed ENOENT and
+					// the save was lost. Only sweep a tmp whose writer
+					// pid is provably dead; a non-pid suffix falls back
+					// to an age check (older than one hour).
+					const suffix = name.slice(name.lastIndexOf('.tmp-') + '.tmp-'.length)
+					if (/^\d+$/.test(suffix)) {
+						const pid = Number(suffix)
+						if (pid === process.pid) {
+							return
+						}
+
+						try {
+							process.kill(pid, 0)
+							return // writer still alive — leave its tmp alone
+						} catch (killErr) {
+							if ((killErr as NodeJS.ErrnoException)?.code !== 'ESRCH') {
+								return // EPERM etc. — the pid exists, treat as alive
+							}
+						}
+					} else {
+						const info = await stat(join(folder, name)).catch(() => undefined)
+						if (!info || Date.now() - info.mtimeMs < 3_600_000) {
+							return
+						}
+					}
+
+					await unlink(join(folder, name)).catch(() => {})
+				})
 		)
 	} catch {
 		// a sweep failure must never block boot
@@ -229,16 +318,34 @@ export const useMultiFileAuthState = async (
 					return data
 				},
 				set: async data => {
-					const tasks: Promise<void>[] = []
+					const writes: Promise<void>[] = []
+					// Removals are collected as THUNKS, not promises:
+					// invoking removeData() would start the unlink
+					// immediately, defeating the ordering below.
+					const removals: (() => Promise<void>)[] = []
 					for (const category in data) {
 						for (const id in data[category as keyof SignalDataTypeMap]) {
 							const value = data[category as keyof SignalDataTypeMap]![id]
 							const file = `${category}-${id}.json`
-							tasks.push(value ? writeData(value, file) : removeData(file))
+							if (value) {
+								writes.push(writeData(value, file))
+							} else {
+								removals.push(() => removeData(file))
+							}
 						}
 					}
 
-					await Promise.all(tasks)
+					// AunuBaileys (2.4.0, LINTAS HB-350 addendum):
+					// removals (in practice pre-key files) used to run
+					// in the same Promise.all fan-out as the writes —
+					// a fast unlink landed even when a sibling write
+					// (e.g. the session record) was still in flight or
+					// failed outright, so a redelivered pre-key message
+					// died permanently with 'Invalid PreKey ID'. Delete
+					// only after every write has succeeded; a failed
+					// write propagates and the removals never run.
+					await Promise.all(writes)
+					await Promise.all(removals.map(run => run()))
 				}
 			}
 		},

@@ -184,6 +184,12 @@ export const makeMessagesRecvSocket = (config: SocketConfig) => {
 	// backing the 'messages.decrypt-failure' event payload AND the
 	// Bad MAC self-heal that consumes it (wired in P3; cap as v6 1.0.70).
 	const decryptFailCounts = new Map<string, number>()
+	// AunuBaileys (2.4.0, HB-2026-1113-223 addendum ke-4): ids of
+	// messages this socket already decrypted successfully — a later
+	// failure carrying one of these ids is a redelivery of consumed
+	// content, not session damage. Bounded FIFO, same cap style as
+	// the strike map below.
+	const decryptedMessageIds = new Set<string>()
 	// AunuBaileys (v6 parity): consecutive failures before the Bad MAC self-heal resets the session
 	const DECRYPT_FAIL_SESSION_RESET_LIMIT = 3
 
@@ -2145,6 +2151,25 @@ export const makeMessagesRecvSocket = (config: SocketConfig) => {
 			// AunuBaileys (2.1.0, HB-308): me is undefined before CB:success — the throw here lost the message before decode could run.
 			} = decryptMessageNode(node, authState.creds.me?.id, authState.creds.me?.lid || '', signalRepository, logger)
 
+			// AunuBaileys (2.4.0, HB-2026-1113-223 addendum
+			// ke-4): a stanza whose id this socket already
+			// decrypted is a REDELIVERY (its ack was lost /
+			// offline replay). The message is already delivered
+			// and stored; running it through decrypt again can
+			// only fail — its message key is consumed — and
+			// every downstream failure path (strike counting in
+			// emitDecryptFailure, retry receipts, the retry
+			// path's auto session recreation) would punish a
+			// healthy session for a protocol-normal event.
+			// Re-ack the stanza and stop. (The emitDecryptFailure
+			// dedup further down remains as a second layer for
+			// paths that reach it without this check.)
+			if (encNode && msg.key.id && decryptedMessageIds.has(msg.key.id)) {
+				acked = true
+				await sendMessageAck(node)
+				return
+			}
+
 			const alt = msg.key.participantAlt || msg.key.remoteJidAlt
 			// store new mappings we didn't have before
 			if (!!alt) {
@@ -2177,6 +2202,33 @@ export const makeMessagesRecvSocket = (config: SocketConfig) => {
 
 			await messageMutex.mutex(async () => {
 				await decrypt()
+
+				// AunuBaileys (2.4.0, HB-2026-1113-223 addendum
+				// ke-4): remember successfully decrypted ids so a
+				// later redelivery of the same stanza is not counted
+				// as a decrypt failure (see emitDecryptFailure), and
+				// clear the author's accumulated strikes — a success
+				// proves the session works, and the counts were never
+				// reset on success, so unrelated failure episodes
+				// accumulated across the whole process lifetime.
+				if (msg.message && msg.key.id && author) {
+					decryptedMessageIds.add(msg.key.id)
+					while (decryptedMessageIds.size > 1000) {
+						decryptedMessageIds.delete(decryptedMessageIds.keys().next().value!)
+					}
+
+					try {
+						const addr = await canonicalSignalAddr(author)
+						decryptFailCounts.delete(addr)
+						if (msg.key.remoteJid) {
+							decryptFailCounts.delete(`sk:${msg.key.remoteJid}:${addr}`)
+						}
+					} catch {
+						// a malformed author cannot be canonicalised —
+						// the strike map is bookkeeping, never block
+						// the message over it.
+					}
+				}
 
 				// AunuBaileys (1.0.71, ported P2d): a decrypted msmsg reply
 				// is Meta AI text — surface it on its own event as well as
@@ -2212,6 +2264,37 @@ export const makeMessagesRecvSocket = (config: SocketConfig) => {
 					// counted, not healed; the retry receipt is the fix.
 					const senderKeyUnavailable = isGroupMsg && isSenderKeyUnavailableError(msg?.messageStubParameters?.[0])
 					if (senderKeyUnavailable) {
+						return
+					}
+
+					// AunuBaileys (2.4.0, HB-2026-1113-223 addendum
+					// ke-5): 'Key used already or never filled' is
+					// libsignal's own note for a message whose key
+					// was already consumed — in practice a legitimate
+					// REDELIVERY of a pkmsg/msg we already decrypted
+					// (ack lost, offline replay). It is not a broken
+					// session: do not count it, do not heal, do not
+					// report — exactly like the sender-key-unavailable
+					// class above. (This narrows the HB-206 flow,
+					// which let the text through the counting
+					// machinery; the stub upsert and the ack in the
+					// MISSING_KEYS branch below are unchanged.)
+					if (msg?.messageStubParameters?.[0] === MISSING_KEYS_ERROR_TEXT) {
+						return
+					}
+
+					// AunuBaileys (2.4.0, HB-2026-1113-223 addendum
+					// ke-4): a stanza whose id this socket already
+					// decrypted successfully is a REDELIVERY (ack
+					// lost / offline replay). Its failure text is
+					// libsignal's aggregate 'No matching sessions
+					// found for message' — byte-identical to a
+					// genuine Bad MAC, so no text classifier can
+					// separate the two — but the original delivery
+					// already proved the session healthy, so the
+					// failure says nothing about it: do not count,
+					// do not heal, do not report.
+					if (msg.key.id && decryptedMessageIds.has(msg.key.id)) {
 						return
 					}
 
@@ -2271,6 +2354,37 @@ export const makeMessagesRecvSocket = (config: SocketConfig) => {
 						}
 					}
 
+					// AunuBaileys (2.4.0, HB-371 addendum faset ke-5):
+					// a TRANSIENT store read failure (keys.get
+					// throwing — SQLITE_BUSY, a host store whose read
+					// path is briefly down) surfaces with the store's
+					// own text, which matches no session classifier —
+					// so it used to be strike-counted like a Bad MAC,
+					// and the third such failure reset a HEALTHY
+					// session. A store failure is not a session
+					// failure: for the unclassified ('other') class,
+					// probe the store once more — if the session
+					// cannot even be VALIDATED ('validation error'),
+					// the store is the problem, so skip the strike
+					// and the heal entirely. The event below still
+					// fires, with the unchanged count. Genuine Bad MAC
+					// and session-layer failures never reach the
+					// probe: reaching a MAC check proves the session
+					// record was read successfully.
+					let skipStrikeCounting = false
+					if (!sessionLayerFailure && !isBadMacError(msg?.messageStubParameters?.[0])) {
+						try {
+							const validation = await signalRepository.validateSession(author)
+							if (validation.reason === 'validation error') {
+								skipStrikeCounting = true
+							}
+						} catch {
+							skipStrikeCounting = true
+						}
+					}
+
+					const countedFails = skipStrikeCounting ? decryptFailCounts.get(failKey) || 0 : fails
+
 					let healed = false
 					try {
 						const resetE2ESession = async () => {
@@ -2293,7 +2407,7 @@ export const makeMessagesRecvSocket = (config: SocketConfig) => {
 								{ author, addr, group: isGroupMsg ? msg.key.remoteJid : undefined },
 								'aunu: reset E2E session after an unrecoverable session-layer decrypt failure; retry receipt carries fresh keys'
 							)
-						} else if (fails >= DECRYPT_FAIL_SESSION_RESET_LIMIT) {
+						} else if (!skipStrikeCounting && fails >= DECRYPT_FAIL_SESSION_RESET_LIMIT) {
 							await resetE2ESession()
 							if (isGroupMsg) {
 								await signalRepository.deleteSenderKey(msg.key.remoteJid, author)
@@ -2305,7 +2419,7 @@ export const makeMessagesRecvSocket = (config: SocketConfig) => {
 								{ author, addr, group: isGroupMsg ? msg.key.remoteJid : undefined },
 								'aunu: deleted stale E2E session after repeated decrypt failures (Bad MAC self-heal); retry receipt carries fresh keys'
 							)
-						} else {
+						} else if (!skipStrikeCounting) {
 							decryptFailCounts.set(failKey, fails)
 							while (decryptFailCounts.size > 1000) {
 								decryptFailCounts.delete(decryptFailCounts.keys().next().value!)
@@ -2320,7 +2434,7 @@ export const makeMessagesRecvSocket = (config: SocketConfig) => {
 						author,
 						address: addr,
 						isGroup: isGroupMsg,
-						failures: fails,
+						failures: countedFails,
 						healed,
 						errorClass: sessionLayerFailure
 							? 'session'
@@ -2345,12 +2459,14 @@ export const makeMessagesRecvSocket = (config: SocketConfig) => {
 				if (msg.messageStubType === waproto.WebMessageInfo.StubType.CIPHERTEXT && msg.category !== 'peer') {
 					if (msg?.messageStubParameters?.[0] === MISSING_KEYS_ERROR_TEXT) {
 						// AunuBaileys (1.0.82, HB-206, re-applied P3b): the 487 NACK stays,
-						// but the failure first flows through the counting / self-heal
-						// machinery (emitDecryptFailure above) and the stub upsert below,
-						// like every other decrypt failure — only the retry receipt is
-						// skipped (a resend of the same ciphertext cannot restore a message
-						// key our ratchet no longer holds). The early return used to skip
-						// all of that.
+						// but the failure first flows through emitDecryptFailure above and
+						// the stub upsert below — only the retry receipt is skipped (a
+						// resend of the same ciphertext cannot restore a message key our
+						// ratchet no longer holds). The early return used to skip all of
+						// that. AunuBaileys (2.4.0, HB-2026-1113-223 addendum ke-5):
+						// emitDecryptFailure itself now declines to count or report
+						// this text — it marks a consumed message key (a redelivery),
+						// not a broken session.
 						await emitDecryptFailure()
 						acked = true
 						await upsertMessage(msg, node.attrs.offline ? 'append' : 'notify')

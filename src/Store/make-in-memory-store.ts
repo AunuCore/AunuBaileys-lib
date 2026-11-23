@@ -12,6 +12,7 @@ import type {
 	ConnectionState,
 	Contact,
 	GroupMetadata,
+	GroupParticipant,
 	PresenceData,
 	WAMessage,
 	WAMessageCursor,
@@ -21,7 +22,7 @@ import type { Label } from '../Types/Label.js'
 import type { LabelAssociation } from '../Types/LabelAssociation.js'
 import { LabelAssociationType } from '../Types/LabelAssociation.js'
 import type { ILogger } from '../Utils/logger.js'
-import { toNumber, updateMessageWithReaction, updateMessageWithReceipt } from '../Utils/index.js'
+import { toNumber, trimUndefined, updateMessageWithReaction, updateMessageWithReceipt } from '../Utils/index.js'
 import { jidNormalizedUser } from '../WABinary/index.js'
 import makeOrderedDictionary from './make-ordered-dictionary.js'
 import { ObjectRepository } from './object-repository.js'
@@ -40,8 +41,17 @@ export const waChatKey = (pin: boolean) => ({
 export const waMessageID = (m: WAMessage) => m.key.id || ''
 
 export const waLabelAssociationKey: Comparable<LabelAssociation, string> = {
+	// AunuBaileys (2.4.0, HB-445 + HB-278 addendum 2): the parts used
+	// to be concatenated with no separator, so two different
+	// (chatId, messageId, labelId) triples could share one sort key —
+	// and because this key doubles as the KeyedDB id, the second
+	// association silently overwrote the first instead of throwing.
+	// '\0' cannot appear in a JID, message id or label id, so the
+	// boundaries are now unambiguous.
 	key: (la: LabelAssociation) =>
-		la.type === LabelAssociationType.Chat ? la.chatId + la.labelId : la.chatId + (la as any).messageId + la.labelId,
+		la.type === LabelAssociationType.Chat
+			? la.chatId + '\0' + la.labelId
+			: la.chatId + '\0' + (la as any).messageId + '\0' + la.labelId,
 	compare: (k1: string, k2: string) => k2.localeCompare(k1)
 }
 
@@ -118,8 +128,23 @@ const makeInMemoryStore = ({ logger: _logger, chatKey, labelAssociationKey }: Ba
 	const contactsUpsert = (newContacts: Contact[]) => {
 		const oldContacts = new Set(Object.keys(contacts))
 		for (const contact of newContacts) {
+			if (!contact || typeof contact.id !== 'string' || !contact.id) {
+				continue
+			}
+
 			oldContacts.delete(contact.id)
-			contacts[contact.id] = Object.assign(contacts[contact.id] || {}, contact)
+			// AunuBaileys (2.4.0, HB-411 addendum 2 + 4): producers emit
+			// contacts with fields set to undefined (verifiedName from
+			// a message without a verified-name child, phoneNumber /
+			// name from a LID contact action, an absorbed pending
+			// contacts.update) — Object.assign copied the undefined
+			// over the stored value and erased it. undefined means
+			// "not carried by this payload", never a deletion, so
+			// strip it before merging (on a copy — do not mutate the
+			// caller's contact).
+			const cleanContact = { ...contact }
+			trimUndefined(cleanContact)
+			contacts[contact.id] = Object.assign(contacts[contact.id] || {}, cleanContact)
 		}
 
 		return oldContacts
@@ -147,6 +172,30 @@ const makeInMemoryStore = ({ logger: _logger, chatKey, labelAssociationKey }: Ba
 				chats.clear()
 				for (const id in messages) {
 					delete messages[id]
+				}
+
+				// AunuBaileys (2.4.0, HB-373 addendum 2): the wipe only
+				// cleared chats/messages/contacts — presences,
+				// groupMetadata and label associations of the previous
+				// account/session survived and kept being served for
+				// chats that are not in the new sync. They are rebuilt
+				// from live traffic / fetches, so wipe them too. Label
+				// associations survive only for chats the new sync
+				// carries; the label definitions themselves are
+				// account-level and stay.
+				for (const id in presences) {
+					delete presences[id]
+				}
+
+				for (const id in groupMetadata) {
+					delete groupMetadata[id]
+				}
+
+				const newChatIds = new Set(newChats.map(c => c.id))
+				for (const association of labelAssociations
+					.filter((la: LabelAssociation) => !newChatIds.has(la.chatId))
+					.all()) {
+					labelAssociations.delete(association)
 				}
 			}
 
@@ -179,7 +228,9 @@ const makeInMemoryStore = ({ logger: _logger, chatKey, labelAssociationKey }: Ba
 		ev.on('contacts.update', updates => {
 			for (const update of updates) {
 				if (update.id && contacts[update.id]) {
-					Object.assign(contacts[update.id]!, update)
+					// AunuBaileys (2.4.0, HB-411 addendum 2): strip
+					// undefined fields first — see contactsUpsert.
+					Object.assign(contacts[update.id]!, trimUndefined({ ...update }))
 					// AunuBaileys (1.0.84, HB-245): a picture
 					// notification arrives as imgUrl 'changed' /
 					// 'removed' — a sentinel, not a URL. Drop the
@@ -262,7 +313,12 @@ const makeInMemoryStore = ({ logger: _logger, chatKey, labelAssociationKey }: Ba
 							chat.unreadCount = undefined
 						}
 
-						Object.assign(chat, update)
+						// AunuBaileys (2.4.0, HB-411): a stub without
+						// parameters emits chats.update with name /
+						// description set to undefined — assigning it
+						// erased the known chat name. undefined means
+						// "not carried", so strip it before merging.
+						Object.assign(chat, trimUndefined({ ...update }))
 					})
 					if (!result) {
 						logger.debug({ update }, 'got update for non-existant chat')
@@ -330,6 +386,11 @@ const makeInMemoryStore = ({ logger: _logger, chatKey, labelAssociationKey }: Ba
 				// with every deleted chat for the socket's lifetime.
 				delete messages[item]
 				delete presences[item]
+				// AunuBaileys (2.4.0, HB-373 addendum): groupMetadata
+				// was the one per-chat structure the 2.3.0 cleanup
+				// missed — fetchGroupMetadata kept serving the
+				// deleted group's cached metadata.
+				delete groupMetadata[item]
 				for (const association of labelAssociations.filter((la: LabelAssociation) => la.chatId === item).all()) {
 					labelAssociations.delete(association)
 				}
@@ -363,11 +424,21 @@ const makeInMemoryStore = ({ logger: _logger, chatKey, labelAssociationKey }: Ba
 
 						if (type === 'notify') {
 							if (!chats.get(jid)) {
+								// AunuBaileys (2.4.0, HB-431): the
+								// hard-coded unreadCount: 1 also fired
+								// for our OWN messages (sent from
+								// another device) and for stubs —
+								// processMessage's own rule
+								// (shouldIncrementChatUnread) only
+								// counts incoming non-stub messages.
+								// The chat is still created, just
+								// without the phantom unread.
+								const countsAsUnread = !msg.key.fromMe && !msg.messageStubType
 								ev.emit('chats.upsert', [
 									{
 										id: jid,
 										conversationTimestamp: toNumber(msg.messageTimestamp),
-										unreadCount: 1
+										...(countsAsUnread ? { unreadCount: 1 } : {})
 									}
 								])
 							}
@@ -424,16 +495,51 @@ const makeInMemoryStore = ({ logger: _logger, chatKey, labelAssociationKey }: Ba
 			for (const update of updates) {
 				const id = update.id
 				if (id && groupMetadata[id]) {
-					Object.assign(groupMetadata[id]!, update)
+					// AunuBaileys (2.4.0, HB-411 + addenda 3): stub
+					// producers emit fields set to undefined (subject /
+					// desc / inviteCode from a parameter-less stub,
+					// author / authorPn / authorUsername from a
+					// PN-only actor) — assigning them erased the stored
+					// values. undefined means "not carried", so strip
+					// it before merging.
+					Object.assign(groupMetadata[id]!, trimUndefined({ ...update }))
 				} else {
 					logger.debug({ update }, 'got update for non-existant group metadata')
 				}
 			}
 		})
 
-		ev.on('group-participants.update', ({ id, participants, action }) => {
+		ev.on('group-participants.update', ({ id, participants, action, author }) => {
 			const metadata = groupMetadata[id]
 			if (metadata) {
+				// AunuBaileys (2.4.0, HB-460 + HB-2026-1112-40 addendum 4
+				// store facet): resolve every entry to an id first and
+				// drop the ones that carry no identity at all (a forged
+				// stub can emit '{}' / { id: null }). An id-less entry
+				// used to be pushed as a phantom participant no
+				// legitimate traffic could address or remove, and an
+				// id-less 'remove' swept entries by undefined ===
+				// undefined.
+				const resolved: { raw: GroupParticipant | string; participantId: string }[] = []
+				for (const participant of participants as (GroupParticipant | string)[]) {
+					const participantId = typeof participant === 'string' ? participant : participant?.id
+					if (typeof participantId === 'string' && participantId) {
+						resolved.push({ raw: participant, participantId })
+					}
+				}
+
+				// AunuBaileys (2.4.0, HB-406): producers (fetch +
+				// notifications) populate `admin`
+				// ('admin' | 'superadmin' | null) and never
+				// isAdmin/isSuperAdmin, while this handler used to
+				// write ONLY the legacy pair — a split-brain where
+				// `admin` stayed stale until the next full fetch.
+				// Keep both shapes in sync on every write.
+				const syncAdminFlags = (participant: GroupParticipant) => {
+					participant.isAdmin = participant.admin === 'admin' || participant.admin === 'superadmin'
+					participant.isSuperAdmin = participant.admin === 'superadmin'
+				}
+
 				switch (action) {
 					case 'add':
 						// AunuBaileys (1.0.84, HB-237): skip ids
@@ -443,10 +549,38 @@ const makeInMemoryStore = ({ logger: _logger, chatKey, labelAssociationKey }: Ba
 						// replays the notification — both used to
 						// push a duplicate entry every single time,
 						// without bound.
-						for (const participant of participants as any[]) {
-							const participantId = typeof participant === 'string' ? participant : participant.id
-							if (!metadata.participants.some(p => p.id === participantId)) {
-								metadata.participants.push({ id: participantId, isAdmin: false, isSuperAdmin: false } as any)
+						for (const { raw, participantId } of resolved) {
+							const existing = metadata.participants.find(p => p.id === participantId)
+							if (existing) {
+								// AunuBaileys (2.4.0, HB-406): a
+								// redelivered add for a known member
+								// still carries fresh fields — merge
+								// the defined ones instead of dropping
+								// the whole object.
+								if (typeof raw !== 'string') {
+									Object.assign(existing, trimUndefined({ ...raw }))
+									if (typeof raw.admin !== 'undefined' || typeof raw.isAdmin !== 'undefined') {
+										if (typeof raw.admin === 'undefined') {
+											existing.admin = raw.isSuperAdmin ? 'superadmin' : raw.isAdmin ? 'admin' : null
+										}
+
+										syncAdminFlags(existing)
+									}
+								}
+							} else if (typeof raw === 'string') {
+								metadata.participants.push({ id: participantId, admin: null, isAdmin: false, isSuperAdmin: false })
+							} else {
+								// AunuBaileys (2.4.0, HB-406): keep the
+								// producer's object (admin, phoneNumber,
+								// lid, username) instead of reducing it
+								// to { id, isAdmin, isSuperAdmin }.
+								const entry: GroupParticipant = { ...trimUndefined({ ...raw }), id: participantId }
+								if (typeof entry.admin === 'undefined') {
+									entry.admin = entry.isSuperAdmin ? 'superadmin' : entry.isAdmin ? 'admin' : null
+								}
+
+								syncAdminFlags(entry)
+								metadata.participants.push(entry)
 							}
 						}
 
@@ -454,16 +588,53 @@ const makeInMemoryStore = ({ logger: _logger, chatKey, labelAssociationKey }: Ba
 					case 'demote':
 					case 'promote':
 						for (const participant of metadata.participants) {
-							if ((participants as any[]).some((p: any) => (typeof p === 'string' ? p : p.id) === participant.id)) {
-								participant.isAdmin = action === 'promote'
+							if (resolved.some(({ participantId }) => participantId === participant.id)) {
+								if (action === 'promote') {
+									// promoting a superadmin must not
+									// downgrade it to a plain admin
+									if (participant.admin !== 'superadmin') {
+										participant.admin = 'admin'
+									}
+								} else {
+									// AunuBaileys (2.4.0, HB-406): a
+									// demote clears admin entirely —
+									// a demoted superadmin becomes
+									// null, not 'admin'.
+									participant.admin = null
+								}
+
+								syncAdminFlags(participant)
 							}
 						}
 
 						break
 					case 'remove':
 						metadata.participants = metadata.participants.filter(
-							p => !(participants as any[]).some((x: any) => (typeof x === 'string' ? x : x.id) === p.id)
+							p => !resolved.some(({ participantId }) => participantId === p.id)
 						)
+						// AunuBaileys (2.4.0, HB-373 addendum 3): the
+						// removed member's presence entry stayed
+						// behind forever — drop it with the member.
+						if (presences[id]) {
+							for (const { participantId } of resolved) {
+								delete presences[id]![participantId]
+							}
+						}
+
+						break
+					case 'modify':
+						// AunuBaileys (2.4.0, HB-406): 'modify' (number
+						// change) was ignored entirely — the old number
+						// stayed listed and the new one never appeared.
+						// The producer sends the OLD ids as the
+						// participants and the NEW id as the author.
+						metadata.participants = metadata.participants.filter(
+							p => !resolved.some(({ participantId }) => participantId === p.id)
+						)
+						if (typeof author === 'string' && author && !metadata.participants.some(p => p.id === author)) {
+							metadata.participants.push({ id: author, admin: null, isAdmin: false, isSuperAdmin: false })
+						}
+
 						break
 				}
 			}

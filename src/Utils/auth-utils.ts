@@ -279,37 +279,57 @@ export const addTransactionCapability = (
 		return !!txStorage.getStore()
 	}
 
+	// AunuBaileys (2.4.0, HB-438): a commit error that can never succeed
+	// on a retry (permission / read-only fs / invalid argument / full
+	// disk, a validation TypeError/RangeError/SyntaxError, or a Boom
+	// 4xx other than 408/429) must fail fast — retrying it the full
+	// budget froze every bare keys.set() behind the transaction for
+	// ~27 s (10 x 3000 ms) per failed transaction. Anything else is
+	// treated as transient and keeps the retry behaviour.
+	const PERMANENT_COMMIT_CODES = new Set([
+		'EACCES',
+		'EPERM',
+		'EROFS',
+		'EINVAL',
+		'ENOTDIR',
+		'EISDIR',
+		'ENOSPC',
+		'EFBIG',
+		'EDQUOT',
+		'ENAMETOOLONG'
+	])
+	const isPermanentCommitError = (error: unknown): boolean => {
+		if (error instanceof TypeError || error instanceof RangeError || error instanceof SyntaxError) {
+			return true
+		}
+
+		if (!error || typeof error !== 'object') {
+			return false
+		}
+
+		const code = (error as { code?: unknown }).code
+		if (typeof code === 'string' && PERMANENT_COMMIT_CODES.has(code)) {
+			return true
+		}
+
+		const statusCode =
+			(error as { output?: { statusCode?: unknown } }).output?.statusCode ??
+			(error as { statusCode?: unknown }).statusCode
+		return (
+			typeof statusCode === 'number' && statusCode >= 400 && statusCode < 500 && statusCode !== 408 && statusCode !== 429
+		)
+	}
+
 	/**
-	 * Commit transaction with retries
+	 * One commit attempt. HB-94 (re-applied P3b): commits pass
+	 * through the shared write mutex — see the note at writeMutex.
+	 * The retry policy lives in transaction() below.
 	 */
-	async function commitWithRetry(mutations: SignalDataSet): Promise<void> {
-		if (Object.keys(mutations).length === 0) {
-			logger.trace('no mutations in transaction')
-			return
-		}
-
-		logger.trace('committing transaction')
-
-		for (let attempt = 0; attempt < commitRetries; attempt++) {
-			try {
-				// HB-94 (re-applied P3b): commits pass through the
-				// shared write mutex — see the note at writeMutex.
-				await writeMutex.runExclusive(async () => {
-					await state.set(mutations)
-				})
-				logger.trace({ mutationCount: Object.keys(mutations).length }, 'committed transaction')
-				return
-			} catch (error) {
-				const retriesLeft = commitRetries - attempt - 1
-				logger.warn(`failed to commit mutations, retries left=${retriesLeft}`)
-
-				if (retriesLeft === 0) {
-					throw error
-				}
-
-				await delay(commitDelayMs)
-			}
-		}
+	async function attemptCommit(mutations: SignalDataSet): Promise<void> {
+		await writeMutex.runExclusive(async () => {
+			await state.set(mutations)
+		})
+		logger.trace({ mutationCount: Object.keys(mutations).length }, 'committed transaction')
 	}
 
 	return {
@@ -329,7 +349,14 @@ export const addTransactionCapability = (
 				ctx.dbQueries++
 				logger.trace({ type, count: missing.length }, 'fetching missing keys in transaction')
 
-				const fetched = await getTxMutex(type).runExclusive(() => state.get(type, missing))
+				// AunuBaileys (2.4.0, HB-429): the read path uses a
+				// namespaced mutex key (`get:<type>`), separate from
+				// transaction keys (`tx:<key>` below) — one shared map
+				// used to let a transaction whose key equals a signal
+				// data type name ('session', 'pre-key', ...) deadlock
+				// forever on its own non-reentrant mutex when work()
+				// called get() for that same type.
+				const fetched = await getTxMutex(`get:${type}`).runExclusive(() => state.get(type, missing))
 
 				// Update cache
 				ctx.cache[type] = ctx.cache[type] || ({} as any)
@@ -475,42 +502,125 @@ export const addTransactionCapability = (
 			}
 
 			// New transaction - acquire mutex and create context
-			const mutex = getTxMutex(key)
-			acquireTxMutexRef(key)
+			// AunuBaileys (2.4.0, HB-429): transaction mutexes live in
+			// the `tx:` namespace, disjoint from the `get:` read
+			// namespace above — see the note there.
+			const mutexKey = `tx:${key}`
+			const mutex = getTxMutex(mutexKey)
+			acquireTxMutexRef(mutexKey)
 			// HB-94 (re-applied P3b): bare sets wait on this
 			// counter — see the note at writeMutex.
 			activeTransactions += 1
 
+			let outcome: { result: Awaited<ReturnType<typeof work>>; mutations: SignalDataSet; dbQueries: number }
+			// AunuBaileys (2.4.0, HB-473 × HB-94 addendum run-0590):
+			// the FIRST commit attempt runs while the per-key mutex
+			// is still held, exactly as before HB-473 — a competing
+			// same-key transaction whose work() READS the store
+			// (e.g. a group decrypt loading a sender key) must not
+			// observe pre-commit state and commit its stale copy
+			// back over this transaction's write; that interleave
+			// is what resurrected deleted sender keys in run-0590.
+			// Only a FAILED first attempt floats: the mutex is
+			// released for the inter-try delays (HB-473's liveness
+			// fix — same-key transactions are no longer stalled
+			// for the whole retry budget on a failing store) and
+			// re-acquired around each later attempt, which is the
+			// second candidate the HB-473 entry itself records.
+			// HB-438's permanent-error classification applies at
+			// every attempt.
+			let commitError: unknown
+			let committed = false
 			try {
-				return await mutex.runExclusive(async () => {
-					const ctx: TransactionContext = {
-						cache: {},
-						mutations: {},
-						dbQueries: 0
-					}
-
-					logger.trace('entering transaction')
-
+				try {
+					const releaseMutex = await mutex.acquire()
 					try {
-						const result = await txStorage.run(ctx, work)
+						const ctx: TransactionContext = {
+							cache: {},
+							mutations: {},
+							dbQueries: 0
+						}
 
-						// Commit mutations
-						await commitWithRetry(ctx.mutations)
+						logger.trace('entering transaction')
 
-						logger.trace({ dbQueries: ctx.dbQueries }, 'transaction completed')
+						let result: Awaited<ReturnType<typeof work>>
+						try {
+							result = await txStorage.run(ctx, work)
+						} catch (error) {
+							logger.error({ error }, 'transaction failed, rolling back')
+							throw error
+						}
 
-						return result
-					} catch (error) {
-						logger.error({ error }, 'transaction failed, rolling back')
-						throw error
+						outcome = { result, mutations: ctx.mutations, dbQueries: ctx.dbQueries }
+
+						if (Object.keys(ctx.mutations).length === 0) {
+							logger.trace('no mutations in transaction')
+							committed = true
+						} else {
+							logger.trace('committing transaction')
+							try {
+								await attemptCommit(ctx.mutations)
+								committed = true
+							} catch (error) {
+								if (isPermanentCommitError(error) || commitRetries <= 1) {
+									throw error
+								}
+
+								commitError = error
+							}
+						}
+					} finally {
+						releaseMutex()
 					}
-				})
+				} finally {
+					// HB-94 (re-applied P3b): see activeTransactions.
+					activeTransactions -= 1
+					notifyTxIdle()
+				}
+
+				if (!committed) {
+					// Floating retries: the per-key mutex is free
+					// between attempts (other transactions for this
+					// key can work) and re-acquired per attempt, so
+					// each actual write still serialises against
+					// same-key work. The mutex refcount is held for
+					// the whole loop (released in the outer finally),
+					// so re-acquiring always lands on this same Mutex
+					// instance.
+					let lastError = commitError
+					for (let attempt = 1; attempt < commitRetries; attempt++) {
+						logger.warn(`failed to commit mutations, retries left=${commitRetries - attempt}`)
+						await delay(commitDelayMs)
+						const releaseRetry = await mutex.acquire()
+						try {
+							await attemptCommit(outcome.mutations)
+							committed = true
+						} catch (error) {
+							lastError = error
+							if (isPermanentCommitError(error)) {
+								throw error
+							}
+						} finally {
+							releaseRetry()
+						}
+
+						if (committed) {
+							break
+						}
+					}
+
+					if (!committed) {
+						logger.warn('failed to commit mutations, retries left=0')
+						throw lastError
+					}
+				}
 			} finally {
-				releaseTxMutexRef(key)
-				// HB-94 (re-applied P3b): see activeTransactions.
-				activeTransactions -= 1
-				notifyTxIdle()
+				releaseTxMutexRef(mutexKey)
 			}
+
+			logger.trace({ dbQueries: outcome.dbQueries }, 'transaction completed')
+
+			return outcome.result
 		}
 	}
 }

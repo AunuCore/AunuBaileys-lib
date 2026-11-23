@@ -704,4 +704,27 @@ export const isSenderKeyUnavailableError = (text: string | undefined) =>
 	typeof text === 'string' &&
 	(/no session found to decrypt message|no senderkeyrecord found for decryption/i.test(text) ||
 		/^invalid signature!?$/i.test(text.trim()) ||
-		/invalid wire type|index out of range/i.test(text))
+		/invalid wire type|index out of range/i.test(text) ||
+		// AunuBaileys (2.4.0, HB-2026-1113-223 addenda): three more
+		// group-side classes that say nothing about the author's
+		// 1-1 E2E session and must not count toward its reset —
+		// (ke-3) 'Invalid public key': an SKDM whose 33-byte
+		// signing key carries a wrong prefix byte was accepted by
+		// the length-only validation and libsignal's
+		// scrubPubKeyFormat rejects it at decrypt time;
+		// (ke-6) 'Over 2000 messages into the future': the stored
+		// sender-key chain is behind the message's iteration —
+		// this function is only consulted for GROUP messages, so
+		// adding the text here leaves the 1-1 reading of
+		// isUnrecoverableSessionError (HB-2026-1112-78) untouched;
+		// (ke-2, sapuan) 'Received message with old counter': a
+		// legitimate redelivery whose sender message key was
+		// already consumed by the first delivery.
+		/invalid public key|over 2000 messages into the future|received message with old counter/i.test(text) ||
+		// (ke-5) 'Key used already or never filled' is
+		// libsignal's own note for a message key that was already
+		// consumed — a redelivered pkmsg/skmsg, not a broken
+		// session. (For 1-1 messages the strike counter in
+		// messages-recv consults MISSING_KEYS_ERROR_TEXT, which
+		// is this same text.)
+		/key used already or never filled/i.test(text))

@@ -804,21 +804,45 @@ const processMessage = async (
 				break
 			case WAMessageStubType.GROUP_CHANGE_ANNOUNCE:
 				const announceValue = message.messageStubParameters?.[0]
-				emitGroupUpdate({ announce: announceValue === 'true' || announceValue === 'on' })
+				// AunuBaileys (2.4.0, HB-411 addendum): a parameter-less
+				// stub carries no value at all — coercing the missing
+				// parameter to `false` flipped a stored `true` the stub
+				// never mentioned. Skip the update when it is absent.
+				if (announceValue !== undefined) {
+					emitGroupUpdate({ announce: announceValue === 'true' || announceValue === 'on' })
+				}
 				break
 			case WAMessageStubType.GROUP_CHANGE_RESTRICT:
 				const restrictValue = message.messageStubParameters?.[0]
-				emitGroupUpdate({ restrict: restrictValue === 'true' || restrictValue === 'on' })
+				if (restrictValue !== undefined) {
+					emitGroupUpdate({ restrict: restrictValue === 'true' || restrictValue === 'on' })
+				}
 				break
 			case WAMessageStubType.GROUP_CHANGE_SUBJECT:
 				const name = message.messageStubParameters?.[0]
 				chat.name = name
-				emitGroupUpdate({ subject: name })
+				// AunuBaileys (2.4.0, HB-411 addendum 5): the sibling
+				// owner/time fields belong to the same change — leaving
+				// them out kept the PREVIOUS owner and timestamp in the
+				// store next to the new subject.
+				emitGroupUpdate({
+					subject: name,
+					subjectOwner: message.key.participant ?? undefined,
+					subjectOwnerPn: message.key.participantAlt,
+					subjectOwnerUsername: message.key.participantUsername,
+					subjectTime: toNumber(message.messageTimestamp)
+				})
 				break
 			case WAMessageStubType.GROUP_CHANGE_DESCRIPTION:
 				const description = message.messageStubParameters?.[0]
 				chat.description = description
-				emitGroupUpdate({ desc: description })
+				emitGroupUpdate({
+					desc: description,
+					descOwner: message.key.participant ?? undefined,
+					descOwnerPn: message.key.participantAlt,
+					descOwnerUsername: message.key.participantUsername,
+					descTime: toNumber(message.messageTimestamp)
+				})
 				break
 			case WAMessageStubType.GROUP_CHANGE_INVITE_LINK:
 				const code = message.messageStubParameters?.[0]
@@ -826,11 +850,15 @@ const processMessage = async (
 				break
 			case WAMessageStubType.GROUP_MEMBER_ADD_MODE:
 				const memberAddValue = message.messageStubParameters?.[0]
-				emitGroupUpdate({ memberAddMode: memberAddValue === 'all_member_add' })
+				if (memberAddValue !== undefined) {
+					emitGroupUpdate({ memberAddMode: memberAddValue === 'all_member_add' })
+				}
 				break
 			case WAMessageStubType.GROUP_MEMBERSHIP_JOIN_APPROVAL_MODE:
 				const approvalMode = message.messageStubParameters?.[0]
-				emitGroupUpdate({ joinApprovalMode: approvalMode === 'on' })
+				if (approvalMode !== undefined) {
+					emitGroupUpdate({ joinApprovalMode: approvalMode === 'on' })
+				}
 				break
 			case WAMessageStubType.GROUP_MEMBERSHIP_JOIN_APPROVAL_REQUEST_NON_ADMIN_ADD: // TODO: Add other events
 				// AunuBaileys (2.1.0, sweep): JSON.parse(undefined) throws —

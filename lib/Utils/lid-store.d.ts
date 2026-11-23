@@ -17,9 +17,27 @@ type LearnableKey = {
     participantPn?: string;
     participantLid?: string;
     remoteJid?: string;
+    remoteJidAlt?: string;
+    participant?: string;
+    participantAlt?: string;
     fromMe?: boolean;
     [key: string]: any;
 };
+/**
+ * AunuBaileys (2.4.0, HB-470): extract the (pn, lid) pairs a message
+ * key actually carries, in [pn, lid] order. The live decoder never
+ * sets `senderPn`/`senderLid`/`participantPn`/`participantLid` — it
+ * builds keys with `remoteJidAlt` (the chat partner's other address
+ * form; for a fromMe DM that is the RECIPIENT's alt, per HB-337) and
+ * `participantAlt` (the group author's other form). Reading only the
+ * legacy fields made live-traffic learning a dead path: no pair was
+ * ever learned from a real key. The legacy fields stay honoured for
+ * hand-built keys (history-sync shapes, host-constructed keys).
+ * Either field order is accepted — the pair is classified by JID
+ * server, never by which field it arrived in — and duplicate pairs
+ * within one key are returned once.
+ */
+export declare const extractLIDPairsFromKey: (key: LearnableKey | undefined | null) => [string, string][];
 export interface LIDStore {
     /** Store one PN/LID pair. Returns false when either JID is not a user PN JID / LID JID. */
     addPair(pnJid: string, lidJid: string, opts?: {

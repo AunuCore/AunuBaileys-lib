@@ -1,6 +1,6 @@
 import { closeSync, fsyncSync, openSync, readFileSync, renameSync, writeFileSync } from 'fs'
 import type { WAMessage } from '../Types/index.js'
-import { isHostedLidUser, isHostedPnUser, isLidUser, isPnUser, jidNormalizedUser } from '../WABinary/jid-utils.js'
+import { isHostedLidUser, isHostedPnUser, isLidUser, isPnUser, jidDecode, jidNormalizedUser } from '../WABinary/jid-utils.js'
 
 export interface LIDStoreOptions {
 	/** Maximum PN<->LID pairs kept; least-recently-used pairs are evicted. Default 5000. */
@@ -16,8 +16,73 @@ type LearnableKey = {
 	participantPn?: string
 	participantLid?: string
 	remoteJid?: string
+	remoteJidAlt?: string
+	participant?: string
+	participantAlt?: string
 	fromMe?: boolean
 	[key: string]: any
+}
+
+/**
+ * AunuBaileys (2.4.0, HB-470): extract the (pn, lid) pairs a message
+ * key actually carries, in [pn, lid] order. The live decoder never
+ * sets `senderPn`/`senderLid`/`participantPn`/`participantLid` — it
+ * builds keys with `remoteJidAlt` (the chat partner's other address
+ * form; for a fromMe DM that is the RECIPIENT's alt, per HB-337) and
+ * `participantAlt` (the group author's other form). Reading only the
+ * legacy fields made live-traffic learning a dead path: no pair was
+ * ever learned from a real key. The legacy fields stay honoured for
+ * hand-built keys (history-sync shapes, host-constructed keys).
+ * Either field order is accepted — the pair is classified by JID
+ * server, never by which field it arrived in — and duplicate pairs
+ * within one key are returned once.
+ */
+export const extractLIDPairsFromKey = (key: LearnableKey | undefined | null): [string, string][] => {
+	if (!key) {
+		return []
+	}
+
+	const pairs: [string, string][] = []
+	const seen = new Set<string>()
+	const consider = (a?: string, b?: string) => {
+		if (!a || !b) {
+			return
+		}
+
+		let pn: string | undefined
+		let lid: string | undefined
+		if ((isPnUser(a) || isHostedPnUser(a)) && (isLidUser(b) || isHostedLidUser(b))) {
+			pn = a
+			lid = b
+		} else if ((isLidUser(a) || isHostedLidUser(a)) && (isPnUser(b) || isHostedPnUser(b))) {
+			pn = b
+			lid = a
+		} else {
+			return
+		}
+
+		const dedupeKey = `${pn}|${lid}`
+		if (seen.has(dedupeKey)) {
+			return
+		}
+
+		seen.add(dedupeKey)
+		pairs.push([pn, lid])
+	}
+
+	consider(key.senderPn, key.senderLid)
+	consider(key.participantPn, key.participantLid)
+	// The shapes the live decoder actually produces.
+	consider(key.remoteJid, key.remoteJidAlt)
+	consider(key.participant, key.participantAlt)
+	// Legacy DM shape: remoteJid is the partner's PN while the stanza
+	// only carried the sender's LID. senderLid describes the SENDER,
+	// so for a fromMe key it would name US — never learn that pairing.
+	if (!key.fromMe) {
+		consider(key.remoteJid, key.senderLid)
+	}
+
+	return pairs
 }
 
 export interface LIDStore {
@@ -116,6 +181,17 @@ export const makeLIDStore = (options: LIDStoreOptions = {}): LIDStore => {
 			return false
 		}
 
+		// AunuBaileys (2.4.0, SAPUAN HB-407): same choke-point rule
+		// as LIDMappingStore — a user that is empty, non-digit or
+		// all-zero ('0', the protobufjs absent-field default) is
+		// not an identity and must never be learned, in either
+		// direction.
+		const pnUser = jidDecode(pn)?.user
+		const lidUser = jidDecode(lid)?.user
+		if (!pnUser || !lidUser || !/^\d+$/.test(pnUser) || !/^\d+$/.test(lidUser) || /^0+$/.test(pnUser) || /^0+$/.test(lidUser)) {
+			return false
+		}
+
 		// keep both directions consistent if either side was remapped
 		const prevLid = pnToLid.get(pn)
 		if (prevLid && prevLid !== lid) {
@@ -142,23 +218,13 @@ export const makeLIDStore = (options: LIDStoreOptions = {}): LIDStore => {
 		return true
 	}
 	const learnFromKey = (key: LearnableKey | undefined | null): number => {
-		if (!key) {
-			return 0
-		}
-
+		// AunuBaileys (2.4.0, HB-470): pairs come from
+		// extractLIDPairsFromKey — the decoder's Alt fields included —
+		// and are deduped there, so one pair counts once even when a
+		// key carries it in two shapes.
 		let learned = 0
-		if (key.senderPn && key.senderLid) {
-			learned += addPair(key.senderPn, key.senderLid) ? 1 : 0
-		}
-
-		if (key.participantPn && key.participantLid) {
-			learned += addPair(key.participantPn, key.participantLid) ? 1 : 0
-		}
-
-		// a DM chat partner: remoteJid may be the PN while the stanza
-		// only carried the sender LID (or the reverse)
-		if (key.remoteJid && key.senderLid && (isPnUser(key.remoteJid) || isHostedPnUser(key.remoteJid)) && !key.fromMe) {
-			learned += addPair(key.remoteJid, key.senderLid) ? 1 : 0
+		for (const [pn, lid] of extractLIDPairsFromKey(key)) {
+			learned += addPair(pn, lid) ? 1 : 0
 		}
 
 		return learned

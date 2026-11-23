@@ -2,7 +2,7 @@ import { DEFAULT_CONNECTION_CONFIG } from '../Defaults'
 import type { UserFacingSocketConfig } from '../Types'
 import { AunuHandler } from '../Utils/aunu-handler'
 import { attachAunuAutoJoin } from '../Utils/aunu-autojoin'
-import { makeLIDStore } from '../Utils/lid-store'
+import { extractLIDPairsFromKey, makeLIDStore } from '../Utils/lid-store'
 import { attachSessionWatchdog } from '../Utils/session-watchdog'
 import { attachAunuExperimental } from './aunu-experimental'
 import { makeCommunitiesSocket } from './communities'
@@ -193,18 +193,13 @@ const makeWASocket = (config: UserFacingSocketConfig) => {
 		try {
 			for (const msg of upsert?.messages ?? []) {
 				const key = msg?.key ?? {}
-				const pairs: [string, string][] = []
-				if (key.senderPn && key.senderLid) {
-					pairs.push([key.senderPn, key.senderLid])
-				}
-
-				if (key.participantPn && key.participantLid) {
-					pairs.push([key.participantPn, key.participantLid])
-				}
-
-				if (key.remoteJid && key.senderLid && !key.fromMe) {
-					pairs.push([key.remoteJid, key.senderLid])
-				}
+				// AunuBaileys (2.4.0, HB-470): pairs come from the
+				// shared extractor — the live decoder fills
+				// remoteJidAlt/participantAlt, never the senderPn/
+				// participantPn fields this block used to read, so
+				// the migrateSession trigger and the native-store
+				// reconciliation below were dead on live traffic.
+				const pairs = extractLIDPairsFromKey(key)
 
 				for (const [pn, lid] of pairs) {
 					;(sock.signalRepository as any)?.migrateSession?.(pn, lid)?.catch?.(() => {})

@@ -2,7 +2,6 @@
 import * as libsignal from 'libsignal'
 // @ts-ignore
 import { PreKeyWhisperMessage } from 'libsignal/src/protobufs'
-import { InternalCache } from '../Utils/internal-cache'
 import type { LIDMapping, SignalAuthState, SignalCreds, SignalKeyStoreWithTransaction } from '../Types'
 import type { SignalRepositoryWithLIDStore } from '../Types/Signal'
 import { BufferJSON, generateSignalPubKey } from '../Utils'
@@ -158,6 +157,34 @@ export function makeLibSignalRepository(
 		}
 	}
 
+	// AunuBaileys (2.4.0, HB-469): sender-key names were built from
+	// the author's RAW JID spelling, while session records resolve
+	// PN -> LID first — an SKDM processed under the PN spelling was
+	// stored under a different name than the LID-spelled skmsg
+	// lookup, so group messages from that author never decrypted
+	// (and deleteSenderKey under the other spelling silently
+	// missed). Canonicalise the name to the resolved wire address,
+	// mirroring txKeyForJid. An author JID whose address cannot be
+	// built at all (HB-424 addendum: device 99 on a non-hosted
+	// server) yields null — the group heads below degrade to a
+	// sender-key-unavailable failure / a skip instead of throwing
+	// the raw converter error out of the decrypt path.
+	const canonicalSenderKeyName = async (group: string, authorJid: string): Promise<SenderKeyName | null> => {
+		try {
+			const addrStr = await resolveWireAddr(jidToSignalProtocolAddress(authorJid).toString())
+			// ProtocolAddress has no string parser in this libsignal
+			// build — rebuild it from the "user[_domain].device"
+			// parts, the same split resolveWireAddr performs.
+			const dotIdx = addrStr.lastIndexOf('.')
+			const name = dotIdx >= 0 ? addrStr.slice(0, dotIdx) : addrStr
+			const parsedDevice = dotIdx >= 0 ? parseInt(addrStr.slice(dotIdx + 1)) : 0
+			const deviceId = Number.isNaN(parsedDevice) ? 0 : parsedDevice
+			return new SenderKeyName(group, new libsignal.ProtocolAddress(name, deviceId))
+		} catch {
+			return null
+		}
+	}
+
 	// AunuBaileys (2.3.0, HB-398): in a LID-addressed group our
 	// sender-key name must be built from the identity the group
 	// uses for us — our LID *including our own device*. creds.me.lid
@@ -194,13 +221,14 @@ export function makeLibSignalRepository(
 	}
 
 	const parsedKeys = auth.keys as SignalKeyStoreWithTransaction
-	const migratedSessionCache = new InternalCache<true>({
-		ttlMs: 3 * 24 * 60 * 60 * 1000, // 3 days (the comment on the
-		// lru-cache original said 7 days; its ttl value was 3 — the
-		// value, not the comment, is what P9 preserves)
-		updateAgeOnGet: true,
-		maxEntries: 10_000
-	})
+	// AunuBaileys (2.4.0, HB-449): the migratedSessionCache that
+	// used to live here was never invalidated — a fresh PN session
+	// created after the first migration (peer re-key, transient
+	// LID-lookup fallback) was skipped by every later
+	// migrateSession for the cache's whole 3-day TTL and stayed
+	// orphaned. It is gone: migrateSession's discovery read (and
+	// the authoritative re-read inside each per-device
+	// transaction) decides from the store itself.
 
 	const ensureSenderKeyAndCreateSkdm = async (group: string, meId: string) => {
 		// AunuBaileys (2.3.0, HB-398): see ownSenderIdentity above.
@@ -254,8 +282,17 @@ export function makeLibSignalRepository(
 	}
 
 	const repository: SignalRepositoryWithLIDStore = {
-		decryptGroupMessage({ group, authorJid, msg }) {
-			const senderName = jidToSignalSenderKeyName(group, authorJid)
+		async decryptGroupMessage({ group, authorJid, msg }) {
+			// AunuBaileys (2.4.0, HB-469): canonical sender-key name
+			// (see canonicalSenderKeyName). An unbuildable author
+			// (HB-424 addendum) fails as sender-key-unavailable —
+			// the classifier-excluded class — instead of aborting
+			// the whole decrypt-failure path with a converter throw.
+			const senderName = await canonicalSenderKeyName(group, authorJid)
+			if (!senderName) {
+				throw new Error('No session found to decrypt message')
+			}
+
 			const cipher = new GroupCipher(storage, senderName)
 
 			// Use transaction to ensure atomicity
@@ -269,7 +306,14 @@ export function makeLibSignalRepository(
 				throw new Error('Group ID is required for sender key distribution message')
 			}
 
-			const senderName = jidToSignalSenderKeyName(item.groupId, authorJid)
+			// AunuBaileys (2.4.0, HB-469 + HB-424 addendum):
+			// canonical name; an unbuildable author's SKDM can
+			// never be addressed, so skip it instead of throwing.
+			const senderName = await canonicalSenderKeyName(item.groupId, authorJid)
+			if (!senderName) {
+				logger.warn({ authorJid }, 'aunu: skipping sender-key distribution from an unbuildable author JID')
+				return
+			}
 
 			const senderMsg = new SenderKeyDistributionMessage(
 				null,
@@ -335,7 +379,94 @@ export function makeLibSignalRepository(
 			// AunuBaileys (2.3.0, HB-94 addendum): keyed by the
 			// resolved wire address, not the raw JID (see txKeyForJid).
 			const result = await parsedKeys.transaction(async () => {
-				return await doDecrypt()
+				if (type !== 'msg') {
+					return await doDecrypt()
+				}
+
+				// AunuBaileys (2.4.0, HB-446): libsignal's
+				// decryptWithSessions tries the open session first,
+				// and doDecryptWhisperMessage steps its ratchet
+				// (maybeStepRatchet) BEFORE the MAC is verified —
+				// when the open session then fails and an ARCHIVED
+				// session wins, decryptWhisperMessage persists the
+				// WHOLE record, including the open session whose
+				// ratchet was just wrecked by the failed attempt:
+				// one stale message permanently corrupted the live
+				// session. Snapshot the record first; after a
+				// successful decrypt, restore every session except
+				// the winner (the entry whose `used` timestamp the
+				// decrypt advanced) from the snapshot. If the
+				// winner cannot be identified (its `used` did not
+				// change), leave the record exactly as libsignal
+				// persisted it — no restore is the safe direction.
+				const addrStr = addr.toString()
+				// The bundled libsignal .d.ts types serialize() as
+				// Uint8Array; at runtime it is the plain
+				// {_sessions, version} object — narrow it to the
+				// shape this restore actually reads.
+				type SerializedSessions = { [key: string]: { indexInfo?: { used?: number } } }
+				type SerializedRecord = { _sessions: SerializedSessions; version: unknown }
+				let snapshot: SerializedRecord | undefined
+				try {
+					const before = await storage.loadSession(addrStr)
+					if (before) {
+						snapshot = before.serialize() as unknown as SerializedRecord
+					}
+				} catch {
+					snapshot = undefined
+				}
+
+				const plaintext = await doDecrypt()
+
+				if (snapshot) {
+					try {
+						const after = await storage.loadSession(addrStr)
+						if (after) {
+							const snapSessions = snapshot._sessions
+							const afterSessions = (after.serialize() as unknown as SerializedRecord)._sessions
+							let winnerKey: string | undefined
+							for (const [key, entry] of Object.entries(afterSessions)) {
+								if (entry.indexInfo?.used !== snapSessions[key]?.indexInfo?.used) {
+									winnerKey = key
+									break
+								}
+							}
+
+							if (winnerKey) {
+								const snapRecord = libsignal.SessionRecord.deserialize(
+									snapshot as unknown as Uint8Array
+								) as unknown as { sessions: { [key: string]: unknown } }
+								const afterRecord = after as unknown as { sessions: { [key: string]: unknown } }
+								let restored = false
+								for (const key of Object.keys(snapSessions)) {
+									if (key === winnerKey) {
+										continue
+									}
+
+									const current = afterSessions[key]
+									if (!current || JSON.stringify(current) !== JSON.stringify(snapSessions[key])) {
+										afterRecord.sessions[key] = snapRecord.sessions[key]
+										restored = true
+									}
+								}
+
+								if (restored) {
+									await storage.storeSession(addrStr, after)
+									logger.debug(
+										{ jid },
+										'aunu: restored non-winning sessions from the pre-decrypt snapshot (HB-446)'
+									)
+								}
+							}
+						}
+					} catch {
+						// The restore is best-effort: the plaintext is
+						// already recovered, and a restore failure must
+						// never turn a successful decrypt into a stub.
+					}
+				}
+
+				return plaintext
 			}, await txKeyForJid(jid))
 
 			// AunuBaileys (2.2.0, HB-350): saveIdentity clears the
@@ -483,19 +614,53 @@ export function makeLibSignalRepository(
 			// AunuBaileys (re-applied P3): v6 repository parity \u2014 the
 			// decrypt-failure self-heal deletes the stale sender-key
 			// record for (group, author); v7 had no such method.
-			const senderNameStr = jidToSignalSenderKeyName(group, authorJid).toString()
-			await auth.keys.set({ 'sender-key': { [senderNameStr]: null } })
+			// AunuBaileys (2.4.0, HB-469): canonical name, so the
+			// delete lands on the record the decrypt path reads,
+			// whichever spelling the author arrived under; an
+			// unbuildable author (HB-424 addendum) is a no-op.
+			const senderName = await canonicalSenderKeyName(group, authorJid)
+			if (!senderName) {
+				return
+			}
+
+			const senderNameStr = senderName.toString()
+			// AunuBaileys (2.4.0, HB-94 addendum run-0590): this used
+			// to be a BARE keys.set — a group decrypt transaction
+			// that started while the bare write was in flight loaded
+			// the pre-delete record and its commit landed after the
+			// delete, resurrecting the record the self-heal had just
+			// removed. Run the delete inside the per-group
+			// transaction (the same key every group path uses), so
+			// it serialises against decrypt/process/encrypt: the
+			// delete either lands fully before a decrypt loads, or
+			// fully after its commit.
+			await parsedKeys.transaction(async () => {
+				await auth.keys.set({ 'sender-key': { [senderNameStr]: null } })
+			}, group)
 		},
 
 		async deleteSession(jids: string[]) {
 			if (!jids.length) return
 
-			// Convert JIDs to signal addresses and prepare for bulk deletion
-			const sessionUpdates: { [key: string]: null } = {}
-			const resolvedAddrs: string[] = []
+			// AunuBaileys (2.4.0, HB-440): the batch used to resolve
+			// EVERY address before its single commit — one
+			// unbuildable JID (a :99 device from a devices-remove
+			// notification) threw in the resolution loop and NO
+			// entry was deleted. Isolate per JID, like
+			// parseAndInjectE2ESessions (HB-1): log and skip the
+			// bad entry, delete the rest.
 			for (const jid of jids) {
-				const addr = jidToSignalProtocolAddress(jid).toString()
-				sessionUpdates[addr] = null
+				let addr: string
+				let resolved: string
+				try {
+					addr = jidToSignalProtocolAddress(jid).toString()
+					resolved = await resolveWireAddr(addr)
+				} catch (err) {
+					logger.warn({ jid, err }, 'aunu: skipping unbuildable JID in deleteSession; other sessions continue')
+					continue
+				}
+
+				const sessionUpdates: { [key: string]: null } = { [addr]: null }
 				// AunuBaileys (2.3.0, HB-377): loadSession/storeSession
 				// resolve a PN address to its LID wire form, so the
 				// record usually lives under the LID key — deleting
@@ -503,32 +668,26 @@ export function makeLibSignalRepository(
 				// self-heal never actually removed the session. Null
 				// the resolved key too (a null write to a key that
 				// holds nothing is harmless).
-				const resolved = await resolveWireAddr(addr)
 				if (resolved !== addr) {
 					sessionUpdates[resolved] = null
 				}
 
-				resolvedAddrs.push(resolved)
+				// AunuBaileys (2.4.0, HB-94 addendum run-0646): one
+				// transaction PER resolved address, keyed by that
+				// address alone — the same key the peer's
+				// decrypt/encrypt transactions use. The old batch
+				// key (a joined list of every address) shared a
+				// mutex with NOTHING, so a single-peer decrypt that
+				// was in flight during a multi-JID delete loaded the
+				// pre-delete record and its later commit resurrected
+				// exactly that device's session.
+				await parsedKeys.transaction(async () => {
+					await auth.keys.set({ session: sessionUpdates })
+				}, resolved)
 			}
-
-			// Single transaction for all deletions
-			// AunuBaileys (2.3.0, HB-94 addendum): the old key
-			// (`delete-N-sessions`) shared a mutex with NOTHING, so a
-			// delete could interleave with an in-flight decrypt of
-			// the same peer and the decrypt's later commit
-			// resurrected the deleted session. Key by the resolved
-			// wire address(es), the same keys decrypt/encrypt use.
-			const txKey =
-				resolvedAddrs.length === 1 ? resolvedAddrs[0]! : [...new Set(resolvedAddrs)].sort().join(',')
-			return parsedKeys.transaction(async () => {
-				await auth.keys.set({ session: sessionUpdates })
-			}, txKey)
 		},
 
 		close() {
-			// AunuBaileys (2.2.0, HB-346): close(), not clear() —
-			// clear() left the 3-day-TTL cache's purge timer alive.
-			migratedSessionCache.close()
 			lidMapping.close()
 		},
 
@@ -561,11 +720,12 @@ export function makeLibSignalRepository(
 				userDevices.push(fromDeviceStr)
 			}
 
-			// Filter out cached devices before database fetch
-			const uncachedDevices = userDevices.filter(device => {
-				const deviceKey = `${user}.${device}`
-				return !migratedSessionCache.has(deviceKey)
-			})
+			// AunuBaileys (2.4.0, HB-449): no migrated-session
+			// cache filter — it was never invalidated, so a PN
+			// session created after the first migration was
+			// skipped forever. Every listed device is a discovery
+			// candidate; the store read below decides.
+			const uncachedDevices = userDevices
 
 			// AunuBaileys (2.3.0, HB-395): session records live under
 			// the canonical WIRE address (jidToSignalProtocolAddress),
@@ -621,110 +781,159 @@ export function makeLibSignalRepository(
 				'bulk device migration complete - all user devices processed'
 			)
 
-			// Single transaction for all migrations
-			return parsedKeys.transaction(
-				async (): Promise<{ migrated: number; skipped: number; total: number }> => {
-					// Prepare migration operations with addressing metadata
-					type MigrationOp = {
-						fromJid: string
-						toJid: string
-						pnUser: string
-						lidUser: string
-						deviceId: number
-						fromAddr: libsignal.ProtocolAddress
-						toAddr: libsignal.ProtocolAddress
+			// Prepare migration operations with addressing metadata
+			type MigrationOp = {
+				fromJid: string
+				toJid: string
+				fromAddr: libsignal.ProtocolAddress
+				toAddr: libsignal.ProtocolAddress
+			}
+
+			const migrationOps: MigrationOp[] = []
+			for (const jid of deviceJids) {
+				const lidWithDevice = transferDevice(jid, toJid)
+
+				// AunuBaileys (2.3.0, HB-395): an unbuildable
+				// migration TARGET (e.g. device 99 under a plain
+				// @lid address, which jidToSignalProtocolAddress
+				// rejects) used to throw here and abort the WHOLE
+				// migration inside the transaction — skip that
+				// device instead, mirroring the discovery pass
+				// above, which skips unbuildable source JIDs.
+				let fromAddr: libsignal.ProtocolAddress
+				let toAddr: libsignal.ProtocolAddress
+				try {
+					fromAddr = jidToSignalProtocolAddress(jid)
+					toAddr = jidToSignalProtocolAddress(lidWithDevice)
+				} catch {
+					continue
+				}
+
+				migrationOps.push({
+					fromJid: jid,
+					toJid: lidWithDevice,
+					fromAddr,
+					toAddr
+				})
+			}
+
+			// AunuBaileys (2.4.0, HB-409 + addendum TOCTOU): one
+			// transaction PER DEVICE, keyed by the target LID wire
+			// address — the same key the peer's decrypt/encrypt
+			// transactions resolve to (txKeyForJid maps the PN
+			// spelling onto it too). The old single transaction
+			// used a bespoke `migrate-N-sessions-<user>` key that
+			// serialised against NOTHING, and it never read the
+			// target: a live LID session was overwritten with the
+			// PN session's bytes, deterministically (HB-409) and
+			// by race whenever a concurrent pkmsg decrypt created
+			// the LID session between the discovery read and the
+			// migration commit (addendum). Inside the per-device
+			// transaction both records are re-read under the lock:
+			// a target with an open session WINS (skip the copy),
+			// and no decrypt for this peer can interleave between
+			// the re-read and the commit.
+			let migratedCount = 0
+			for (const op of migrationOps) {
+				const pnAddrStr = op.fromAddr.toString()
+				const lidAddrStr = op.toAddr.toString()
+				const didMigrate = await parsedKeys.transaction(async (): Promise<boolean> => {
+					const fresh = await parsedKeys.get('session', [pnAddrStr, lidAddrStr])
+					const pnSession = fresh[pnAddrStr]
+					if (!pnSession) {
+						return false
 					}
 
-					const migrationOps: MigrationOp[] = []
-					for (const jid of deviceJids) {
-						const lidWithDevice = transferDevice(jid, toJid)
-						const fromDecoded = jidDecode(jid)!
-						const toDecoded = jidDecode(lidWithDevice)!
+					// AunuBaileys (2.2.0, HB-2026-1112-110 addendum): a
+					// corrupt stored record used to throw out of
+					// deserialize and abort the WHOLE migration —
+					// treat it as absent, like loadSession does.
+					let fromSession: libsignal.SessionRecord | undefined
+					try {
+						fromSession = libsignal.SessionRecord.deserialize(pnSession)
+					} catch {
+						fromSession = undefined
+					}
 
-						// AunuBaileys (2.3.0, HB-395): an unbuildable
-						// migration TARGET (e.g. device 99 under a plain
-						// @lid address, which jidToSignalProtocolAddress
-						// rejects) used to throw here and abort the WHOLE
-						// migration inside the transaction — skip that
-						// device instead, mirroring the discovery pass
-						// above, which skips unbuildable source JIDs.
-						let fromAddr: libsignal.ProtocolAddress
-						let toAddr: libsignal.ProtocolAddress
+					if (!fromSession?.haveOpenSession()) {
+						return false
+					}
+
+					// HB-409: never overwrite a live target session.
+					// A corrupt target deserialises to absent (the
+					// loadSession rule), so it may be replaced.
+					// AunuBaileys (2.4.0, HB-409 × HB-449): one
+					// exception, decided by establishment recency.
+					// HB-449's case: after an earlier migration the
+					// peer RE-KEYED under the PN spelling, so the
+					// source record holds a session ESTABLISHED
+					// LATER than the target's open session was
+					// created or last used — the target is the stale
+					// previous generation and the source is the
+					// peer's current session; moving it is the
+					// migration's whole point. HB-409's case is the
+					// mirror image: the target session is the newer
+					// or equally-current one (established via real
+					// LID traffic after the PN session), and it
+					// wins. Same open baseKey on both sides means
+					// the session is already migrated — skip. Any
+					// missing/non-finite timestamp also skips: when
+					// recency cannot be proven, the target wins.
+					const targetSession = fresh[lidAddrStr]
+					if (targetSession) {
+						let target: libsignal.SessionRecord | undefined
 						try {
-							fromAddr = jidToSignalProtocolAddress(jid)
-							toAddr = jidToSignalProtocolAddress(lidWithDevice)
+							target = libsignal.SessionRecord.deserialize(targetSession)
 						} catch {
-							continue
+							target = undefined
 						}
 
-						migrationOps.push({
-							fromJid: jid,
-							toJid: lidWithDevice,
-							pnUser: fromDecoded.user,
-							lidUser: toDecoded.user,
-							deviceId: fromDecoded.device || 0,
-							fromAddr,
-							toAddr
-						})
-					}
-
-					const totalOps = migrationOps.length
-					let migratedCount = 0
-
-					// Bulk fetch PN sessions - already exist (verified during device discovery)
-					const pnAddrStrings = Array.from(new Set(migrationOps.map(op => op.fromAddr.toString())))
-					const pnSessions = await parsedKeys.get('session', pnAddrStrings)
-
-					// Prepare bulk session updates (PN → LID migration + deletion)
-					const sessionUpdates: { [key: string]: Uint8Array | null } = {}
-
-					for (const op of migrationOps) {
-						const pnAddrStr = op.fromAddr.toString()
-						const lidAddrStr = op.toAddr.toString()
-
-						const pnSession = pnSessions[pnAddrStr]
-						if (pnSession) {
-							// Session exists (guaranteed from device discovery)
-							// AunuBaileys (2.2.0, HB-2026-1112-110 addendum): a
-							// corrupt stored record used to throw out of
-							// deserialize and abort the WHOLE migration —
-							// treat it as absent, like loadSession does.
-							let fromSession: libsignal.SessionRecord | undefined
-							try {
-								fromSession = libsignal.SessionRecord.deserialize(pnSession)
-							} catch {
-								fromSession = undefined
+						if (target?.haveOpenSession()) {
+							type OpenSessionShape = {
+								getOpenSession?: () => {
+									indexInfo?: { baseKey?: Buffer; created?: number; used?: number }
+								} | undefined
 							}
-
-							if (fromSession?.haveOpenSession()) {
-								// Queue for bulk update: copy to LID, delete from PN
-								sessionUpdates[lidAddrStr] = fromSession.serialize()
-								sessionUpdates[pnAddrStr] = null
-
-								migratedCount++
+							const openInfo = (record: libsignal.SessionRecord) =>
+								(record as OpenSessionShape).getOpenSession?.()?.indexInfo
+							const fromInfo = openInfo(fromSession)
+							const targetInfo = openInfo(target)
+							const fromKey = fromInfo?.baseKey ? Buffer.from(fromInfo.baseKey).toString('base64') : undefined
+							const targetKey = targetInfo?.baseKey
+								? Buffer.from(targetInfo.baseKey).toString('base64')
+								: undefined
+							const isTime = (v: number | undefined): v is number => typeof v === 'number' && Number.isFinite(v)
+							const sourceIsNewerGeneration =
+								!!fromKey &&
+								!!targetKey &&
+								fromKey !== targetKey &&
+								isTime(fromInfo?.created) &&
+								isTime(targetInfo?.created) &&
+								isTime(targetInfo?.used) &&
+								fromInfo.created > targetInfo.created &&
+								fromInfo.created > targetInfo.used
+							if (!sourceIsNewerGeneration) {
+								return false
 							}
 						}
 					}
 
-					// Single bulk session update for all migrations
-					if (Object.keys(sessionUpdates).length > 0) {
-						await parsedKeys.set({ session: sessionUpdates })
-						logger.debug({ migratedSessions: migratedCount }, 'bulk session migration complete')
+					await parsedKeys.set({
+						session: { [lidAddrStr]: fromSession.serialize(), [pnAddrStr]: null }
+					})
+					return true
+				}, lidAddrStr)
+				if (didMigrate) {
+					migratedCount++
+				}
+			}
 
-						// Cache device-level migrations
-						for (const op of migrationOps) {
-							if (sessionUpdates[op.toAddr.toString()]) {
-								const deviceKey = `${op.pnUser}.${op.deviceId}`
-								migratedSessionCache.set(deviceKey, true)
-							}
-						}
-					}
+			if (migratedCount > 0) {
+				logger.debug({ migratedSessions: migratedCount }, 'bulk session migration complete')
+			}
 
-					const skippedCount = totalOps - migratedCount
-					return { migrated: migratedCount, skipped: skippedCount, total: totalOps }
-				},
-				`migrate-${deviceJids.length}-sessions-${jidDecode(toJid)?.user}`
-			)
+			const totalOps = migrationOps.length
+			return { migrated: migratedCount, skipped: totalOps - migratedCount, total: totalOps }
 		}
 	}
 
@@ -801,6 +1010,49 @@ function signalStorage(
 		return id
 	}
 
+	// AunuBaileys (2.4.0, HB-94 addendum run-0590): saveIdentity's
+	// session-clearing write used to be a BARE keys.set — a decrypt
+	// transaction that started while the bare write was in flight
+	// loaded the pre-clear record and its commit landed after the
+	// clear, resurrecting the session the identity change had just
+	// reset. The implementation below is wrapped by saveIdentity
+	// in a transaction keyed by the resolved wire address (the
+	// same key decrypt/encrypt use); when saveIdentity is called
+	// from inside a decrypt (libsignal's initIncoming), the
+	// transaction wrapper joins the in-flight context instead, so
+	// the behaviour there is unchanged.
+	const saveIdentityForWire = async (wireJid: string, identityKey: Uint8Array): Promise<boolean> => {
+		const { [wireJid]: existingKey } = await keys.get('identity-key', [wireJid])
+
+		// AunuBaileys (2.1.0, HB-98 addendum): a stored identity key in string form (a legacy/corrupt auth file) used to throw a bare TypeError from .every here, leaving the peer permanently unreadable with no self-heal. Normalise to bytes first; a value that is neither bytes nor a string counts as absent and is overwritten below.
+		const existingKeyBytes =
+			existingKey instanceof Uint8Array
+				? existingKey
+				: typeof existingKey === 'string'
+					? storedKeyToBuffer(existingKey)
+					: undefined
+		const keysMatch =
+			existingKeyBytes?.length === identityKey.length &&
+			existingKeyBytes.every((byte, i) => byte === identityKey[i])
+
+		if (existingKeyBytes && !keysMatch) {
+			// Identity changed - clear session and update key
+			await keys.set({
+				session: { [wireJid]: null },
+				'identity-key': { [wireJid]: identityKey }
+			})
+			return true
+		}
+
+		if (!existingKeyBytes) {
+			// New contact - Trust on First Use (TOFU)
+			await keys.set({ 'identity-key': { [wireJid]: identityKey } })
+			return true
+		}
+
+		return false
+	}
+
 	return {
 		loadSession: async (id: string) => {
 			// AunuBaileys (2.3.0, HB-371 + addendum): the blanket
@@ -844,35 +1096,17 @@ function signalStorage(
 		},
 		saveIdentity: async (id: string, identityKey: Uint8Array): Promise<boolean> => {
 			const wireJid = await resolveLIDSignalAddress(id)
-			const { [wireJid]: existingKey } = await keys.get('identity-key', [wireJid])
-
-			// AunuBaileys (2.1.0, HB-98 addendum): a stored identity key in string form (a legacy/corrupt auth file) used to throw a bare TypeError from .every here, leaving the peer permanently unreadable with no self-heal. Normalise to bytes first; a value that is neither bytes nor a string counts as absent and is overwritten below.
-			const existingKeyBytes =
-				existingKey instanceof Uint8Array
-					? existingKey
-					: typeof existingKey === 'string'
-						? storedKeyToBuffer(existingKey)
-						: undefined
-			const keysMatch =
-				existingKeyBytes?.length === identityKey.length &&
-				existingKeyBytes.every((byte, i) => byte === identityKey[i])
-
-			if (existingKeyBytes && !keysMatch) {
-				// Identity changed - clear session and update key
-				await keys.set({
-					session: { [wireJid]: null },
-					'identity-key': { [wireJid]: identityKey }
-				})
-				return true
+			// HB-94 addendum run-0590: see saveIdentityForWire —
+			// run the read/clear in a transaction keyed by the
+			// wire address when a transaction capability exists;
+			// a plain key store (no transaction) keeps the bare
+			// path, exactly as before.
+			const txKeys = keys as SignalKeyStoreWithTransaction
+			if (typeof txKeys.transaction === 'function') {
+				return txKeys.transaction(async () => saveIdentityForWire(wireJid, identityKey), wireJid)
 			}
 
-			if (!existingKeyBytes) {
-				// New contact - Trust on First Use (TOFU)
-				await keys.set({ 'identity-key': { [wireJid]: identityKey } })
-				return true
-			}
-
-			return false
+			return saveIdentityForWire(wireJid, identityKey)
 		},
 		loadPreKey: async (id: number | string) => {
 			const keyId = id.toString()

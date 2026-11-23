@@ -4,11 +4,16 @@ export declare class LIDMappingStore {
     private readonly mappingCache;
     private readonly keys;
     private readonly logger;
+    private readonly maxPersistentEntries;
+    private readonly persistedPairs;
     private pnToLIDFunc?;
     private readonly inflightLIDLookups;
     private readonly inflightPNLookups;
     private readonly storeMutex;
-    constructor(keys: SignalKeyStoreWithTransaction, logger: ILogger, pnToLIDFunc?: (jids: string[]) => Promise<LIDMapping[] | undefined>);
+    constructor(keys: SignalKeyStoreWithTransaction, logger: ILogger, pnToLIDFunc?: (jids: string[]) => Promise<LIDMapping[] | undefined>, options?: {
+        maxEntries?: number;
+    });
+    private registerPersistedPair;
     storeLIDPNMappings(pairs: LIDMapping[]): Promise<void>;
     private storeLIDPNMappingsInner;
     getLIDForPN(pn: string): Promise<string | null>;
