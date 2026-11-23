@@ -8,6 +8,7 @@
 // at a dead local WS URL and transports are fakes, so no test touches WA.
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
+import { randomBytes } from 'node:crypto'
 import util from 'node:util'
 import { createRequire } from 'node:module'
 import { lib, makeAuthState, makeOfflineSocket, fakeOpenTransport, silentLogger, sleep, waitFor, endQuietly, tmpDir } from './helpers.mjs'
@@ -47,6 +48,17 @@ const PEER = '628987654321@s.whatsapp.net'
 const PEER_LID = '111222333444555@lid'
 const PEER_USER = '628987654321'
 const ME_USER = '628123456789'
+
+// A structurally valid account (random bytes are fine — the receipt only
+// encodes them; the peer verifies, the test only checks the shape).
+// AunuBaileys (2.5.0, HB-201 addendum 2): sendRetryRequest validates
+// creds.account before building a retry receipt, so tests that drive
+// the receipt path must set one.
+const syntheticAccount = () => ({
+	details: randomBytes(32),
+	accountSignatureKey: randomBytes(32),
+	accountSignature: randomBytes(64)
+})
 
 // Multi-file repo over a temp dir; the raw keys object is returned
 // so tests can inject store faults/delays underneath the transaction
@@ -852,6 +864,7 @@ test('HB-374: the first retry receipt after a self-heal (count 1) carries <keys>
 		}
 	})
 	sock.authState.creds.me = { id: ME, lid: ME_LID }
+	sock.authState.creds.account = syntheticAccount()
 	const sent = []
 	fakeOpenTransport(sock, sent)
 	const failures = []
@@ -1033,6 +1046,52 @@ test('HB-380 (socket): a count-1 retry receipt carrying a MAC error recreates th
 })
 
 // ── HB-2026-1112-40 addendum #3 ───────────────────────────────────
+
+// ── HB-405 (2.5.0) ────────────────────────────────────────────
+
+test('HB-405 (2.5.0): a second peer retry receipt carrying a MAC error inside the throttle window does not recreate the session again — the message is still resent (was: every error="7" receipt deleted the session)', async () => {
+	const deleteSessionCalls = []
+	const { sock, encRecords } = await makeRetryEnv(undefined)
+	const origDelete = sock.signalRepository.deleteSession.bind(sock.signalRepository)
+	sock.signalRepository.deleteSession = async jids => {
+		deleteSessionCalls.push([...jids])
+		return origDelete(jids)
+	}
+	try {
+		const sent1 = await sock.sendMessage(PEER, { text: 'hello-405-a' })
+		const sent2 = await sock.sendMessage(PEER, { text: 'hello-405-b' })
+		const id1 = sent1.key.id
+		const id2 = sent2.key.id
+		assert.ok(id1 && id2, 'sends produced no ids')
+		// First MAC-error receipt: the session is recreated at once (HB-380).
+		sock.ws.emit('CB:receipt', receiptStanza({ from: PEER, participant: `${PEER_USER}:1@s.whatsapp.net`, id: id1, count: 1, error: 7 }))
+		assert.equal(
+			await waitFor(() => deleteSessionCalls.length >= 1, 8000),
+			true,
+			'first MAC-error receipt must recreate the session'
+		)
+		// Let the first resend settle (offline it cannot re-establish
+		// the session — the bundle fetch answers empty), then restore
+		// the session the way a live X3DH fetch would, so the second
+		// receipt meets a live session and the throttle gate applies.
+		await sleep(1500)
+		await sock.signalRepository.injectE2ESession({ jid: `${PEER_USER}:1@s.whatsapp.net`, session: bundleFor() })
+		const afterFirst = encRecords.length
+		// Second MAC-error receipt, different message id, same peer,
+		// inside the window: the message is still resent, but the
+		// session must NOT be deleted again.
+		sock.ws.emit('CB:receipt', receiptStanza({ from: PEER, participant: `${PEER_USER}:1@s.whatsapp.net`, id: id2, count: 1, error: 7 }))
+		assert.equal(
+			await waitFor(() => encRecords.length > afterFirst, 8000),
+			true,
+			'second receipt must still resend its message'
+		)
+		await sleep(500)
+		assert.equal(deleteSessionCalls.length, 1, 'second MAC-error receipt inside the window must not delete the session again')
+	} finally {
+		endQuietly(sock)
+	}
+})
 
 test('HB-2026-1112-40 #3: membership-request stubs use the participant fallback chain and never equate undefined ids', async () => {
 	const sock = await makeOfflineSocket()

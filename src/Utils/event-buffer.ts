@@ -29,7 +29,20 @@ const BUFFERABLE_EVENT = [
 	'messages.delete',
 	'messages.reaction',
 	'message-receipt.update',
-	'groups.update'
+	'groups.update',
+	// AunuBaileys (2.5.0, HB-425 MAIN): a groups.upsert for a group
+	// created in this window reached the host before its chat row —
+	// the consolidated map holds GroupMetadata[] in one slot, like
+	// groups.update (not the deferred list: one array value fits).
+	'groups.upsert',
+	// AunuBaileys (2.5.0, HB-425 addenda run-0724 + chats.lock facet):
+	// these bypassed the buffer and reached the host/store before the
+	// chat row / stub message from the same window — a chats.lock for
+	// a still-buffered chat was dropped by the store, and a
+	// participant change was seen before the stub explaining it.
+	'chats.lock',
+	'group-participants.update',
+	'group.join-request'
 ] as const
 
 type BufferableEvent = (typeof BUFFERABLE_EVENT)[number]
@@ -42,6 +55,18 @@ type BufferableEvent = (typeof BUFFERABLE_EVENT)[number]
  * can be done in a single transaction
  */
 type BaileysEventData = Partial<BaileysEventMap>
+
+// AunuBaileys (2.5.0, HB-425 addenda run-0724 + chats.lock facet):
+// bufferable events that cannot share the single consolidated map slot
+// — one value per event name, yet several chats/groups may report in
+// one session. They are held in arrival order and emitted each as its
+// own event after the consolidated batch (see flush). Kept in a
+// closure list, not in BufferedEventData, so the public type is
+// untouched.
+type DeferredBufferableEvent =
+	| { event: 'chats.lock'; data: BaileysEventMap['chats.lock'] }
+	| { event: 'group-participants.update'; data: BaileysEventMap['group-participants.update'] }
+	| { event: 'group.join-request'; data: BaileysEventMap['group.join-request'] }
 
 const BUFFERABLE_EVENT_SET = new Set<BaileysEvent>(BUFFERABLE_EVENT)
 
@@ -87,6 +112,7 @@ export const makeEventBuffer = (logger: ILogger): BaileysBufferableEventEmitter 
 
 	let data = makeBufferData()
 	let isBuffering = false
+	let deferredBufferableEvents: DeferredBufferableEvent[] = []
 	let bufferTimeout: NodeJS.Timeout | null = null
 	let flushPendingTimeout: NodeJS.Timeout | null = null // Add a specific timer for the debounced flush to prevent leak
 	let bufferCount = 0
@@ -240,6 +266,12 @@ export const makeEventBuffer = (logger: ILogger): BaileysBufferableEventEmitter 
 		// the consolidated batch, so a keys-form delete in the same
 		// batch cannot crowd them out of the single map slot.
 		const messageDeleteAllList = Object.values(data.messageDeleteAll)
+		// AunuBaileys (2.5.0, HB-425 addenda): the deferred bufferable
+		// events live outside `data` — capture and reset them here, in
+		// the same before-swap position, so an event a listener
+		// re-buffers during the flush lands in the fresh list.
+		const deferredEvents = deferredBufferableEvents
+		deferredBufferableEvents = []
 		// AunuBaileys (1.0.81, HB-166 + HB-224, re-applied P3b): swap
 		// the fresh buffer in BEFORE emitting, and guard the emit.
 		// The old order assigned `data = newData` after the emit, so
@@ -267,6 +299,24 @@ export const makeEventBuffer = (logger: ILogger): BaileysBufferableEventEmitter 
 			}
 		}
 
+		// AunuBaileys (2.5.0, HB-425 addenda): each deferred event goes
+		// out as its own event after the consolidated batch — the chat
+		// row / stub message it depends on is already delivered, and
+		// arrival order among the deferred events is preserved.
+		for (const deferred of deferredEvents) {
+			try {
+				if (deferred.event === 'chats.lock') {
+					ev.emit('event', { 'chats.lock': deferred.data })
+				} else if (deferred.event === 'group-participants.update') {
+					ev.emit('event', { 'group-participants.update': deferred.data })
+				} else {
+					ev.emit('event', { 'group.join-request': deferred.data })
+				}
+			} catch (err) {
+				logger.error({ err }, 'error emitting deferred buffered event')
+			}
+		}
+
 		logger.trace({ conditionalChatUpdatesLeft }, 'released buffered events')
 
 		return true
@@ -274,8 +324,19 @@ export const makeEventBuffer = (logger: ILogger): BaileysBufferableEventEmitter 
 
 	return {
 		process(handler) {
+			// AunuBaileys (2.5.0, HB-2026-1113-227 addendum): this
+			// listener used to be registered bare — a throwing batch
+			// handler rejected out of the async listener as an
+			// unhandledRejection (fatal by default on Node >= 15),
+			// bypassing the HB-227/HB-264 dispatcher guard, which
+			// only covers per-event listeners. Catch here, same
+			// pattern as the forwarder above.
 			const listener = async (map: BaileysEventData) => {
-				await handler(map)
+				try {
+					await handler(map)
+				} catch (err) {
+					logger.error({ err }, 'error in process handler — continuing')
+				}
 			}
 
 			ev.on('event', listener)
@@ -293,21 +354,28 @@ export const makeEventBuffer = (logger: ILogger): BaileysBufferableEventEmitter 
 					const bufferedType = existingUpserts[0]!.type
 					if (bufferedType !== type) {
 						logger.debug({ bufferedType, newType: type }, 'messages.upsert type mismatch, emitting buffered messages')
+						// AunuBaileys (2.5.0, HB-2026-1113-166 addendum 1):
+						// the clear ran AFTER the emit, so an upsert a
+						// listener re-buffered synchronously during that
+						// emit landed in the old map and was wiped by the
+						// reset — the same reset-after-emit shape the
+						// HB-166 fix removed from flush(). Snapshot and
+						// clear FIRST, like flush() does.
+						const bufferedMessages = existingUpserts.map(m => m.message)
+						data.messageUpserts = {}
 						// Emit the buffered messages with their correct type
 						ev.emit('event', {
 							'messages.upsert': {
-								messages: existingUpserts.map(m => m.message),
+								messages: bufferedMessages,
 								type: bufferedType
 							}
 						})
-						// Clear the message upserts from the buffer
-						data.messageUpserts = {}
 					}
 				}
 			}
 
 			if (isBuffering && BUFFERABLE_EVENT_SET.has(event)) {
-				append(data, historyCache, event as BufferableEvent, evData, logger)
+				append(data, historyCache, event as BufferableEvent, evData, logger, deferredBufferableEvents)
 				return true
 			}
 
@@ -387,6 +455,7 @@ export const makeEventBuffer = (logger: ILogger): BaileysBufferableEventEmitter 
 			historyCache.clear()
 			// Reset buffer data
 			data = makeBufferData()
+			deferredBufferableEvents = []
 			isBuffering = false
 			bufferCount = 0
 			// Remove all listeners
@@ -416,7 +485,8 @@ const makeBufferData = (): BufferedEventData => {
 		messageDeletes: {},
 		messageDeleteAll: {},
 		messageReceipts: {},
-		groupUpdates: {}
+		groupUpdates: {},
+		groupUpserts: {}
 	}
 }
 
@@ -426,7 +496,8 @@ function append<E extends BufferableEvent>(
 	event: E,
 	// eslint-disable-next-line @typescript-eslint/no-explicit-any
 	eventData: any,
-	logger: ILogger
+	logger: ILogger,
+	deferredEvents: DeferredBufferableEvent[]
 ) {
 	switch (event) {
 		case 'messaging-history.set':
@@ -473,7 +544,11 @@ function append<E extends BufferableEvent>(
 			for (const message of eventData.messages as WAMessage[]) {
 				const key = stringifyMessageKey(message.key)
 				const existingMsg = data.historySets.messages[key]
-				if (!existingMsg && !historyCache.has(key)) {
+				// AunuBaileys (2.5.0, HB-421 order B): a live upsert for
+				// this key is already buffered — storing the history
+				// copy too would deliver the same message twice at
+				// flush. Skip it; the upsert delivers it once.
+				if (!existingMsg && !historyCache.has(key) && !data.messageUpserts[key]) {
 					data.historySets.messages[key] = message
 					addHistoryCacheKey(historyCache, key)
 				}
@@ -557,8 +632,15 @@ function append<E extends BufferableEvent>(
 						data.chatUpdates[chatId] = concatChats(chatUpdate, update)
 					}
 				} else if (conditionMatches === undefined) {
-					// condition yet to be fulfilled
-					data.chatUpdates[chatId] = update
+					// AunuBaileys (2.5.0, HB-412): a pending conditional
+					// used to REPLACE the stored update for this chat
+					// whole — a second pending action (mute) discarded
+					// the first (archive), and a pending conditional
+					// after a merged non-conditional update discarded
+					// that too. Merge into the stored update, like the
+					// satisfied branch and the sibling branches do.
+					const pendingUpdate = data.chatUpdates[chatId] || {}
+					data.chatUpdates[chatId] = concatChats(pendingUpdate, update)
 				}
 				// otherwise -- condition not met, update is invalid
 
@@ -690,13 +772,24 @@ function append<E extends BufferableEvent>(
 					delete data.messageUpdates[key]
 				}
 
+				// AunuBaileys (2.5.0, HB-421 order A): the live copy wins
+				// and is delivered ONCE, via messages.upsert with its
+				// live type. The old code overwrote the history copy in
+				// place and never created an upsert entry, so the
+				// 'notify' channel never fired for a live message that
+				// also arrived in the history sync. Drop the history
+				// copy, remember the key in the session dedup set (so a
+				// later duplicate history delivery cannot resurrect it
+				// after a delete either), and always create the upsert
+				// entry below.
 				if (data.historySets.messages[key]) {
-					data.historySets.messages[key] = message
-				} else {
-					data.messageUpserts[key] = {
-						message,
-						type: type === 'notify' || data.messageUpserts[key]?.type === 'notify' ? 'notify' : type
-					}
+					delete data.historySets.messages[key]
+					addHistoryCacheKey(historyCache, key)
+				}
+
+				data.messageUpserts[key] = {
+					message,
+					type: type === 'notify' || data.messageUpserts[key]?.type === 'notify' ? 'notify' : type
 				}
 			}
 
@@ -808,6 +901,26 @@ function append<E extends BufferableEvent>(
 				// the subject. Merge into the stored update, like chats.update.
 				data.groupUpdates[id] = Object.assign(data.groupUpdates[id] || {}, update)
 			}
+
+			break
+		case 'groups.upsert':
+			// AunuBaileys (2.5.0, HB-425 MAIN): merge by group id into
+			// the consolidated slot, like groups.update above.
+			const groupUpserts = eventData as BaileysEventMap['groups.upsert']
+			for (const group of groupUpserts) {
+				const id = group.id!
+				data.groupUpserts[id] = Object.assign(data.groupUpserts[id] || {}, group)
+			}
+
+			break
+		case 'chats.lock':
+		case 'group-participants.update':
+		case 'group.join-request':
+			// AunuBaileys (2.5.0, HB-425 addenda run-0724 + chats.lock
+			// facet): hold in arrival order for the post-batch emit in
+			// flush() — the consolidated map has one slot per event
+			// name, and several chats/groups may report in one session.
+			deferredEvents.push({ event, data: eventData })
 
 			break
 		default:
@@ -927,6 +1040,14 @@ function consolidateEvents(data: BufferedEventData) {
 		map['chats.upsert'] = chatUpsertList
 	}
 
+	// AunuBaileys (2.5.0, HB-425 MAIN): emit the buffered group
+	// upserts together with the chat upserts above, so the host
+	// sees the group and its chat row in the same batch.
+	const groupUpsertList = Object.values(data.groupUpserts)
+	if (groupUpsertList.length) {
+		map['groups.upsert'] = groupUpsertList
+	}
+
 	const chatUpdateList = Object.values(data.chatUpdates)
 	if (chatUpdateList.length) {
 		map['chats.update'] = chatUpdateList
@@ -1010,7 +1131,19 @@ function concatChats<C extends Partial<Chat>>(a: C, b: Partial<Chat>) {
 		}
 	}
 
-	return Object.assign(a, b)
+	// AunuBaileys (2.5.0, HB-411 addendum 6): merge source fields that
+	// are undefined mean "not carried", never "clear the stored value".
+	// A parameter-less GROUP_CHANGE_SUBJECT stub emits chats.update
+	// { name: undefined }; Object.assign used to merge that into the
+	// pending chats.upsert / history chat and flush it as an upsert,
+	// erasing the known chat name in the store. Strip undefined keys
+	// from the merge source (copy first — trimUndefined mutates, and
+	// the caller's object must not be touched). The unreadCount
+	// branches above only ever produce numbers/null/undefined for
+	// that one field, so trimming cannot change their outcome: the
+	// null-neutralise already cleared a.unreadCount directly, and a
+	// numeric unreadCount is never undefined.
+	return Object.assign(a, trimUndefined({ ...b }))
 }
 
 const stringifyMessageKey = (key: WAMessageKey) => `${key.remoteJid},${key.id},${key.fromMe ? '1' : '0'}`

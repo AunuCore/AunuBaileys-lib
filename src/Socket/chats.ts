@@ -134,7 +134,14 @@ export const makeChatsSocket = (config: SocketConfig) => {
 	// In-memory history sync completion tracking (resets on reconnection)
 	const historySyncStatus = {
 		initialBootstrapComplete: false,
-		recentSyncComplete: false
+		recentSyncComplete: false,
+		// AunuBaileys (2.5.0, HB-443): recentSyncComplete used to do
+		// double duty — the 'complete' emit gate AND the 'already
+		// paused' marker. The paused callback set it, so a RECENT
+		// chunk arriving after a >120 s stall and reaching progress
+		// 100 could never emit 'complete'. A separate flag keeps the
+		// two meanings apart.
+		recentSyncPaused: false
 	}
 	let historySyncPausedTimeout: NodeJS.Timeout | undefined
 
@@ -307,6 +314,14 @@ export const makeChatsSocket = (config: SocketConfig) => {
 		if (result) {
 			return result.list
 		}
+
+		// AunuBaileys (2.5.0, HB-435): a timed-out USync IQ resolves
+		// undefined here (the HB-340 get-IQ contract), and without
+		// this fallback the function resolved undefined — a host
+		// doing res.length got a raw TypeError exactly when the
+		// network was already failing. Return the empty list, like
+		// pnFromLIDUSync does in socket.ts.
+		return []
 	}
 
 	const fetchDisappearingDuration = async (...jids: string[]) => {
@@ -320,6 +335,10 @@ export const makeChatsSocket = (config: SocketConfig) => {
 		if (result) {
 			return result.list
 		}
+
+		// AunuBaileys (2.5.0, HB-435): same timed-out-IQ fallback as
+		// fetchStatus above — resolve [] instead of undefined.
+		return []
 	}
 
 	/** update the profile picture for yourself or a group */
@@ -1175,15 +1194,41 @@ export const makeChatsSocket = (config: SocketConfig) => {
 	 * Star or Unstar a message
 	 */
 	const star = (jid: string, messages: { id: string; fromMe?: boolean }[], star: boolean) => {
-		return chatModify(
-			{
-				star: {
-					messages,
-					star
-				}
-			},
-			jid
-		)
+		// AunuBaileys (2.5.0, HB-436): one app patch carries exactly
+		// ONE message id (chatModificationToAppPatch takes
+		// messages[0]), so passing N>1 used to star only the first
+		// message and silently drop the rest while resolving success.
+		// One patch per message, applied sequentially in caller order
+		// (app-state patches must not race each other); a failure
+		// part-way rejects with the messages already starred left
+		// applied, caller-visible. An empty/invalid list still goes
+		// through the single chatModify call so the HB-353 Boom 400
+		// guard in chatModificationToAppPatch keeps firing.
+		if (!Array.isArray(messages) || !messages.length) {
+			return chatModify(
+				{
+					star: {
+						messages,
+						star
+					}
+				},
+				jid
+			)
+		}
+
+		return (async () => {
+			for (const message of messages) {
+				await chatModify(
+					{
+						star: {
+							messages: [message],
+							star
+						}
+					},
+					jid
+				)
+			}
+		})()
 	}
 
 	/**
@@ -1374,6 +1419,11 @@ export const makeChatsSocket = (config: SocketConfig) => {
 				!historySyncStatus.recentSyncComplete
 			) {
 				historySyncStatus.recentSyncComplete = true
+				// AunuBaileys (2.5.0, HB-443): a chunk that arrives
+				// after the sync was paused still completes it — clear
+				// the paused marker with the timer so the state is
+				// clean for the next sync.
+				historySyncStatus.recentSyncPaused = false
 				clearTimeout(historySyncPausedTimeout)
 				historySyncPausedTimeout = undefined
 				ev.emit('messaging-history.status', {
@@ -1387,8 +1437,8 @@ export const makeChatsSocket = (config: SocketConfig) => {
 			if (syncType === waproto.HistorySync.HistorySyncType.RECENT && !historySyncStatus.recentSyncComplete) {
 				clearTimeout(historySyncPausedTimeout)
 				historySyncPausedTimeout = setTimeout(() => {
-					if (!historySyncStatus.recentSyncComplete) {
-						historySyncStatus.recentSyncComplete = true
+					if (!historySyncStatus.recentSyncComplete && !historySyncStatus.recentSyncPaused) {
+						historySyncStatus.recentSyncPaused = true
 						ev.emit('messaging-history.status', {
 							syncType: waproto.HistorySync.HistorySyncType.RECENT,
 							status: 'paused',
@@ -1545,6 +1595,9 @@ export const makeChatsSocket = (config: SocketConfig) => {
 
 		historySyncStatus.initialBootstrapComplete = false
 		historySyncStatus.recentSyncComplete = false
+		// AunuBaileys (2.5.0, HB-443): reset the paused marker with
+		// the rest of the sync state on reconnection.
+		historySyncStatus.recentSyncPaused = false
 		clearTimeout(historySyncPausedTimeout)
 		historySyncPausedTimeout = undefined
 

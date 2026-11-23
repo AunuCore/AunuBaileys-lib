@@ -152,6 +152,13 @@ export class MessageRetryManager {
 		}
 
 		// IMMEDIATE recreation for MAC errors - session is definitely out of sync
+		// AunuBaileys (2.5.0, HB-405 vs HB-380): do NOT throttle
+		// this branch. HB-380 locks MAC as always immediate for
+		// OUR OWN decrypt failures (sendRetryRequest); throttling
+		// here broke that lock. The peer churn HB-405 files is
+		// throttled at the peer-supplied call site instead:
+		// sendMessagesAgain consults hasRecentSessionRecreate
+		// before deleting on a receipt's error code (see there).
 		if (errorCode !== undefined && MAC_ERROR_CODES.has(errorCode)) {
 			this.sessionRecreateHistory.set(jid, Date.now())
 			this.statistics.sessionRecreations++
@@ -182,11 +189,32 @@ export class MessageRetryManager {
 	}
 
 	/**
+	 * HB-405: has this peer had a session recreation inside the
+	 * throttle window? Read-only — consulted ONLY by the
+	 * peer-supplied call site (sendMessagesAgain, retry receipt
+	 * error codes), where a peer can force unbounded session churn
+	 * by retrying many message ids with error="7". Our own decrypt
+	 * failures keep the immediate path above (HB-380); this gate
+	 * never throttles those.
+	 */
+	hasRecentSessionRecreate(jid: string): boolean {
+		const prevTime = this.sessionRecreateHistory.get(jid)
+		return !!prevTime && Date.now() - prevTime <= RECREATE_SESSION_TIMEOUT
+	}
+
+	/**
 	 * Parse error code from retry receipt's retry node.
 	 * Returns undefined if no error code is present.
 	 */
 	parseRetryErrorCode(errorAttr: string | undefined): RetryReason | undefined {
 		if (errorAttr === undefined || errorAttr === '') {
+			return undefined
+		}
+
+		// AunuBaileys (2.5.0, HB-405 C11): parseInt accepts partial
+		// parses ("7abc" -> 7) — a peer-controlled string must match
+		// the whole code, or it is not a code at all.
+		if (!/^\d+$/.test(errorAttr)) {
 			return undefined
 		}
 

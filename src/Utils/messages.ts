@@ -20,6 +20,7 @@ import type {
 	MessageGenerationOptionsFromContent,
 	MessageUserReceipt,
 	MessageWithContextInfo,
+	PollVoteOptions,
 	StickerPackInfo,
 	WAMediaUpload,
 	WAMessage,
@@ -28,8 +29,11 @@ import type {
 	WATextMessage
 } from '../Types'
 import { WAMessageStatus, WAProto } from '../Types'
-import { isJidGroup, isJidNewsletter, isJidStatusBroadcast, jidNormalizedUser } from '../WABinary'
-import { sha256 } from './crypto'
+// Re-exported so the Utils barrel keeps exposing the type (its
+// canonical home is now Types — see src/Types/Message.ts).
+export type { PollVoteOptions }
+import { isJidGroup, isJidNewsletter, isJidStatusBroadcast, isLidUser, jidDecode, jidNormalizedUser } from '../WABinary'
+import { aesEncryptGCM, hmacSign, sha256 } from './crypto'
 import { generateMessageIDV2, getKeyAuthor, unixTimestampSeconds } from './generics'
 import type { ILogger } from './logger'
 import {
@@ -48,6 +52,7 @@ import {
 } from './messages-media'
 import { shouldIncludeReportingToken } from './reporting-utils'
 import { prepareRichResponseMessage } from './rich-message-utils'
+import { isAunuViewOnceContent, wrapAunuViewOnce } from './aunu-view-once'
 
 type ExtractByKey<T, K extends PropertyKey> = T extends Record<K, any> ? T : never
 type RequireKey<T, K extends keyof T> = T & {
@@ -860,6 +865,79 @@ export const prepareStickerPackMessage = async (
 	return { stickerPackMessage }
 }
 
+/**
+ * Encrypt a poll vote (AES-GCM over the sha256 of each selected option).
+ * Key derivation mirrors decryptPollVote (src/Utils/process-message.ts)
+ * exactly — same sign / key0 / decKey / AAD construction — so a vote
+ * encrypted here decrypts there, and a vote we receive decrypts with
+ * the same context.
+ */
+export const encryptPollVote = ({
+	pollMsgId,
+	pollCreatorJid,
+	pollEncKey,
+	voterJid,
+	selectedOptions
+}: {
+	pollMsgId: string
+	pollCreatorJid: string
+	pollEncKey: Uint8Array
+	voterJid: string
+	selectedOptions: string[]
+}): waproto.Message.IPollEncValue => {
+	const sign = Buffer.concat([
+		Buffer.from(pollMsgId),
+		Buffer.from(pollCreatorJid),
+		Buffer.from(voterJid),
+		Buffer.from('Poll Vote'),
+		new Uint8Array([1])
+	])
+
+	const key0 = hmacSign(pollEncKey, new Uint8Array(32), 'sha256')
+	const encKey = hmacSign(sign, key0, 'sha256')
+	const aad = Buffer.from(`${pollMsgId}\u0000${voterJid}`)
+
+	const plaintext = waproto.Message.PollVoteMessage.encode({
+		selectedOptions: selectedOptions.map(option => sha256(Buffer.from(option)))
+	}).finish()
+	const encIv = randomBytes(12)
+	const encPayload = aesEncryptGCM(plaintext, encKey, encIv, aad)
+	return { encPayload, encIv }
+}
+
+/**
+ * AunuBaileys (2.5.0, Kage LID addressing delta, run-0932): resolve
+ * our own participant in the addressing namespace of the destination
+ * chat. WhatsApp may identify the local account by PN or LID depending
+ * on the destination — a group/status chat addressed by LID must carry
+ * our LID as participant, not our PN. Re-implementation (tree style) of
+ * kage-baileys' lib/Utils/lid-addressing.js (credited there to
+ * @this-xys/baileys 2.0.0); the two TODO sites in
+ * generateWAMessageFromContent (:1486, :1548) are wired to these
+ * helpers by the coordinator — see GROUP-C-REPORT.md for the exact
+ * patch — because that function belongs to Group B this batch.
+ */
+export const getMeParticipant = (targetJid: string, userJid: string, userJidLid?: string): string => {
+	return isLidUser(targetJid) && userJidLid ? userJidLid : userJid
+}
+
+export const getQuotedParticipant = (
+	quoted: WAMessage | undefined | null,
+	jid: string,
+	userJid: string,
+	userJidLid?: string
+): string | undefined => {
+	if (!quoted || !quoted.key) {
+		return undefined
+	}
+
+	if (quoted.key.fromMe) {
+		return getMeParticipant(quoted.key.remoteJid || jid, userJid, userJidLid)
+	}
+
+	return quoted.participant || quoted.key.participant || quoted.key.remoteJid || undefined
+}
+
 export const generateWAMessageContent = async (
 	message: AnyMessageContent,
 	options: MessageContentGenerationOptions
@@ -871,7 +949,20 @@ export const generateWAMessageContent = async (
 	// The v7 native chain had no equivalent branch, so these content keys
 	// used to fall through to prepareWAMessageMedia; the check mirrors v6
 	// (`'code' in message || ...`) and runs before the text branch, as in v6.
-	if (
+	// AunuBaileys (2.5.0, HB-441): content that already carries a
+	// view-once wrapper (e.g. built by the public wrapAunuViewOnce
+	// util) passes through untouched — the dispatch below only knows
+	// host-level content keys, so a pre-wrapped V2 used to fall
+	// through to prepareWAMessageMedia and die with Boom 400
+	// 'Invalid media type', leaving no path to V2 at all. It is
+	// already final: the trailing mentions/edit/contextInfo/viewOnce
+	// blocks are skipped for it below (they would otherwise write
+	// contextInfo onto the wrapper, which the view-once message type
+	// cannot carry).
+	const preWrappedViewOnce = isAunuViewOnceContent(message)
+	if (preWrappedViewOnce) {
+		m = message as unknown as WAMessageContent
+	} else if (
 		'code' in message ||
 		'links' in message ||
 		'table' in message ||
@@ -1069,8 +1160,20 @@ export const generateWAMessageContent = async (
 		const startTime = Math.floor(startDate.getTime() / 1000)
 
 		if (message.event.call && options.getCallLink) {
-			const token = await options.getCallLink(message.event.call, { startTime })
-			m.eventMessage.joinLink = (message.event.call === 'audio' ? CALL_AUDIO_PREFIX : CALL_VIDEO_PREFIX) + token
+			// AunuBaileys (2.5.0, HB-261 addendum 2): a failing
+			// call/link_create IQ used to fail the whole event send
+			// although joinLink is only optional enrichment — and
+			// an undefined token built a bogus ".../undefined"
+			// link. Send the event without joinLink instead.
+			let token: string | undefined
+			try {
+				token = await options.getCallLink(message.event.call, { startTime })
+			} catch (error) {
+				options.logger?.warn({ error }, 'aunu: call link lookup failed; sending event without joinLink')
+			}
+			if (token) {
+				m.eventMessage.joinLink = (message.event.call === 'audio' ? CALL_AUDIO_PREFIX : CALL_VIDEO_PREFIX) + token
+			}
 		}
 
 		m.messageContextInfo = {
@@ -1168,6 +1271,73 @@ export const generateWAMessageContent = async (
 				// poll for multiple choice polls
 				m.pollCreationMessage = pollCreationMessage
 			}
+		}
+	} else if (hasNonNullishProperty(message, 'pollVote')) {
+		// AunuBaileys (2.5.0, poll-vote SEND delta, run-0962): the
+		// receive side (decryptPollVote + poll aggregation) existed,
+		// but a vote could not be built — the vote is a
+		// pollUpdateMessage carrying the AES-GCM encrypted
+		// PollVoteMessage (encryptPollVote above). All five fields
+		// are validated with Boom 400 before any network work.
+		// NOTE (2.5.0, Group C): `pollVote` is now a member of the
+		// AnyMessageContent union (src/Types/Message.ts) — the
+		// guard above narrows to it, so no cast is needed.
+		const pollVote = message.pollVote
+		const creationKey = pollVote?.pollCreationMessageKey
+		if (!creationKey?.id || typeof creationKey.id !== 'string') {
+			throw new Boom('pollVote.pollCreationMessageKey.id is required', { statusCode: 400 })
+		}
+
+		if (!pollVote.pollEncKey || !(pollVote.pollEncKey instanceof Uint8Array) || !pollVote.pollEncKey.length) {
+			throw new Boom('pollVote.pollEncKey is required', { statusCode: 400 })
+		}
+
+		if (
+			!Array.isArray(pollVote.selectedOptions) ||
+			pollVote.selectedOptions.some(option => typeof option !== 'string')
+		) {
+			throw new Boom('pollVote.selectedOptions must be an array of option names', { statusCode: 400 })
+		}
+
+		// Creator and voter must be deviceless and share one
+		// addressing mode (@lid or @s.whatsapp.net): the vote's key
+		// derivation binds both JIDs, so a device suffix or a
+		// mixed-mode pair would encrypt a vote neither identity can
+		// decrypt.
+		const assertVoteJid = (value: unknown, field: string) => {
+			if (typeof value !== 'string') {
+				throw new Boom(`pollVote.${field} must be a JID string`, { statusCode: 400 })
+			}
+
+			const decoded = jidDecode(value)
+			if (!decoded || decoded.device !== undefined) {
+				throw new Boom(`pollVote.${field} must be a deviceless JID`, { statusCode: 400 })
+			}
+
+			if (decoded.server !== 'lid' && decoded.server !== 's.whatsapp.net') {
+				throw new Boom(`pollVote.${field} must be an @lid or @s.whatsapp.net JID`, { statusCode: 400 })
+			}
+
+			return decoded
+		}
+		const creator = assertVoteJid(pollVote.pollCreatorJid, 'pollCreatorJid')
+		const voter = assertVoteJid(pollVote.voterJid, 'voterJid')
+		if (creator.server !== voter.server) {
+			throw new Boom('pollVote.pollCreatorJid and pollVote.voterJid must use the same addressing mode', {
+				statusCode: 400
+			})
+		}
+
+		m.pollUpdateMessage = {
+			pollCreationMessageKey: creationKey,
+			vote: encryptPollVote({
+				pollMsgId: creationKey.id,
+				pollCreatorJid: pollVote.pollCreatorJid,
+				pollEncKey: pollVote.pollEncKey,
+				voterJid: pollVote.voterJid,
+				selectedOptions: pollVote.selectedOptions
+			}),
+			senderTimestampMs: Date.now()
 		}
 	} else if (hasNonNullishProperty(message, 'aiRich')) {
 		// AunuBaileys (ported P2d): Meta AI-style rich response
@@ -1376,6 +1546,12 @@ export const generateWAMessageContent = async (
 		m = await prepareWAMessageMedia(message, options)
 	}
 
+	// AunuBaileys (2.5.0, HB-441): pre-wrapped view-once content is
+	// already final — return it without the trailing blocks below.
+	if (preWrappedViewOnce) {
+		return WAProto.Message.create(m)
+	}
+
 	// AunuBaileys (2.3.0, HB-381): the viewOnce wrap used to happen
 	// HERE, before the mentions/contextInfo blocks — both blocks then
 	// resolved the inner key as `viewOnceMessage` and wrote (or
@@ -1432,8 +1608,16 @@ export const generateWAMessageContent = async (
 	// contextInfo have been applied to the inner message (see the
 	// note at the mentions block) — wrapping earlier silently
 	// discarded both.
+	// AunuBaileys (2.5.0, HB-441): the wrap used to force EVERY
+	// truthy flag into viewOnceMessage (v1) — 'v2', 'force' and
+	// {version:2} were silently downgraded, and FORCE_ONLY types
+	// (album/sticker/poll) were wrapped although WhatsApp does not
+	// render them as view-once without force. Route through the
+	// public wrapAunuViewOnce util, which honours the variant,
+	// NEVER_WRAP and FORCE_ONLY (and NEEDS_CONTEXT); it is also
+	// idempotent, so content that arrived pre-wrapped is left alone.
 	if (hasOptionalProperty(message, 'viewOnce') && !!message.viewOnce) {
-		m = { viewOnceMessage: { message: m } }
+		m = wrapAunuViewOnce(m, message.viewOnce)
 	}
 
 	if (hasOptionalProperty(message, 'albumParentKey') && !!message.albumParentKey) {
@@ -1479,15 +1663,33 @@ export const generateWAMessageFromContent = (
 	const contextTarget = key ? (innerMessage[key] as any) : undefined
 	const canAttachContext = !!contextTarget && typeof contextTarget === 'object'
 	const timestamp = unixTimestampSeconds(options.timestamp)
-	const { quoted, userJid } = options
+	const { quoted, userJid, userJidLid } = options
 
 	if (quoted && !isJidNewsletter(jid)) {
-		const participant = quoted.key.fromMe
-			? userJid // TODO: Add support for LIDs
-			: quoted.participant || quoted.key.participant || quoted.key.remoteJid
+		// AunuBaileys (2.5.0, HB-408): a quoted message without
+		// a content key used to build a 0-byte quotedMessage and
+		// send anyway (SKDM-only or messageContextInfo-only
+		// content, or no message at all), and a missing key threw
+		// a raw TypeError on quoted.key.fromMe below. Validate up
+		// front, mirroring HB-324 for forward: no key id, no
+		// message, or no content type after normalising means
+		// there is nothing to quote — Boom 400.
+		if (!quoted.key?.id) {
+			throw new Boom('cannot quote a message without a key id', { statusCode: 400 })
+		}
+
+		if (!quoted.message) {
+			throw new Boom('cannot quote a message without content', { statusCode: 400 })
+		}
 
 		let quotedMsg = normalizeMessageContent(quoted.message)!
-		const msgType = getContentType(quotedMsg)!
+		const msgType = getContentType(quotedMsg)
+		if (!msgType) {
+			throw new Boom('cannot quote a message without quotable content', { statusCode: 400 })
+		}
+
+		const participant = getQuotedParticipant(quoted, jid, userJid, userJidLid)
+
 		// strip any redundant properties
 		quotedMsg = waproto.Message.create({ [msgType]: quotedMsg[msgType] })
 
@@ -1545,7 +1747,7 @@ export const generateWAMessageFromContent = (
 		message: message,
 		messageTimestamp: timestamp,
 		messageStubParameters: [],
-		participant: isJidGroup(jid) || isJidStatusBroadcast(jid) ? userJid : undefined, // TODO: Add support for LIDs
+		participant: isJidGroup(jid) || isJidStatusBroadcast(jid) ? getMeParticipant(jid, userJid, userJidLid) : undefined,
 		status: WAMessageStatus.PENDING
 	}
 	return WAProto.WebMessageInfo.fromObject(messageJSON) as WAMessage

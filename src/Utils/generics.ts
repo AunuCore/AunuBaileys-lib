@@ -268,13 +268,31 @@ export const bindWaitForConnectionUpdate = (ev: BaileysEventEmitter) => bindWait
  * utility that fetches latest baileys version from the master branch.
  * Use to ensure your WA connection is always on the latest version
  */
+// AunuBaileys (2.5.0, HB-2026-1111-8 addendum): the last
+// successfully fetched version, kept process-wide — the same
+// monotonic last-good cache fetchLatestWaWebVersion got in
+// 2.2.0. Without it a transient fetch/parse failure fell all
+// the way back to the (older) pinned baileysVersion, and a
+// server that had already accepted the newer version could
+// answer 408, looping reconnects. The cache only ever moves
+// forward; there is no TTL, mirroring the WaWeb side.
+let lastGoodBaileysVersion: WAVersion | undefined
+
 export const fetchLatestBaileysVersion = async (options: RequestInit = {}) => {
 	const URL = 'https://raw.githubusercontent.com/WhiskeySockets/Baileys/master/src/Defaults/index.ts'
 	try {
+		// AunuBaileys (2.5.0, HB-450): the host's AbortSignal used
+		// to be dropped here (only dispatcher + headers were
+		// forwarded), so a host abort never reached the request —
+		// and with no signal at all the fetch hung on a black-holed
+		// connection with no internal timeout. Forward the whole
+		// options bag (like fetchLatestWaWebVersion) and, when the
+		// host supplied no signal, cap the wait at 10s.
 		const response = await fetch(URL, {
-			dispatcher: options.dispatcher,
+			...options,
 			method: 'GET',
-			headers: options.headers
+			headers: options.headers,
+			signal: options.signal ?? AbortSignal.timeout(10_000)
 		})
 		if (!response.ok) {
 			throw new Boom(`Failed to fetch latest Baileys version: ${response.statusText}`, { statusCode: response.status })
@@ -288,9 +306,12 @@ export const fetchLatestBaileysVersion = async (options: RequestInit = {}) => {
 
 		if (versionMatch) {
 			const version = [parseInt(versionMatch[1]!), parseInt(versionMatch[2]!), parseInt(versionMatch[3]!)] as WAVersion
+			if (!lastGoodBaileysVersion || compareWaVersions(version, lastGoodBaileysVersion) > 0) {
+				lastGoodBaileysVersion = version
+			}
 
 			return {
-				version,
+				version: lastGoodBaileysVersion,
 				isLatest: true
 			}
 		} else {
@@ -298,7 +319,7 @@ export const fetchLatestBaileysVersion = async (options: RequestInit = {}) => {
 		}
 	} catch (error) {
 		return {
-			version: baileysVersion as WAVersion,
+			version: lastGoodBaileysVersion ?? (baileysVersion as WAVersion),
 			isLatest: false,
 			error
 		}

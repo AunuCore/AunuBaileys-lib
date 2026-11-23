@@ -1,11 +1,12 @@
 import { Boom } from '@hapi/boom';
 import Long from 'long';
 import { waproto } from '../../WAProto/index.js';
-import type { BaileysEventMap, MessageReceiptType, MessageRelayOptions, NewChatMessageCapInfo, SocketConfig, WAMessage, WAMessageKey } from '../Types/index.js';
+import type { AuthenticationCreds, BaileysEventMap, MessageReceiptType, MessageRelayOptions, NewChatMessageCapInfo, SocketConfig, WAMessage, WAMessageKey } from '../Types/index.js';
+import { RetryReason } from '../Utils/index.js';
 import { type BinaryNode, type JidWithDevice } from '../WABinary/index.js';
 export declare const makeMessagesRecvSocket: (config: SocketConfig) => {
     sendMessageAck: (node: BinaryNode, errorCode?: number) => Promise<void>;
-    sendRetryRequest: (node: BinaryNode, forceIncludeKeys?: boolean) => Promise<void>;
+    sendRetryRequest: (node: BinaryNode, forceIncludeKeys?: boolean, failureErrorCode?: RetryReason) => Promise<void>;
     rejectCall: (callId: string, callFrom: string) => Promise<void>;
     fetchMessageHistory: (count: number, oldestMsgKey: WAMessageKey, oldestMsgTimestamp: number | Long) => Promise<string>;
     requestPlaceholderResend: (messageKey: WAMessageKey, msgData?: Partial<WAMessage>) => Promise<string | undefined>;
@@ -37,6 +38,7 @@ export declare const makeMessagesRecvSocket: (config: SocketConfig) => {
     updateMemberLabel: (jid: string, memberLabel: string) => Promise<string>;
     updateMediaMessage: (message: WAMessage) => Promise<WAMessage>;
     sendMessage: (jid: string, content: import("../Types/index.js").AnyMessageContent, options?: import("../Types/index.js").MiscMessageGenerationOptions) => Promise<WAMessage | undefined>;
+    sendPollVote: (jid: string, vote: import("../Types/index.js").PollVoteOptions) => Promise<WAMessage>;
     newsletterCreate: (name: string, description?: string) => Promise<import("../Types/index.js").NewsletterMetadata>;
     newsletterUpdate: (jid: string, updates: import("../Types/index.js").NewsletterUpdate) => Promise<unknown>;
     newsletterSubscribers: (jid: string) => Promise<{
@@ -118,8 +120,8 @@ export declare const makeMessagesRecvSocket: (config: SocketConfig) => {
     presenceSubscribe: (toJid: string) => Promise<void>;
     profilePictureUrl: (jid: string, type?: "preview" | "image", timeoutMs?: number) => Promise<string | undefined>;
     fetchBlocklist: () => Promise<(string | undefined)[]>;
-    fetchStatus: (...jids: string[]) => Promise<import("../index.js").USyncQueryResultList[] | undefined>;
-    fetchDisappearingDuration: (...jids: string[]) => Promise<import("../index.js").USyncQueryResultList[] | undefined>;
+    fetchStatus: (...jids: string[]) => Promise<import("../index.js").USyncQueryResultList[]>;
+    fetchDisappearingDuration: (...jids: string[]) => Promise<import("../index.js").USyncQueryResultList[]>;
     updateProfilePicture: (jid: string, content: import("../Types/index.js").WAMediaUpload, dimensions?: {
         width: number;
         height: number;
@@ -184,7 +186,7 @@ export declare const makeMessagesRecvSocket: (config: SocketConfig) => {
     onWhatsApp: (...phoneNumber: string[]) => Promise<{
         jid: string;
         exists: boolean;
-    }[] | undefined>;
+    }[]>;
     fetchAccountReachoutTimelock: () => Promise<import("../Types/index.js").ReachoutTimelockState>;
     fetchNewChatMessageCap: () => Promise<NewChatMessageCapInfo>;
     aunuBanSentinel?: import("../Utils/index.js").AunuBanSentinel | undefined;
@@ -199,7 +201,7 @@ export declare const makeMessagesRecvSocket: (config: SocketConfig) => {
         destroy(): void;
     };
     authState: {
-        creds: import("../Types/index.js").AuthenticationCreds;
+        creds: AuthenticationCreds;
         keys: import("../Types/index.js").SignalKeyStore & {
             isInTransaction: () => boolean;
             transaction<T>(exec: () => Promise<T>, key: string): Promise<T>;

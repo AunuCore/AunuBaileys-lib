@@ -76,7 +76,7 @@ export declare const makeCommunitiesSocket: (config: SocketConfig) => {
     updateCoverPhoto: (photo: import("../Types/index.js").WAMediaUpload) => Promise<number>;
     removeCoverPhoto: (id: string) => Promise<any>;
     sendMessageAck: (node: BinaryNode, errorCode?: number) => Promise<void>;
-    sendRetryRequest: (node: BinaryNode, forceIncludeKeys?: boolean) => Promise<void>;
+    sendRetryRequest: (node: BinaryNode, forceIncludeKeys?: boolean, failureErrorCode?: import("../Utils/index.js").RetryReason) => Promise<void>;
     rejectCall: (callId: string, callFrom: string) => Promise<void>;
     fetchMessageHistory: (count: number, oldestMsgKey: WAMessageKey, oldestMsgTimestamp: number | import("long").default) => Promise<string>;
     requestPlaceholderResend: (messageKey: WAMessageKey, msgData?: Partial<import("../Types/index.js").WAMessage>) => Promise<string | undefined>;
@@ -108,6 +108,7 @@ export declare const makeCommunitiesSocket: (config: SocketConfig) => {
     updateMemberLabel: (jid: string, memberLabel: string) => Promise<string>;
     updateMediaMessage: (message: import("../Types/index.js").WAMessage) => Promise<import("../Types/index.js").WAMessage>;
     sendMessage: (jid: string, content: import("../Types/index.js").AnyMessageContent, options?: import("../Types/index.js").MiscMessageGenerationOptions) => Promise<import("../Types/index.js").WAMessage | undefined>;
+    sendPollVote: (jid: string, vote: import("../Types/index.js").PollVoteOptions) => Promise<import("../Types/index.js").WAMessage>;
     newsletterCreate: (name: string, description?: string) => Promise<import("../Types/index.js").NewsletterMetadata>;
     newsletterUpdate: (jid: string, updates: import("../Types/index.js").NewsletterUpdate) => Promise<unknown>;
     newsletterSubscribers: (jid: string) => Promise<{
@@ -189,8 +190,8 @@ export declare const makeCommunitiesSocket: (config: SocketConfig) => {
     presenceSubscribe: (toJid: string) => Promise<void>;
     profilePictureUrl: (jid: string, type?: "preview" | "image", timeoutMs?: number) => Promise<string | undefined>;
     fetchBlocklist: () => Promise<(string | undefined)[]>;
-    fetchStatus: (...jids: string[]) => Promise<import("../index.js").USyncQueryResultList[] | undefined>;
-    fetchDisappearingDuration: (...jids: string[]) => Promise<import("../index.js").USyncQueryResultList[] | undefined>;
+    fetchStatus: (...jids: string[]) => Promise<import("../index.js").USyncQueryResultList[]>;
+    fetchDisappearingDuration: (...jids: string[]) => Promise<import("../index.js").USyncQueryResultList[]>;
     updateProfilePicture: (jid: string, content: import("../Types/index.js").WAMediaUpload, dimensions?: {
         width: number;
         height: number;
@@ -255,7 +256,7 @@ export declare const makeCommunitiesSocket: (config: SocketConfig) => {
     onWhatsApp: (...phoneNumber: string[]) => Promise<{
         jid: string;
         exists: boolean;
-    }[] | undefined>;
+    }[]>;
     fetchAccountReachoutTimelock: () => Promise<import("../Types/index.js").ReachoutTimelockState>;
     fetchNewChatMessageCap: () => Promise<import("../Types/index.js").NewChatMessageCapInfo>;
     aunuBanSentinel?: import("../Utils/index.js").AunuBanSentinel | undefined;

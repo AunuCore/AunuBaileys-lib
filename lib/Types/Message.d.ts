@@ -79,8 +79,20 @@ type Contextable = {
     /** add contextInfo to the message */
     contextInfo?: waproto.IContextInfo;
 };
+/**
+ * AunuBaileys view-once flag forms, honoured by wrapAunuViewOnce
+ * (src/Utils/aunu-view-once.ts) — a boolean keeps the old behaviour,
+ * a string/number selects the variant, an object selects version +
+ * force. Shared with the util so the call site in
+ * generateWAMessageContent type-checks against the widened content
+ * field below.
+ */
+export type AunuViewOnceFlag = boolean | 'v1' | 'v2' | 'force' | 'v2-force' | 1 | 2 | {
+    version?: 1 | 2 | 'v1' | 'v2';
+    force?: boolean;
+};
 type ViewOnce = {
-    viewOnce?: boolean;
+    viewOnce?: AunuViewOnceFlag;
 };
 type Editable = {
     edit?: WAMessageKey;
@@ -269,6 +281,25 @@ export type StickerPackInfo = {
     packId?: string;
     description?: string;
 };
+/**
+ * Options for voting on a poll (sendPollVote / the `pollVote` content
+ * branch). All five fields are required: the branch validates them
+ * with Boom 400 before any network work (run-0962 spec). Defined
+ * here (not Utils) so the AnyMessageContent union below can carry
+ * the pollVote member; re-exported from Utils for barrel compat.
+ */
+export type PollVoteOptions = {
+    /** Key of the poll creation message being voted on. */
+    pollCreationMessageKey: WAMessageKey;
+    /** messageSecret of the poll creation message — the vote's enc key. */
+    pollEncKey: Uint8Array;
+    /** Option names the voter selected (sha256-hashed before encrypting). */
+    selectedOptions: string[];
+    /** Normalised JID of the poll creator — deviceless, @lid or @s.whatsapp.net. */
+    pollCreatorJid: string;
+    /** Normalised JID of the voter — deviceless, same addressing mode as the creator. */
+    voterJid: string;
+};
 export type AnyMessageContent = (AnyRegularMessageContent | {
     forward: WAMessage;
     force?: boolean;
@@ -279,6 +310,9 @@ export type AnyMessageContent = (AnyRegularMessageContent | {
     disappearingMessagesInChat: boolean | number;
 } | {
     limitSharing: boolean;
+} | {
+    /** AunuBaileys: vote on a poll — encrypted via encryptPollVote (2.5.0 delta, run-0962) */
+    pollVote: PollVoteOptions;
 } | {
     /** AunuBaileys: send a sticker pack (cover + stickers) */
     stickerPack: StickerPackInfo;
@@ -336,6 +370,8 @@ export type MiscMessageGenerationOptions = MinimalRelayOptions & {
 };
 export type MessageGenerationOptionsFromContent = MiscMessageGenerationOptions & {
     userJid: string;
+    /** AunuBaileys (2.5.0, Kage LID addressing): the own LID identity, when the own account has one — lets generateWAMessageFromContent resolve the own participant via getMeParticipant/getQuotedParticipant in LID contexts. */
+    userJidLid?: string;
 };
 export type WAMediaUploadFunction = (encFilePath: string, opts: {
     fileEncSha256B64: string;

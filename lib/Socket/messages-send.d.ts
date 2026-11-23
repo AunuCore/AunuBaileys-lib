@@ -1,6 +1,6 @@
 import { Boom } from '@hapi/boom';
 import { waproto } from '../../WAProto/index.js';
-import type { AnyMessageContent, MediaConnInfo, MessageReceiptType, MessageRelayOptions, MiscMessageGenerationOptions, SocketConfig, WAMessage, WAMessageKey } from '../Types/index.js';
+import type { AnyMessageContent, MediaConnInfo, MessageReceiptType, MessageRelayOptions, MiscMessageGenerationOptions, PollVoteOptions, SocketConfig, WAMessage, WAMessageKey } from '../Types/index.js';
 import { MessageRetryManager } from '../Utils/index.js';
 import { type BinaryNode, type JidWithDevice } from '../WABinary/index.js';
 import { USyncQuery } from '../WAUSync/index.js';
@@ -33,6 +33,7 @@ export declare const makeMessagesSocket: (config: SocketConfig) => {
     updateMemberLabel: (jid: string, memberLabel: string) => Promise<string>;
     updateMediaMessage: (message: WAMessage) => Promise<WAMessage>;
     sendMessage: (jid: string, content: AnyMessageContent, options?: MiscMessageGenerationOptions) => Promise<WAMessage | undefined>;
+    sendPollVote: (jid: string, vote: PollVoteOptions) => Promise<WAMessage>;
     newsletterCreate: (name: string, description?: string) => Promise<import("../Types/index.js").NewsletterMetadata>;
     newsletterUpdate: (jid: string, updates: import("../Types/index.js").NewsletterUpdate) => Promise<unknown>;
     newsletterSubscribers: (jid: string) => Promise<{
@@ -114,8 +115,8 @@ export declare const makeMessagesSocket: (config: SocketConfig) => {
     presenceSubscribe: (toJid: string) => Promise<void>;
     profilePictureUrl: (jid: string, type?: "preview" | "image", timeoutMs?: number) => Promise<string | undefined>;
     fetchBlocklist: () => Promise<(string | undefined)[]>;
-    fetchStatus: (...jids: string[]) => Promise<import("../WAUSync/index.js").USyncQueryResultList[] | undefined>;
-    fetchDisappearingDuration: (...jids: string[]) => Promise<import("../WAUSync/index.js").USyncQueryResultList[] | undefined>;
+    fetchStatus: (...jids: string[]) => Promise<import("../WAUSync/index.js").USyncQueryResultList[]>;
+    fetchDisappearingDuration: (...jids: string[]) => Promise<import("../WAUSync/index.js").USyncQueryResultList[]>;
     updateProfilePicture: (jid: string, content: import("../Types/index.js").WAMediaUpload, dimensions?: {
         width: number;
         height: number;
@@ -180,7 +181,7 @@ export declare const makeMessagesSocket: (config: SocketConfig) => {
     onWhatsApp: (...phoneNumber: string[]) => Promise<{
         jid: string;
         exists: boolean;
-    }[] | undefined>;
+    }[]>;
     fetchAccountReachoutTimelock: () => Promise<import("../Types/index.js").ReachoutTimelockState>;
     fetchNewChatMessageCap: () => Promise<import("../Types/index.js").NewChatMessageCapInfo>;
     aunuBanSentinel?: import("../Utils/index.js").AunuBanSentinel | undefined;

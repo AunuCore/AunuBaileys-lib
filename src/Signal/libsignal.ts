@@ -716,16 +716,24 @@ export function makeLibSignalRepository(
 
 			const { device: fromDevice } = jidDecode(fromJid)!
 			const fromDeviceStr = fromDevice?.toString() || '0'
-			if (!userDevices.includes(fromDeviceStr)) {
-				userDevices.push(fromDeviceStr)
-			}
+			// AunuBaileys (2.5.0, HB-178 addendum): the array above
+			// is the store's own value — with
+			// makeCacheableSignalKeyStore it is a LIVE cache
+			// reference, so pushing in place mutated the cache
+			// without any keys.set for device-list (a ghost device,
+			// visible until the 5-minute TTL / next USync
+			// overwrite). Copy for the discovery list; the stored
+			// list stays untouched.
+			const discoveryDevices = userDevices.includes(fromDeviceStr)
+				? userDevices
+				: [...userDevices, fromDeviceStr]
 
 			// AunuBaileys (2.4.0, HB-449): no migrated-session
 			// cache filter — it was never invalidated, so a PN
 			// session created after the first migration was
 			// skipped forever. Every listed device is a discovery
 			// candidate; the store read below decides.
-			const uncachedDevices = userDevices
+			const uncachedDevices = discoveryDevices
 
 			// AunuBaileys (2.3.0, HB-395): session records live under
 			// the canonical WIRE address (jidToSignalProtocolAddress),
@@ -774,7 +782,7 @@ export function makeLibSignalRepository(
 			logger.debug(
 				{
 					fromJid,
-					totalDevices: userDevices.length,
+					totalDevices: discoveryDevices.length,
 					devicesWithSessions: deviceJids.length,
 					devices: deviceJids
 				},

@@ -26,6 +26,11 @@ interface TransactionContext {
 	cache: SignalDataSet
 	mutations: SignalDataSet
 	dbQueries: number
+	// AunuBaileys (2.5.0, HB-473 addendum, run-0990): the store
+	// values work() FIRST saw per key (null = read and absent) —
+	// the pre-commit snapshot for floating retries is built from
+	// this where possible, so it costs no extra I/O.
+	readSet: SignalDataSet
 }
 
 /**
@@ -321,6 +326,146 @@ export const addTransactionCapability = (
 	}
 
 	/**
+	 * Canonical string form of a stored value, for equality
+	 * checks only. Object keys are sorted (a value re-read from
+	 * the store must compare equal to the in-memory value even
+	 * when key order differs); binary values compare by bytes.
+	 * Throws on cyclic values — callers treat that as
+	 * "different" (the safe direction: abort the retry, never
+	 * overwrite).
+	 */
+	const canonicaliseValue = (value: unknown, seen: Set<object>): string => {
+		if (value === undefined) return 'u'
+		if (value === null) return 'n'
+		if (typeof value === 'boolean') return value ? 't' : 'f'
+		if (typeof value === 'number') return Number.isNaN(value) ? 'NaN' : `num:${value}`
+		if (typeof value === 'bigint') return `big:${value.toString()}`
+		if (typeof value === 'string') return `str:${JSON.stringify(value)}`
+		if (value instanceof Uint8Array) return `bin:${Buffer.from(value).toString('base64')}`
+		if (value instanceof Date) return `date:${value.getTime()}`
+		if (Array.isArray(value)) {
+			if (seen.has(value)) throw new Error('cyclic value in stored data')
+			seen.add(value)
+			try {
+				return `arr:[${value.map(item => canonicaliseValue(item, seen)).join(',')}]`
+			} finally {
+				seen.delete(value)
+			}
+		}
+
+		if (typeof value === 'object') {
+			if (seen.has(value)) throw new Error('cyclic value in stored data')
+			seen.add(value)
+			try {
+				const keys = Object.keys(value).sort()
+				return `obj:{${keys
+					.map(key => `${JSON.stringify(key)}:${canonicaliseValue((value as Record<string, unknown>)[key], seen)}`)
+					.join(',')}}`
+			} finally {
+				seen.delete(value)
+			}
+		}
+
+		return `other:${String(value)}`
+	}
+
+	const valuesEqual = (a: unknown, b: unknown): boolean => {
+		try {
+			return canonicaliseValue(a, new Set()) === canonicaliseValue(b, new Set())
+		} catch {
+			return false
+		}
+	}
+
+	/**
+	 * Snapshot the store values a transaction's mutations were
+	 * computed from, taken AFTER work() and BEFORE the first
+	 * commit attempt (a failed attempt may have partially
+	 * written, which would contaminate the snapshot with our own
+	 * values). Keys work() read come from the transaction's
+	 * read-set (free — no extra I/O); blind-written keys are
+	 * read from the store under the write mutex, so the snapshot
+	 * is a consistent cut no commit or bare set can land inside.
+	 * Absent keys stay absent from the snapshot.
+	 */
+	async function buildPreCommitSnapshot(mutations: SignalDataSet, readSet: SignalDataSet): Promise<SignalDataSet> {
+		const snapshot: SignalDataSet = {}
+		const toFetch: { [type: string]: string[] } = {}
+		for (const type_ of Object.keys(mutations)) {
+			const type = type_ as keyof SignalDataTypeMap
+			const ids = Object.keys(mutations[type]!)
+			snapshot[type] = ({} as any)
+			for (const id of ids) {
+				const read = readSet[type]?.[id]
+				if (read === undefined) {
+					// Blind-written key: work() never read it.
+					;(toFetch[type_] ??= []).push(id)
+				} else if (read !== null) {
+					snapshot[type]![id] = read
+				}
+				// read === null means work() read the key and it
+				// was absent — leave it absent in the snapshot.
+			}
+		}
+
+		if (Object.keys(toFetch).length > 0) {
+			await writeMutex.runExclusive(async () => {
+				for (const type_ of Object.keys(toFetch)) {
+					const type = type_ as keyof SignalDataTypeMap
+					const fetched = await state.get(type, toFetch[type_]!)
+					Object.assign(snapshot[type]!, fetched)
+				}
+			})
+		}
+
+		return snapshot
+	}
+
+	/**
+	 * One floating retry attempt. The freshness re-read and the
+	 * write run atomically under the write mutex, so no other
+	 * commit or bare set can land between the check and the
+	 * write (a gap there would reopen the same stale-overwrite
+	 * hole one transaction later). A key is fresh when its
+	 * current value matches EITHER its pre-commit value (nobody
+	 * touched it) OR the value we are about to write (our own
+	 * partial write from the failed attempt — rewriting it is
+	 * idempotent). Anything else means a fresher foreign commit
+	 * moved the key: the attempt is 'stale' and the caller must
+	 * abort the retry instead of overwriting it.
+	 */
+	async function attemptFloatingCommit(
+		mutations: SignalDataSet,
+		preCommit: SignalDataSet
+	): Promise<{ status: 'committed' } | { status: 'stale'; keys: string[] }> {
+		return writeMutex.runExclusive(async () => {
+			const staleKeys: string[] = []
+			for (const type_ of Object.keys(mutations)) {
+				const type = type_ as keyof SignalDataTypeMap
+				const ids = Object.keys(mutations[type]!)
+				if (ids.length === 0) continue
+				const current = await state.get(type, ids)
+				for (const id of ids) {
+					const cur = current[id]
+					const pre = preCommit[type]?.[id]
+					const wantRaw = mutations[type]![id]
+					const want = wantRaw === null ? undefined : wantRaw
+					if (!valuesEqual(cur, pre) && !valuesEqual(cur, want)) {
+						staleKeys.push(`${type_}:${id}`)
+					}
+				}
+			}
+
+			if (staleKeys.length > 0) {
+				return { status: 'stale', keys: staleKeys }
+			}
+
+			await state.set(mutations)
+			return { status: 'committed' }
+		})
+	}
+
+	/**
 	 * One commit attempt. HB-94 (re-applied P3b): commits pass
 	 * through the shared write mutex — see the note at writeMutex.
 	 * The retry policy lives in transaction() below.
@@ -361,6 +506,24 @@ export const addTransactionCapability = (
 				// Update cache
 				ctx.cache[type] = ctx.cache[type] || ({} as any)
 				Object.assign(ctx.cache[type]!, fetched)
+
+				// AunuBaileys (2.5.0, HB-473 addendum, run-0990):
+				// record the store values work() FIRST saw for
+				// these keys — including absence (null) — so a
+				// floating commit retry can tell a fresher foreign
+				// commit apart from our own partial write. Only
+				// first-seen values are recorded: a later set()
+				// in this transaction overwrites the cache with
+				// our own new value, which must never pose as the
+				// pre-commit value.
+				ctx.readSet[type] = ctx.readSet[type] || ({} as any)
+				const readSetDict = ctx.readSet[type]!
+				for (const id of missing) {
+					if (!(id in readSetDict)) {
+						const value = fetched[id]
+						readSetDict[id] = value === undefined || value === null ? null : value
+					}
+				}
 			}
 
 			// Return requested ids from cache
@@ -531,6 +694,11 @@ export const addTransactionCapability = (
 			// every attempt.
 			let commitError: unknown
 			let committed = false
+			// AunuBaileys (2.5.0, HB-473 addendum, run-0990): the
+			// pre-commit snapshot, taken before the first attempt
+			// (see below) — the floating retry checks freshness
+			// against it.
+			let preCommit: SignalDataSet | undefined
 			try {
 				try {
 					const releaseMutex = await mutex.acquire()
@@ -538,7 +706,8 @@ export const addTransactionCapability = (
 						const ctx: TransactionContext = {
 							cache: {},
 							mutations: {},
-							dbQueries: 0
+							dbQueries: 0,
+							readSet: {}
 						}
 
 						logger.trace('entering transaction')
@@ -558,6 +727,14 @@ export const addTransactionCapability = (
 							committed = true
 						} else {
 							logger.trace('committing transaction')
+							// AunuBaileys (2.5.0, HB-473 addendum,
+							// run-0990): snapshot what the mutations
+							// were computed from BEFORE the first
+							// attempt — a failed attempt may have
+							// partially written, and the snapshot is
+							// what the floating retry checks
+							// freshness against.
+							preCommit = await buildPreCommitSnapshot(ctx.mutations, ctx.readSet)
 							try {
 								await attemptCommit(ctx.mutations)
 								committed = true
@@ -587,13 +764,35 @@ export const addTransactionCapability = (
 					// the whole loop (released in the outer finally),
 					// so re-acquiring always lands on this same Mutex
 					// instance.
+					// AunuBaileys (2.5.0, HB-473 addendum, run-0990):
+					// each floating attempt first checks the
+					// mutations are still fresh against the
+					// pre-commit snapshot — a fresher foreign commit
+					// for the same keys aborts the retry instead of
+					// being overwritten with stale data. The abort
+					// throws the ORIGINAL commit error: the caller
+					// sees a failed transaction (recoverable via
+					// retry receipt), never a silent regression.
+					// Holding the mutex for the whole loop is NOT
+					// an alternative — that revives HB-473.
 					let lastError = commitError
+					let staleKeys: string[] | undefined
 					for (let attempt = 1; attempt < commitRetries; attempt++) {
 						logger.warn(`failed to commit mutations, retries left=${commitRetries - attempt}`)
 						await delay(commitDelayMs)
 						const releaseRetry = await mutex.acquire()
 						try {
-							await attemptCommit(outcome.mutations)
+							// preCommit is set whenever the floating
+							// loop runs: the loop is only entered
+							// with non-empty mutations whose first
+							// attempt failed, and the snapshot is
+							// taken before that attempt.
+							const result = await attemptFloatingCommit(outcome.mutations, preCommit!)
+							if (result.status === 'stale') {
+								staleKeys = result.keys
+								break
+							}
+
 							committed = true
 						} catch (error) {
 							lastError = error
@@ -607,6 +806,10 @@ export const addTransactionCapability = (
 						if (committed) {
 							break
 						}
+					}
+
+					if (staleKeys) {
+						logger.warn({ staleKeys }, 'floating commit retry aborted: store changed since this transaction read it')
 					}
 
 					if (!committed) {

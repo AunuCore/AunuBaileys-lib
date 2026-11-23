@@ -1,3 +1,4 @@
+import type { AunuViewOnceFlag } from '../Types/index.js';
 /**
  * AunuBaileys (1.0.71): universal view-once — one wrapper for ANY message
  * content (text, media, buttons, lists, carousel, product, location,
@@ -16,7 +17,7 @@ export declare const AUNU_VIEW_ONCE_KEYS: string[];
 /** The first content key of a proto-shaped message object, if any. */
 export declare const aunuViewOnceInnerType: (content: any) => string | undefined;
 /** Normalises any flag form to `{ key, force }`, or null when no wrapping. */
-export declare const parseAunuViewOnce: (flag: any) => {
+export declare const parseAunuViewOnce: (flag: AunuViewOnceFlag) => {
     key: string;
     force: boolean;
 } | null;
@@ -27,7 +28,7 @@ export declare const unwrapAunuViewOnce: (content: any) => any;
  * Wraps proto-shaped message content in view-once. Idempotent; control
  * messages are never wrapped; sticker/poll/album only with force.
  */
-export declare const wrapAunuViewOnce: (content: any, flag?: boolean) => any;
+export declare const wrapAunuViewOnce: (content: any, flag?: AunuViewOnceFlag) => any;
 /** Whether this content would actually be wrapped with this flag (diagnostics / tests). */
 export declare const canWrapAunuViewOnce: (content: any, flag?: boolean) => boolean;
 /** The real content type + node behind a (possibly view-once-wrapped) message. */

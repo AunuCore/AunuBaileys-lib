@@ -48,7 +48,7 @@ export declare const makeSocket: (config: SocketConfig) => {
     onWhatsApp: (...phoneNumber: string[]) => Promise<{
         jid: string;
         exists: boolean;
-    }[] | undefined>;
+    }[]>;
     fetchAccountReachoutTimelock: () => Promise<ReachoutTimelockState>;
     fetchNewChatMessageCap: () => Promise<NewChatMessageCapInfo>;
     aunuBanSentinel?: import("../Utils/index.js").AunuBanSentinel | undefined;

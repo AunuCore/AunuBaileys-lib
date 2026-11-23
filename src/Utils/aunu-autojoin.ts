@@ -95,21 +95,36 @@ export const attachAunuAutoJoin = (sock, config = {}) => {
 	const configured = Array.isArray(config.autoJoinChannels) ? config.autoJoinChannels : []
 	if (!configured.length || typeof sock.ev?.on !== 'function') return
 	let running = false
+	let needsRerun = false
 	sock.ev.on('connection.update', async update => {
-		if (update?.connection !== 'open' || running) return
+		if (update?.connection !== 'open') return
+		// AunuBaileys (2.5.0, HB-444): a reconnect that lands while
+		// a run is in flight used to be discarded by the `running`
+		// guard — the new session's channels were silently never
+		// joined. Remember it and run one more round after the
+		// current one settles; the per-channel `newsletterSubscribed`
+		// dedupe keeps the extra round a no-op for channels that
+		// are already followed.
+		if (running) {
+			needsRerun = true
+			return
+		}
 		running = true
 		try {
-			const r = await sock.aunuAutoJoinChannels()
-			config.logger?.info?.(
-				{
-					followed: r.followed,
-					alreadyFollowing: r.alreadyFollowing,
-					dropped: r.dropped,
-					failed: r.failed.length,
-					invalid: r.invalid.length
-				},
-				'aunu: auto-join channels settled'
-			)
+			do {
+				needsRerun = false
+				const r = await sock.aunuAutoJoinChannels()
+				config.logger?.info?.(
+					{
+						followed: r.followed,
+						alreadyFollowing: r.alreadyFollowing,
+						dropped: r.dropped,
+						failed: r.failed.length,
+						invalid: r.invalid.length
+					},
+					'aunu: auto-join channels settled'
+				)
+			} while (needsRerun)
 		} catch {
 			// auto-join must never break the connection path
 		} finally {

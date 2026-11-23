@@ -1,5 +1,5 @@
 import { waproto } from '../../WAProto/index.js';
-import type { AuthenticationCreds, BaileysEventEmitter, CacheStore, SignalKeyStoreWithTransaction, SignalRepositoryWithLIDStore, SocketConfig, WAMessage, WAMessageKey } from '../Types/index.js';
+import type { AuthenticationCreds, BaileysEventEmitter, CacheStore, Chat, SignalKeyStoreWithTransaction, SignalRepositoryWithLIDStore, SocketConfig, WAMessage, WAMessageKey } from '../Types/index.js';
 import type { ILogger } from './logger.js';
 type ProcessMessageContext = {
     shouldProcessHistoryMsg: boolean;
@@ -12,6 +12,7 @@ type ProcessMessageContext = {
     signalRepository: SignalRepositoryWithLIDStore;
     getMessage: SocketConfig['getMessage'];
 };
+export declare function storeTcTokensFromHistorySync(chats: Chat[], signalRepository: SignalRepositoryWithLIDStore, keyStore: SignalKeyStoreWithTransaction, logger?: ILogger): Promise<void>;
 /** Cleans a received message to further processing */
 export declare const cleanMessage: (message: WAMessage, meId: string | undefined, meLid: string | undefined) => void;
 export declare const isRealMessage: (message: WAMessage) => boolean;

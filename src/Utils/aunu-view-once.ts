@@ -3,6 +3,7 @@
 // JavaScript module of the same name — behaviour and HB/version
 // annotations preserved verbatim; types are intentionally loose here
 // and tighten in a later pass.
+import type { AunuViewOnceFlag } from '../Types'
 /**
  * AunuBaileys (1.0.71): universal view-once — one wrapper for ANY message
  * content (text, media, buttons, lists, carousel, product, location,
@@ -82,7 +83,7 @@ export const aunuViewOnceInnerType = content => {
 }
 
 /** Normalises any flag form to `{ key, force }`, or null when no wrapping. */
-export const parseAunuViewOnce = flag => {
+export const parseAunuViewOnce = (flag: AunuViewOnceFlag) => {
 	if (!flag) {
 		return null
 	}
@@ -126,7 +127,7 @@ export const unwrapAunuViewOnce = content => {
  * Wraps proto-shaped message content in view-once. Idempotent; control
  * messages are never wrapped; sticker/poll/album only with force.
  */
-export const wrapAunuViewOnce = (content, flag = true) => {
+export const wrapAunuViewOnce = (content, flag: AunuViewOnceFlag = true) => {
 	const parsed = parseAunuViewOnce(flag)
 	if (!parsed || !content || typeof content !== 'object') {
 		return content

@@ -40,8 +40,8 @@ export declare const makeChatsSocket: (config: SocketConfig) => {
     presenceSubscribe: (toJid: string) => Promise<void>;
     profilePictureUrl: (jid: string, type?: "preview" | "image", timeoutMs?: number) => Promise<string | undefined>;
     fetchBlocklist: () => Promise<(string | undefined)[]>;
-    fetchStatus: (...jids: string[]) => Promise<import("../WAUSync/index.js").USyncQueryResultList[] | undefined>;
-    fetchDisappearingDuration: (...jids: string[]) => Promise<import("../WAUSync/index.js").USyncQueryResultList[] | undefined>;
+    fetchStatus: (...jids: string[]) => Promise<import("../WAUSync/index.js").USyncQueryResultList[]>;
+    fetchDisappearingDuration: (...jids: string[]) => Promise<import("../WAUSync/index.js").USyncQueryResultList[]>;
     updateProfilePicture: (jid: string, content: WAMediaUpload, dimensions?: {
         width: number;
         height: number;
@@ -106,7 +106,7 @@ export declare const makeChatsSocket: (config: SocketConfig) => {
     onWhatsApp: (...phoneNumber: string[]) => Promise<{
         jid: string;
         exists: boolean;
-    }[] | undefined>;
+    }[]>;
     fetchAccountReachoutTimelock: () => Promise<import("../Types/index.js").ReachoutTimelockState>;
     fetchNewChatMessageCap: () => Promise<import("../Types/index.js").NewChatMessageCapInfo>;
     aunuBanSentinel?: import("../Utils/index.js").AunuBanSentinel | undefined;

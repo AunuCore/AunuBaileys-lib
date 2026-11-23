@@ -147,11 +147,24 @@ export const generateRegistrationNode = (
 	if (
 		!isKeyMaterial(signedIdentityKey?.public) ||
 		!isKeyMaterial(signedPreKey?.keyPair?.public) ||
-		typeof signedPreKey?.keyId === 'undefined' ||
 		!isKeyMaterial(signedPreKey?.signature)
 	) {
 		throw new Error(
 			'AunuBaileys: creds.signedIdentityKey / creds.signedPreKey are missing or incomplete — the auth state is incomplete or corrupt; restore a full backup or pair again'
+		)
+	}
+
+	// AunuBaileys (2.5.0, HB-2026-1112-80 addendum): the old
+	// guard only rejected an UNDEFINED keyId — a string or NaN
+	// slipped through and encodeBigEndian silently produced
+	// eSkeyId = 0 (255 & 'abc' is 0), registering the device with a
+	// bogus signed-pre-key id. Require a finite number, like the
+	// registrationId guard below; keyId 0 stays legal. Its own
+	// throw (not folded into the shared guard above) so the message
+	// names the field, in the registrationId style.
+	if (!Number.isFinite(signedPreKey?.keyId)) {
+		throw new Error(
+			'AunuBaileys: creds.signedPreKey.keyId is missing or not a number — the auth state is incomplete or corrupt; restore a full backup or pair again'
 		)
 	}
 
@@ -288,15 +301,31 @@ export const configureSuccessfulPairing = (
 		hmacPrefix = WA_ADV_HOSTED_ACCOUNT_SIG_PREFIX
 	}
 
-	const advSign = hmacSign(Buffer.concat([hmacPrefix, details!]), Buffer.from(advSecretKey, 'base64'))
-	if (Buffer.compare(hmac!, advSign) !== 0) {
+	// AunuBaileys (2.5.0, HB-239 addendum 3): the HMAC proto
+	// fields are optional — a server (or middlebox) that omits
+	// `details` or `hmac` used to die below as a bare TypeError
+	// (Buffer.concat / Buffer.compare on null) and killed pairing.
+	// Fail descriptively, in the addendum-1/2 style.
+	if (details == null || hmac == null) {
+		throw new Boom('Missing details or hmac on the device-identity HMAC in pair success stanza', { data: stanza })
+	}
+
+	const advSign = hmacSign(Buffer.concat([hmacPrefix, details]), Buffer.from(advSecretKey, 'base64'))
+	if (Buffer.compare(hmac, advSign) !== 0) {
 		throw new Boom('Invalid account signature')
 	}
 
-	const account = waproto.ADVSignedDeviceIdentity.decode(details!)
+	const account = waproto.ADVSignedDeviceIdentity.decode(details)
 	const { accountSignatureKey, accountSignature, details: deviceDetails } = account
 
-	const deviceIdentity = waproto.ADVDeviceIdentity.decode(deviceDetails!)
+	// AunuBaileys (2.5.0, HB-239 addendum 4): same shape hole one
+	// level down — a signed device identity without `details` died
+	// as a bare TypeError in ADVDeviceIdentity.decode.
+	if (deviceDetails == null) {
+		throw new Boom('Missing details on the signed device identity in pair success stanza', { data: stanza })
+	}
+
+	const deviceIdentity = waproto.ADVDeviceIdentity.decode(deviceDetails)
 
 	const accountSignaturePrefix =
 		deviceIdentity.deviceType === waproto.ADVEncryptionType.HOSTED

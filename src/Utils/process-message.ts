@@ -57,7 +57,10 @@ const REAL_MSG_STUB_TYPES = new Set([
 
 const REAL_MSG_REQ_ME_STUB_TYPES = new Set([WAMessageStubType.GROUP_PARTICIPANT_ADD])
 
-async function storeTcTokensFromHistorySync(
+// Exported for the HB-416 addendum 1 regression test (and any host
+// that wants to replay history-sync tcTokens without driving the
+// full notification download path).
+export async function storeTcTokensFromHistorySync(
 	chats: Chat[],
 	signalRepository: SignalRepositoryWithLIDStore,
 	keyStore: SignalKeyStoreWithTransaction,
@@ -85,7 +88,17 @@ async function storeTcTokensFromHistorySync(
 	}
 
 	const jids = candidates.map(c => c.storageJid)
-	const existing = await keyStore.get('tctoken', jids)
+	// AunuBaileys (2.5.0, HB-416 addendum 1): a throwing tctoken
+	// read used to abort the whole history-sync chunk — the throw
+	// escaped this function into the notification handler. A
+	// failed read only means the timestamp dedup cannot run —
+	// write the tokens as-is and continue to the emit below.
+	let existing: Record<string, { token: Buffer; timestamp?: string; senderTimestamp?: number }> = {}
+	try {
+		existing = await keyStore.get('tctoken', jids)
+	} catch (err) {
+		logger?.warn({ err }, 'failed to read existing tctokens from history sync; storing tokens without dedup')
+	}
 	const entries: Record<string, { token: Buffer; timestamp?: string; senderTimestamp?: number }> = {}
 
 	for (const c of candidates) {

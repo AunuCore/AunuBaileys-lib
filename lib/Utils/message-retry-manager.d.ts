@@ -69,6 +69,16 @@ export declare class MessageRetryManager {
         recreate: boolean;
     };
     /**
+     * HB-405: has this peer had a session recreation inside the
+     * throttle window? Read-only — consulted ONLY by the
+     * peer-supplied call site (sendMessagesAgain, retry receipt
+     * error codes), where a peer can force unbounded session churn
+     * by retrying many message ids with error="7". Our own decrypt
+     * failures keep the immediate path above (HB-380); this gate
+     * never throttles those.
+     */
+    hasRecentSessionRecreate(jid: string): boolean;
+    /**
      * Parse error code from retry receipt's retry node.
      * Returns undefined if no error code is present.
      */

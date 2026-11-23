@@ -1,6 +1,7 @@
 import { type Transform } from 'stream';
 import { waproto } from '../../WAProto/index.js';
-import type { AnyMediaMessageContent, AnyMessageContent, MessageContentGenerationOptions, MessageGenerationOptions, MessageGenerationOptionsFromContent, MessageUserReceipt, StickerPackInfo, WAMessage, WAMessageContent, WAMessageKey } from '../Types/index.js';
+import type { AnyMediaMessageContent, AnyMessageContent, MessageContentGenerationOptions, MessageGenerationOptions, MessageGenerationOptionsFromContent, MessageUserReceipt, PollVoteOptions, StickerPackInfo, WAMessage, WAMessageContent, WAMessageKey } from '../Types/index.js';
+export type { PollVoteOptions };
 import type { ILogger } from './logger.js';
 import { type MediaDownloadOptions } from './messages-media.js';
 type ExtractByKey<T, K extends PropertyKey> = T extends Record<K, any> ? T : never;
@@ -23,6 +24,34 @@ export declare const hasNonNullishProperty: <K extends PropertyKey>(message: Any
 export declare const prepareStickerPackMessage: (stickerPack: StickerPackInfo, options: MessageContentGenerationOptions) => Promise<{
     stickerPackMessage: waproto.Message.IStickerPackMessage;
 }>;
+/**
+ * Encrypt a poll vote (AES-GCM over the sha256 of each selected option).
+ * Key derivation mirrors decryptPollVote (src/Utils/process-message.ts)
+ * exactly — same sign / key0 / decKey / AAD construction — so a vote
+ * encrypted here decrypts there, and a vote we receive decrypts with
+ * the same context.
+ */
+export declare const encryptPollVote: ({ pollMsgId, pollCreatorJid, pollEncKey, voterJid, selectedOptions }: {
+    pollMsgId: string;
+    pollCreatorJid: string;
+    pollEncKey: Uint8Array;
+    voterJid: string;
+    selectedOptions: string[];
+}) => waproto.Message.IPollEncValue;
+/**
+ * AunuBaileys (2.5.0, Kage LID addressing delta, run-0932): resolve
+ * our own participant in the addressing namespace of the destination
+ * chat. WhatsApp may identify the local account by PN or LID depending
+ * on the destination — a group/status chat addressed by LID must carry
+ * our LID as participant, not our PN. Re-implementation (tree style) of
+ * kage-baileys' lib/Utils/lid-addressing.js (credited there to
+ * @this-xys/baileys 2.0.0); the two TODO sites in
+ * generateWAMessageFromContent (:1486, :1548) are wired to these
+ * helpers by the coordinator — see GROUP-C-REPORT.md for the exact
+ * patch — because that function belongs to Group B this batch.
+ */
+export declare const getMeParticipant: (targetJid: string, userJid: string, userJidLid?: string) => string;
+export declare const getQuotedParticipant: (quoted: WAMessage | undefined | null, jid: string, userJid: string, userJidLid?: string) => string | undefined;
 export declare const generateWAMessageContent: (message: AnyMessageContent, options: MessageContentGenerationOptions) => Promise<waproto.Message>;
 export declare const generateWAMessageFromContent: (jid: string, message: WAMessageContent, options: MessageGenerationOptionsFromContent) => WAMessage;
 export declare const generateWAMessage: (jid: string, content: AnyMessageContent, options: MessageGenerationOptions) => Promise<WAMessage>;
@@ -91,5 +120,4 @@ type DownloadMediaMessageContext = {
 export declare const downloadMediaMessage: <Type extends "buffer" | "stream">(message: WAMessage, type: Type, options: MediaDownloadOptions, ctx?: DownloadMediaMessageContext) => Promise<Type extends "buffer" ? Buffer<ArrayBufferLike> : Transform>;
 /** Checks whether the given message is a media message; if it is returns the inner content */
 export declare const assertMediaContent: (content: waproto.IMessage | null | undefined) => waproto.Message.IVideoMessage | waproto.Message.IImageMessage | waproto.Message.IAudioMessage | waproto.Message.IDocumentMessage | waproto.Message.IStickerMessage;
-export {};
 //# sourceMappingURL=messages.d.ts.map

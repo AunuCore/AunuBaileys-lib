@@ -315,6 +315,9 @@ export type BufferedEventData = {
     groupUpdates: {
         [jid: string]: Partial<GroupMetadata>;
     };
+    groupUpserts: {
+        [jid: string]: GroupMetadata;
+    };
 };
 export type BaileysEvent = keyof BaileysEventMap;
 export interface BaileysEventEmitter {

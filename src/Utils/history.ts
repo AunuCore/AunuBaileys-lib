@@ -102,6 +102,15 @@ export const processHistoryMessage = (item: waproto.IHistorySync, logger?: ILogg
 						continue
 					}
 
+					// AunuBaileys (2.5.0, HB-181 addendum): message present
+					// but .key absent (null, or undefined — what
+					// protobufjs decode yields for a missing singular
+					// field) threw at message.key.fromMe below and lost
+					// the whole chunk the same way. Skip the entry.
+					if (!message.key) {
+						continue
+					}
+
 					messages.push(message)
 
 					if (!chat.messages?.length) {

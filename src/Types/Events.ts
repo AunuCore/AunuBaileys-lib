@@ -216,6 +216,7 @@ export type BufferedEventData = {
 	messageReactions: { [key: string]: { key: WAMessageKey; reactions: waproto.IReaction[] } }
 	messageReceipts: { [key: string]: { key: WAMessageKey; userReceipt: waproto.IUserReceipt[] } }
 	groupUpdates: { [jid: string]: Partial<GroupMetadata> }
+	groupUpserts: { [jid: string]: GroupMetadata }
 }
 
 export type BaileysEvent = keyof BaileysEventMap
