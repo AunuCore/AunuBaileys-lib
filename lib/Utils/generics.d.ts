@@ -1,6 +1,6 @@
 import type Long from 'long';
 import { waproto } from '../../WAProto/index.js';
-import type { BaileysEventEmitter, BaileysEventMap, ConnectionState, WACallUpdateType, WAMessageKey, WAVersion } from '../Types/index.js';
+import type { BaileysEventEmitter, BaileysEventMap, WACallUpdateType, WAMessageKey, WAVersion } from '../Types/index.js';
 import { type BinaryNode } from '../WABinary/index.js';
 export declare const BufferJSON: {
     replacer: (k: any, value: any) => any;
@@ -33,7 +33,7 @@ export declare function promiseTimeout<T>(ms: number | undefined, promise: (reso
 export declare const generateMessageIDV2: (userId?: string) => string;
 export declare const generateMessageID: () => string;
 export declare function bindWaitForEvent<T extends keyof BaileysEventMap>(ev: BaileysEventEmitter, event: T): (check: (u: BaileysEventMap[T]) => Promise<boolean | undefined>, timeoutMs?: number) => Promise<void>;
-export declare const bindWaitForConnectionUpdate: (ev: BaileysEventEmitter) => (check: (u: Partial<ConnectionState>) => Promise<boolean | undefined>, timeoutMs?: number) => Promise<void>;
+export declare const bindWaitForConnectionUpdate: (ev: BaileysEventEmitter) => (check: (u: BaileysEventMap["connection.update"]) => Promise<boolean | undefined>, timeoutMs?: number) => Promise<void>;
 export declare const fetchLatestBaileysVersion: (options?: RequestInit) => Promise<{
     version: WAVersion;
     isLatest: boolean;

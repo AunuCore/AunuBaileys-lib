@@ -1081,8 +1081,20 @@ test('HB-405 (2.5.0): a second peer retry receipt carrying a MAC error inside th
 		// inside the window: the message is still resent, but the
 		// session must NOT be deleted again.
 		sock.ws.emit('CB:receipt', receiptStanza({ from: PEER, participant: `${PEER_USER}:1@s.whatsapp.net`, id: id2, count: 1, error: 7 }))
+		// AunuBaileys (2.6.0): the resend budget was 8 s, but the
+		// resend lands at ~8.0–8.5 s in this offline env — the
+		// path pays one 800 ms USync timeout per LID lookup for
+		// the unmapped test peer (the HELD run-1003 class: no
+		// negative cache for LID lookups), ~10 of them across
+		// the two receipt flows, and the second receipt queues
+		// behind the first. The resend DID arrive on the
+		// published 2.5.0 lib too (A/B run: same ~8 s, same
+		// 1 delete) — the 8 s budget was already marginal there,
+		// not a 2.6.0 regression. This test locks the throttle
+		// (no second delete) + the eventual resend, not sub-8 s
+		// latency, so the budget is 20 s.
 		assert.equal(
-			await waitFor(() => encRecords.length > afterFirst, 8000),
+			await waitFor(() => encRecords.length > afterFirst, 20000),
 			true,
 			'second receipt must still resend its message'
 		)

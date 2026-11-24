@@ -12,6 +12,7 @@ import {
 } from '../Utils/business'
 import { type BinaryNode, jidNormalizedUser, S_WHATSAPP_NET } from '../WABinary'
 import { getBinaryNodeChild } from '../WABinary/generic-utils'
+import { sanitizeMediaTimeoutMs } from '../Utils/messages-media'
 import { makeMessagesRecvSocket } from './messages-recv'
 
 export const makeBusinessSocket = (config: SocketConfig) => {
@@ -94,7 +95,17 @@ export const makeBusinessSocket = (config: SocketConfig) => {
 	}
 
 	const updateCoverPhoto = async (photo: WAMediaUpload) => {
-		const { fileSha256, filePath } = await getRawMediaUploadData(photo, 'biz-cover-photo')
+		// AunuBaileys (2.6.0, HB-2026-1112-50 addendum): the raw
+		// download used to be called with NO opts — the host's
+		// maxContentLength and AbortSignal were ignored, so a stalled
+		// remote URL hung the cover-photo update forever. Forward
+		// the host's fetch options, with a 120 s default timeout
+		// (the sanitizer's fallback, mirroring the newsletter branch
+		// in prepareWAMessageMedia) when the host set no signal.
+		const { fileSha256, filePath } = await getRawMediaUploadData(photo, 'biz-cover-photo', config.logger, {
+			...config.options,
+			signal: config.options?.signal ?? AbortSignal.timeout(sanitizeMediaTimeoutMs(undefined))
+		})
 		const fileSha256B64 = fileSha256.toString('base64')
 
 		// AunuBaileys (2.1.0, sweep, HB-2026-1112-10 class): try/finally

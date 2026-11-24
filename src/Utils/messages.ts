@@ -129,6 +129,14 @@ const assertColor = async (color: any) => {
 	}
 
 	let hex = color.trim().replace('#', '')
+	// AunuBaileys (2.6.0, HB-321 addendum): a short hex used to be
+	// zero-padded — '#FFF' became 0xFF000FFF instead of white
+	// 0xFFFFFFFF. Expand each digit first (CSS short-hex); a 4-digit
+	// #RGBA puts its alpha first, matching the tree's AARRGGBB order.
+	if (hex.length === 3 || hex.length === 4) {
+		const expanded = [...hex].map(ch => ch + ch).join('')
+		hex = hex.length === 4 ? expanded.slice(6) + expanded.slice(0, 6) : expanded
+	}
 	if (hex.length <= 6) {
 		hex = 'FF' + hex.padStart(6, '0')
 	}
@@ -943,6 +951,15 @@ export const generateWAMessageContent = async (
 	options: MessageContentGenerationOptions
 ) => {
 	let m: WAMessageContent = {}
+	// AunuBaileys (2.6.0, HB-452): the rich-response branch below
+	// starts with `'code' in message` — on a non-object content
+	// (a bare string, null, a number) that threw a raw TypeError
+	// with no statusCode, before any guard could run. Hosts coming
+	// from libraries that accept a plain string hit this easily;
+	// fail with a Boom 400 like the sibling builders (HB-321/325).
+	if (typeof message !== 'object' || message === null) {
+		throw new Boom('generateWAMessageContent: content must be an object', { statusCode: 400 })
+	}
 	// AunuBaileys P2c wiring: rich response — blok kode / tabel / tautan
 	// (the first branch of v6 lib/Utils/messages.js generateWAMessageContent,
 	// supplied by prepareRichResponseMessage from './rich-message-utils').
@@ -1002,6 +1019,31 @@ export const generateWAMessageContent = async (
 			extContent.backgroundArgb = await assertColor(options.backgroundColor)
 		}
 
+		// AunuBaileys (2.6.0, Kage favicon link-preview delta,
+		// run-0929): a host-supplied favicon is uploaded exactly like
+		// a link-preview high-quality thumbnail (same media type and
+		// MMSThumbnailMetadata shape) and attached as
+		// faviconMmsMetadata. An upload failure rejects the send —
+		// the favicon was explicitly requested, unlike the best-effort
+		// auto link preview above.
+		if (message.favicon) {
+			const { imageMessage: faviconMessage } = await prepareWAMessageMedia(
+				{ image: message.favicon },
+				{ ...options, mediaTypeOverride: 'thumbnail-link' }
+			)
+			if (faviconMessage) {
+				extContent.faviconMmsMetadata = {
+					thumbnailDirectPath: faviconMessage.directPath,
+					thumbnailSha256: faviconMessage.fileSha256,
+					thumbnailEncSha256: faviconMessage.fileEncSha256,
+					mediaKey: faviconMessage.mediaKey,
+					mediaKeyTimestamp: faviconMessage.mediaKeyTimestamp,
+					thumbnailHeight: faviconMessage.height,
+					thumbnailWidth: faviconMessage.width
+				}
+			}
+		}
+
 		if (options.font) {
 			extContent.font = options.font
 		}
@@ -1019,8 +1061,46 @@ export const generateWAMessageContent = async (
 			m.contactsArrayMessage = WAProto.Message.ContactsArrayMessage.create(message.contacts)
 		}
 	} else if (hasNonNullishProperty(message, 'location')) {
+		// AunuBaileys (2.6.0, HB-253 addendum): every field of
+		// ILocationMessage is optional, so `{ location: {} }` is
+		// type-valid - but protobufjs drops the undefined fields
+		// and the relay's HB-253 guard (an object with at least
+		// one content key) cannot see the emptiness one level
+		// down: an empty LocationMessage went out as a success.
+		// Reject unless at least one content field is present and
+		// usable, mirroring the album branch below. A bare isLive
+		// flag (or accuracy / speed / thumbnail alone) is not
+		// content - it needs coordinates or a name / address /
+		// url / comment to act on.
+		const loc = message.location
+		const hasLocationContent =
+			(typeof loc.degreesLatitude === 'number' && Number.isFinite(loc.degreesLatitude)) ||
+			(typeof loc.degreesLongitude === 'number' && Number.isFinite(loc.degreesLongitude)) ||
+			(typeof loc.name === 'string' && !!loc.name) ||
+			(typeof loc.address === 'string' && !!loc.address) ||
+			(typeof loc.url === 'string' && !!loc.url) ||
+			(typeof loc.comment === 'string' && !!loc.comment)
+		if (!hasLocationContent) {
+			throw new Boom('location requires coordinates or a name, address, url or comment', { statusCode: 400 })
+		}
+
 		m.locationMessage = WAProto.Message.LocationMessage.create(message.location)
 	} else if (hasNonNullishProperty(message, 'react')) {
+		// AunuBaileys (2.6.0, HB-253 addendum): every field of
+		// IReactionMessage is optional, so `{ react: {} }` is
+		// type-valid - but it builds a reaction with no key and no
+		// text that the server cannot apply to any message, and the
+		// relay's HB-253 guard cannot see the emptiness one level
+		// down. Require the target key (same discipline as
+		// assertMessageKeyArg for delete / pin) plus a text
+		// string. An EMPTY text is valid - it is how a reaction
+		// is removed (see the e2e send-receive test) - so only a
+		// missing or non-string text is rejected.
+		assertMessageKeyArg(message.react.key, 'react.key')
+		if (typeof message.react.text !== 'string') {
+			throw new Boom('react requires a text string (empty string removes the reaction)', { statusCode: 400 })
+		}
+
 		// AunuBaileys (1.0.83, HB-165, re-applied P3b): stamp the
 		// timestamp on a copy — the caller's react object used to keep
 		// it, so a re-send of the same object carried the first send's
@@ -1050,6 +1130,22 @@ export const generateWAMessageContent = async (
 				: message.disappearingMessagesInChat
 		m = prepareDisappearingMessageSettingContent(exp)
 	} else if (hasNonNullishProperty(message, 'groupInvite')) {
+		// AunuBaileys (2.6.0, HB-253 addendum): GroupInviteInfo's
+		// fields are all required in the TS type, but a JS host (or
+		// `as any`) can still pass `{ groupInvite: {} }` - every
+		// assignment below then writes undefined, protobufjs drops
+		// them, and an empty GroupInviteMessage goes out as a
+		// success past the relay's HB-253 guard. Require the two
+		// fields the invite cannot act without.
+		if (
+			typeof message.groupInvite.inviteCode !== 'string' ||
+			!message.groupInvite.inviteCode ||
+			typeof message.groupInvite.jid !== 'string' ||
+			!message.groupInvite.jid
+		) {
+			throw new Boom('groupInvite requires inviteCode and jid', { statusCode: 400 })
+		}
+
 		m.groupInviteMessage = {}
 		m.groupInviteMessage.inviteCode = message.groupInvite.inviteCode
 		m.groupInviteMessage.inviteExpiration = message.groupInvite.inviteExpiration
@@ -1103,6 +1199,17 @@ export const generateWAMessageContent = async (
 
 		m.messageContextInfo.messageAddOnDurationInSecs = message.type === 1 ? message.time || 86400 : 0
 	} else if (hasNonNullishProperty(message, 'buttonReply')) {
+		// AunuBaileys (2.6.0, HB-253 addendum): ButtonReplyInfo's
+		// fields are all required in the TS type, but a JS host (or
+		// `as any`) can still pass `{ buttonReply: {} }` - both
+		// switch arms below then write undefined ids, protobufjs
+		// drops them, and an id-less response goes out as a success
+		// past the relay's HB-253 guard. Require the selected id
+		// up front, before the type switch.
+		if (typeof message.buttonReply.id !== 'string' || !message.buttonReply.id) {
+			throw new Boom('buttonReply requires an id', { statusCode: 400 })
+		}
+
 		switch (message.type) {
 			case 'template':
 				m.templateButtonReplyMessage = {
@@ -1141,6 +1248,17 @@ export const generateWAMessageContent = async (
 			}
 		})
 	} else if (hasNonNullishProperty(message, 'listReply')) {
+		// AunuBaileys (2.6.0, HB-253 addendum): every field of
+		// IListResponseMessage is optional, so `{ listReply: {} }`
+		// is type-valid - but the spread below builds an empty
+		// ListResponseMessage with no selected row, which the
+		// relay's HB-253 guard cannot see one level down. Require
+		// the selected row id the response cannot act without.
+		const selectedRowId = message.listReply.singleSelectReply?.selectedRowId
+		if (typeof selectedRowId !== 'string' || !selectedRowId) {
+			throw new Boom('listReply requires singleSelectReply.selectedRowId', { statusCode: 400 })
+		}
+
 		m.listResponseMessage = { ...message.listReply }
 	} else if (hasNonNullishProperty(message, 'event')) {
 		m.eventMessage = {}
@@ -1379,6 +1497,15 @@ export const generateWAMessageContent = async (
 			throw new Boom('aiRich.submessages must be an array', { statusCode: 400 })
 		}
 
+		// AunuBaileys (2.6.0, HB-253 addendum): an absent or empty
+		// submessages array is type-valid, but it builds a
+		// RichResponseMessage with zero submessages that the relay's
+		// HB-253 guard cannot see one level down. Require at least
+		// one submessage, mirroring the album branch's discipline.
+		if (!(message.aiRich.submessages || []).length) {
+			throw new Boom('aiRich requires at least one submessage', { statusCode: 400 })
+		}
+
 		const subs: waproto.IAIRichResponseSubMessage[] = (message.aiRich.submessages || []).map(s => {
 			if (!s || typeof s !== 'object') {
 				throw new Boom('aiRich submessages must be objects', { statusCode: 400 })
@@ -1559,12 +1686,20 @@ export const generateWAMessageContent = async (
 	// cannot carry, so protobufjs silently dropped every mention.
 	// The wrap now happens after those blocks, below (the `edit`
 	// wrap already had the correct order).
+	// AunuBaileys (2.6.0, HB-381 addendum 1): the poll branch sets
+	// `m.messageContextInfo` BEFORE its poll key, so `Object.keys(m)[0]`
+	// resolved to the non-content `messageContextInfo` here (and in
+	// the contextInfo block below) and the mentions were written onto
+	// an object the proto cannot carry — dropped silently, exactly
+	// like the HB-381 wrapper bug. Resolve the CONTENT key with
+	// getContentType, which skips messageContextInfo (it carries no
+	// 'Message' in its name), instead of taking the first key.
 	if (
 		(hasOptionalProperty(message, 'mentions') && message.mentions?.length) ||
 		(hasOptionalProperty(message, 'mentionAll') && message.mentionAll)
 	) {
-		const messageType = Object.keys(m)[0]! as Extract<keyof waproto.IMessage, MessageWithContextInfo>
-		const key = m[messageType]
+		const messageType = getContentType(m) as Extract<keyof waproto.IMessage, MessageWithContextInfo> | undefined
+		const key = messageType ? m[messageType] : undefined
 		if (key && 'contextInfo' in key) {
 			key.contextInfo = key.contextInfo || {}
 			if (message.mentions?.length) {
@@ -1595,11 +1730,15 @@ export const generateWAMessageContent = async (
 	}
 
 	if (hasOptionalProperty(message, 'contextInfo') && !!message.contextInfo) {
-		const messageType = Object.keys(m)[0]! as Extract<keyof waproto.IMessage, MessageWithContextInfo>
-		const key = m[messageType]
-		if ('contextInfo' in key! && !!key.contextInfo) {
+		// AunuBaileys (2.6.0, HB-381 addendum 1): same first-key trap
+		// as the mentions block above — a poll's messageContextInfo
+		// used to swallow the caller's contextInfo. Resolve the
+		// content key with getContentType.
+		const messageType = getContentType(m) as Extract<keyof waproto.IMessage, MessageWithContextInfo> | undefined
+		const key = messageType ? m[messageType] : undefined
+		if (key && 'contextInfo' in key && !!key.contextInfo) {
 			key.contextInfo = { ...key.contextInfo, ...message.contextInfo }
-		} else if (key!) {
+		} else if (key) {
 			key.contextInfo = message.contextInfo
 		}
 	}

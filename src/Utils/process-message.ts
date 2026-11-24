@@ -465,6 +465,14 @@ const processMessage = async (
 				const keys = protocolMsg.appStateSyncKeyShare!.keys
 				if (keys?.length) {
 					let newAppStateSyncKeyId = ''
+					// AunuBaileys (2.6.0, HB-454 facet B): the whole
+				// transaction used to be a bare await — a transient
+				// host-store failure rejected the protocol case and
+				// aborted the stanza handler, losing the share. Log
+				// and continue; the next key share re-injects the keys.
+				// newAppStateSyncKeyId stays '' on failure, so the
+				// adoption below is skipped automatically.
+				try {
 					await keyStore.transaction(async () => {
 						const newKeys: string[] = []
 						for (const { keyData, keyId } of keys) {
@@ -499,6 +507,9 @@ const processMessage = async (
 
 						logger?.info({ newAppStateSyncKeyId, newKeys }, 'injecting new app state sync keys')
 					}, meId)
+					} catch (err) {
+						logger?.warn({ err }, 'failed to inject app state sync keys — the share may be re-sent; continuing')
+					}
 
 					// AunuBaileys (1.0.88, HB-135, re-applied P3b): adopt a
 					// new myAppStateKeyId only when a valid key was
@@ -633,10 +644,24 @@ const processMessage = async (
 					pairs.push({ lid: `${lid}@lid`, pn: `${pn}@s.whatsapp.net` })
 				}
 
-				await signalRepository.lidMapping.storeLIDPNMappings(pairs)
+				// AunuBaileys (2.6.0, HB-454 facet A): the store write
+				// used to be a bare await — a transient host-store
+				// failure rejected the whole protocol case and aborted
+				// the stanza handler, and a failing migrateSession for
+				// one pair aborted the pairs after it. Mirror the
+				// HISTORY_SYNC_NOTIFICATION pattern above: log and
+				// continue; the server re-sends the sync on the next
+				// migration event.
+				await signalRepository.lidMapping.storeLIDPNMappings(pairs).catch(err =>
+					logger?.warn({ err }, 'failed to store LID-PN mappings from LID migration sync')
+				)
 				if (pairs.length) {
 					for (const { pn, lid } of pairs) {
-						await signalRepository.migrateSession(pn, lid)
+						try {
+							await signalRepository.migrateSession(pn, lid)
+						} catch (err) {
+							logger?.warn({ err, pn, lid }, 'failed to migrate session for a LID mapping pair — continuing with the next pair')
+						}
 					}
 				}
 		}
@@ -664,7 +689,19 @@ const processMessage = async (
 		const creationMsgKey = encEventResponse.eventCreationMessageKey!
 
 		// we need to fetch the event creation message to get the event enc key
-		const eventMsg = await getMessage(creationMsgKey)
+		// AunuBaileys (2.6.0, HB-107 addendum): a throwing host
+		// getMessage here used to reject the whole processMessage —
+		// AFTER the delivery receipt was already sent, so the server
+		// never redelivered and the event response (RSVP) was lost
+		// silently. Treat a throw like "creation message not found"
+		// (the else branch below): warn and skip the decrypt,
+		// mirroring the per-id HB-107 guard on the receive path.
+		let eventMsg: Awaited<ReturnType<typeof getMessage>>
+		try {
+			eventMsg = await getMessage(creationMsgKey)
+		} catch (err) {
+			logger?.warn({ err, creationMsgKey }, 'event response: failed to fetch creation message, cannot decrypt response')
+		}
 		if (eventMsg) {
 			try {
 				const meIdNormalised = jidNormalizedUser(meId)

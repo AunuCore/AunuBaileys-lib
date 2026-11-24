@@ -552,7 +552,7 @@ export async function safeHttpGet(input: string | URL, options: SafeHttpGetOptio
 
 // ------------------------------------------------------------------
 // image sanity (pixel bombs)
-/** Reads width/height from PNG, GIF, JPEG and WebP headers without decoding. null if unknown. */
+/** Reads width/height from PNG, GIF, JPEG, WebP, BMP, TIFF and AVIF/HEIC headers without decoding. null if unknown. */
 export const readImageDimensions = (buf: Buffer): { width: number; height: number } | null => {
 	if (!Buffer.isBuffer(buf) || buf.length < 12) {
 		return null
@@ -608,6 +608,174 @@ export const readImageDimensions = (buf: Buffer): { width: number; height: numbe
 			}
 
 			i += 2 + buf.readUInt16BE(i + 2)
+		}
+	}
+
+	// AunuBaileys (2.6.0, HB-277 addendum run-0812): BMP — the
+	// reader used to return null for it, so the pixel-bomb guard
+	// was a no-op and the decoders (sharp/jimp/napi) decoded the
+	// full raster. BITMAPINFOHEADER (and larger): int32 width at
+	// 18, int32 height at 22 (negative = top-down); the OS/2
+	// 12-byte header stores uint16s at 18/20 instead.
+	if (buf.toString('latin1', 0, 2) === 'BM' && buf.length >= 26) {
+		const dibSize = buf.readUInt32LE(14)
+		if (dibSize >= 40) {
+			const width = buf.readInt32LE(18)
+			const height = buf.readInt32LE(22)
+			if (width > 0 && height !== 0) {
+				return { width, height: Math.abs(height) }
+			}
+		} else if (dibSize === 12) {
+			const width = buf.readUInt16LE(18)
+			const height = buf.readUInt16LE(20)
+			if (width > 0 && height > 0) {
+				return { width, height }
+			}
+		}
+
+		return null
+	}
+
+	// AunuBaileys (2.6.0, HB-277 addendum run-0812): TIFF — same
+	// guard bypass as BMP. 'II' (little-endian) or 'MM'
+	// (big-endian), magic 42, then the first IFD: 12-byte entries,
+	// tags 256 (width) / 257 (height), types SHORT (3) / LONG (4),
+	// single value only. Anything malformed returns null.
+	const tiffHead = buf.toString('latin1', 0, 2)
+	if ((tiffHead === 'II' || tiffHead === 'MM') && buf.length >= 8) {
+		const le = tiffHead === 'II'
+		const u16 = (off: number) => (le ? buf.readUInt16LE(off) : buf.readUInt16BE(off))
+		const u32 = (off: number) => (le ? buf.readUInt32LE(off) : buf.readUInt32BE(off))
+		if (u16(2) !== 42) {
+			return null
+		}
+
+		const ifdOff = u32(4)
+		if (ifdOff < 8 || ifdOff + 2 > buf.length) {
+			return null
+		}
+
+		const entries = u16(ifdOff)
+		let width: number | undefined
+		let height: number | undefined
+		for (let i = 0; i < entries; i++) {
+			const off = ifdOff + 2 + i * 12
+			if (off + 12 > buf.length) {
+				break
+			}
+
+			const tag = u16(off)
+			if (tag !== 256 && tag !== 257) {
+				continue
+			}
+
+			const type = u16(off + 2)
+			const count = u32(off + 4)
+			if (count !== 1) {
+				continue
+			}
+
+			let value: number | undefined
+			if (type === 3) {
+				value = u16(off + 8)
+			} else if (type === 4) {
+				value = u32(off + 8)
+			} else {
+				continue
+			}
+
+			if (tag === 256) {
+				width = value
+			} else {
+				height = value
+			}
+		}
+
+		if (width !== undefined && height !== undefined && width > 0 && height > 0) {
+			return { width, height }
+		}
+
+		return null
+	}
+
+	// AunuBaileys (2.6.0, HB-277 addendum run-0812): AVIF / HEIC
+	// (ISO-BMFF) — same guard bypass as BMP/TIFF. Dimensions live
+	// in the `ispe` box inside the `meta` box (version/flags, then
+	// width/height as uint32 BE). Only files starting with an
+	// `ftyp` box are walked; every size is bounds-checked and a
+	// box that runs past the buffer ends the walk as unknown.
+	if (buf.length >= 12 && buf.toString('latin1', 4, 8) === 'ftyp') {
+		let off = 0
+		while (off + 8 <= buf.length) {
+			let size = buf.readUInt32BE(off)
+			const type = buf.toString('latin1', off + 4, off + 8)
+			let header = 8
+			if (size === 1) {
+				if (off + 16 > buf.length) {
+					return null
+				}
+
+				const largesize = buf.readBigUInt64BE(off + 8)
+				if (largesize < 16n || largesize > BigInt(buf.length - off)) {
+					return null
+				}
+
+				size = Number(largesize)
+				header = 16
+			} else if (size === 0) {
+				size = buf.length - off
+			}
+
+			if (size < header || off + size > buf.length) {
+				return null
+			}
+
+			if (type === 'meta') {
+				let inner = off + header + 4
+				const end = off + size
+				while (inner + 8 <= end) {
+					let innerSize = buf.readUInt32BE(inner)
+					const innerType = buf.toString('latin1', inner + 4, inner + 8)
+					let innerHeader = 8
+					if (innerSize === 1) {
+						if (inner + 16 > end) {
+							return null
+						}
+
+						const innerLargesize = buf.readBigUInt64BE(inner + 8)
+						if (innerLargesize < 16n || innerLargesize > BigInt(end - inner)) {
+							return null
+						}
+
+						innerSize = Number(innerLargesize)
+						innerHeader = 16
+					} else if (innerSize === 0) {
+						innerSize = end - inner
+					}
+
+					if (innerSize < innerHeader || inner + innerSize > end) {
+						return null
+					}
+
+					if (innerType === 'ispe') {
+						if (inner + innerHeader + 12 <= end) {
+							const width = buf.readUInt32BE(inner + innerHeader + 4)
+							const height = buf.readUInt32BE(inner + innerHeader + 8)
+							if (width > 0 && height > 0) {
+								return { width, height }
+							}
+						}
+
+						return null
+					}
+
+					inner += innerSize
+				}
+
+				return null
+			}
+
+			off += size
 		}
 	}
 

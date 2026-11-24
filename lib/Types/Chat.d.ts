@@ -82,6 +82,8 @@ export type ChatModification = {
 } | {
     clear: boolean;
     lastMessages: LastMessageList;
+    /** AunuBaileys (2.6.0, clearChat deleteStarred facet, run-0930): false keeps starred messages (index '0'); true/undefined deletes them (index '1', the old behaviour). */
+    deleteStarred?: boolean;
 } | {
     deleteForMe: {
         deleteMedia: boolean;

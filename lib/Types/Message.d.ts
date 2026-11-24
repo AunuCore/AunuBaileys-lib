@@ -222,6 +222,8 @@ export type AIRichSubMessageContent = {
 export type AnyRegularMessageContent = (({
     text: string;
     linkPreview?: WAUrlInfo | null;
+    /** AunuBaileys (2.6.0, Kage favicon link-preview delta, run-0929): a host-supplied favicon image, uploaded and attached as faviconMmsMetadata on the extendedTextMessage. */
+    favicon?: WAMediaUpload;
 } & Mentionable & Contextable & Editable) | AnyMediaMessageContent | {
     event: EventMessageOptions;
 } | ({

@@ -105,6 +105,16 @@ export declare function generateThumbnail(file: string, mediaType: 'video' | 'im
         height: number;
     } | undefined;
 }>;
+export type HttpStreamResponse = {
+    stream: Readable;
+    status: number;
+    headers: Headers;
+    /** final URL after redirects (empty when the fetch implementation does not report one) */
+    url: string;
+};
+export declare const getHttpStreamResponse: (url: string | URL, options?: RequestInit & {
+    isStream?: true;
+}) => Promise<HttpStreamResponse>;
 export declare const getHttpStream: (url: string | URL, options?: RequestInit & {
     isStream?: true;
 }) => Promise<Readable>;
@@ -163,6 +173,7 @@ export type UploadParams = {
     agent?: Agent;
 };
 export declare const uploadWithNodeHttp: ({ url, filePath, headers, timeoutMs, agent }: UploadParams, redirectCount?: number) => Promise<MediaUploadResult | undefined>;
+export declare const uploadWithFetch: ({ url, filePath, headers, timeoutMs, agent }: UploadParams, redirectCount?: number) => Promise<MediaUploadResult | undefined>;
 export declare const getWAUploadToServer: ({ customUploadHosts, fetchAgent, logger, options }: SocketConfig, refreshMediaConn: (force: boolean) => Promise<MediaConnInfo>) => WAMediaUploadFunction;
 /**
  * Generate a binary node that will request the phone to re-upload the media & return the newly uploaded URL

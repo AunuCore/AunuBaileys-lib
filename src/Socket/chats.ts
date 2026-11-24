@@ -989,7 +989,20 @@ export const makeChatsSocket = (config: SocketConfig) => {
 		const jid = attrs.from
 		const participant = attrs.participant || attrs.from
 
-		if (shouldIgnoreJid(jid!) && jid !== S_WHATSAPP_NET) {
+		// AunuBaileys (2.6.0, HB-362 addendum): shouldIgnoreJid is a
+		// HOST callback and it can throw — this was the only
+		// unguarded call site (processNode in messages-recv.ts has
+		// been guarded since 2.2.0). A throw here lost the whole
+		// presence.update. Mirror processNode: log and treat the
+		// JID as not ignored.
+		let ignored = false
+		try {
+			ignored = shouldIgnoreJid(jid!) === true && jid !== S_WHATSAPP_NET
+		} catch (err) {
+			logger.warn({ err, jid }, 'shouldIgnoreJid threw in presence handler; treating JID as not ignored')
+		}
+
+		if (ignored) {
 			return
 		}
 

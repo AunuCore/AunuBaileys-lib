@@ -46,7 +46,51 @@ export class GroupSessionBuilder {
 			return
 		}
 
+		// AunuBaileys (2.6.0, HB-168 addendum): a 33-byte signing
+		// key must start with the 0x05 version byte — libsignal's
+		// scrubPubKeyFormat accepts a 33-byte key ONLY on that
+		// prefix, so any other first byte stores a state that
+		// throws 'Invalid public key' on every group decrypt.
+		// A 32-byte key is bare and needs no prefix.
+		if (signatureKey.length === 33 && signatureKey[0] !== 0x05) {
+			return
+		}
+
+		// AunuBaileys (2.6.0, HB-168 addendum): the chain
+		// iteration is a uint32 on the wire, but the sender's
+		// encrypt step computes iteration+1 — at 2^32-1 that wraps
+		// to 0 and the receiver throws 'Received message with old
+		// counter'. Cap at 2^31-1 (the same bound
+		// generateSenderKeyId uses); a legitimate chain can never
+		// reach it, so anything above is a dead end by construction.
+		if (!Number.isInteger(iteration) || iteration < 0 || iteration > 2147483647) {
+			return
+		}
+
 		const senderKeyRecord = await this.senderKeyStore.loadSenderKey(senderKeyName)
+		// AunuBaileys (2.6.0, HB-456): a re-delivered SKDM is
+		// byte-identical to the state it already created, but
+		// addSenderKeyState pushed it again and the MAX_STATES
+		// shift evicted DISTINCT states — five replays of one
+		// SKDM left [5,5,5,5,5] and broke decryption of messages
+		// under the evicted keys. Skip an exact duplicate
+		// (same keyId, iteration, chain seed and signing key)
+		// with no store write. A genuine rotation — same keyId
+		// but a new chain key — still adds and evicts the oldest,
+		// as before.
+		const duplicate = senderKeyRecord
+			.serialize()
+			.some(
+				state =>
+					state.senderKeyId === id &&
+					state.senderChainKey.iteration === iteration &&
+					Buffer.from(state.senderChainKey.seed).equals(Buffer.from(chainKey)) &&
+					Buffer.from(state.senderSigningKey.public).equals(Buffer.from(signatureKey))
+			)
+		if (duplicate) {
+			return
+		}
+
 		senderKeyRecord.addSenderKeyState(
 			senderKeyDistributionMessage.getId(),
 			senderKeyDistributionMessage.getIteration(),

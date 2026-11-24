@@ -113,8 +113,8 @@ const makeWASocket = (config: UserFacingSocketConfig) => {
 	// setInterval to 1 ms, and a NaN/Infinity maxMsgRetryCount breaks
 	// both retry gates at once. Sanitise once, here at the boundary:
 	// timeouts/intervals must be positive finite (else the documented
-	// default), the retry count must be finite (else the default),
-	// and qrTimeout must be positive finite or absent. NOTE the
+	// default), the retry count must be a positive integer (else the
+	// default), and qrTimeout must be positive finite or absent. NOTE the
 	// HB-199 lesson: values are never coerced \u2014 a non-number input
 	// (e.g. the string '5abc') is not finite and falls back whole.
 	const positiveFiniteOr = (value: unknown, fallback: number) =>
@@ -125,9 +125,17 @@ const makeWASocket = (config: UserFacingSocketConfig) => {
 		DEFAULT_CONNECTION_CONFIG.defaultQueryTimeoutMs ?? 60_000
 	)
 	newConfig.keepAliveIntervalMs = positiveFiniteOr(newConfig.keepAliveIntervalMs, DEFAULT_CONNECTION_CONFIG.keepAliveIntervalMs ?? 25_000)
+	// AunuBaileys (2.6.0, HB-139 addendum): the retry count used to
+	// be only finite-checked — 0 or a negative value passed through,
+	// so hasExceededMaxRetries was true on a FRESH message and no
+	// retry receipt was ever sent or honoured. Like the timeouts
+	// above, a retry count must be a positive integer (floored, per
+	// the entry's suggested fix) or the documented default 5.
 	newConfig.maxMsgRetryCount =
-		typeof newConfig.maxMsgRetryCount === 'number' && Number.isFinite(newConfig.maxMsgRetryCount)
-			? newConfig.maxMsgRetryCount
+		typeof newConfig.maxMsgRetryCount === 'number' &&
+		Number.isFinite(newConfig.maxMsgRetryCount) &&
+		newConfig.maxMsgRetryCount > 0
+			? Math.floor(newConfig.maxMsgRetryCount)
 			: (DEFAULT_CONNECTION_CONFIG.maxMsgRetryCount ?? 5)
 	if (
 		newConfig.qrTimeout !== undefined &&

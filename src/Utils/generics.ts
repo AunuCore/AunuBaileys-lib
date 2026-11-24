@@ -262,7 +262,34 @@ export function bindWaitForEvent<T extends keyof BaileysEventMap>(ev: BaileysEve
 	}
 }
 
-export const bindWaitForConnectionUpdate = (ev: BaileysEventEmitter) => bindWaitForEvent(ev, 'connection.update')
+export const bindWaitForConnectionUpdate = (ev: BaileysEventEmitter) => {
+	// AunuBaileys (2.6.0, HB-464): bindWaitForEvent only settles
+	// on a FUTURE connection.update, a matching check or its own
+	// timeout — a host calling waitForConnectionUpdate with no
+	// timeoutMs AFTER the socket already closed waited forever,
+	// because close is terminal per socket object and no future
+	// event can ever arrive. Remember the last update (one
+	// listener, attached when the binder is created — the same
+	// lifetime as the socket, which is created once per socket)
+	// and reject at once when the socket is already closed, with
+	// the same error the closeListener would have delivered.
+	// The generic bindWaitForEvent is untouched, so the other
+	// caller (waitForMsgMediaUpdate, which passes its own ~120 s
+	// timeout) keeps its old behaviour.
+	let lastUpdate: BaileysEventMap['connection.update'] | undefined
+	ev.on('connection.update', update => {
+		lastUpdate = update
+	})
+
+	const waitForEvent = bindWaitForEvent(ev, 'connection.update')
+	return async (check: (u: BaileysEventMap['connection.update']) => Promise<boolean | undefined>, timeoutMs?: number) => {
+		if (lastUpdate?.connection === 'close') {
+			throw lastUpdate.lastDisconnect?.error || new Boom('Connection Closed', { statusCode: DisconnectReason.connectionClosed })
+		}
+
+		return waitForEvent(check, timeoutMs)
+	}
+}
 
 /**
  * utility that fetches latest baileys version from the master branch.
@@ -502,7 +529,20 @@ const UNEXPECTED_SERVER_CODE_TEXT = 'Unexpected server response: '
 
 export const getCodeFromWSError = (error: Error) => {
 	let statusCode = 500
-	if (error?.message?.includes(UNEXPECTED_SERVER_CODE_TEXT)) {
+	// eslint-disable-next-line @typescript-eslint/no-explicit-any
+	// AunuBaileys (2.6.0, HB-133 addendum 2): a Boom's own status
+	// code is authoritative — the 1.0.77 fix preserved it, but the
+	// v7 rebase (2.0.0) re-applied only the case-insensitive
+	// message half, so Boom 428/403 fell through to 500 here and
+	// mapWebSocketError re-wrapped them as 500 (a plain disconnect
+	// then fed BanSentinel's burst window via noteDisconnect(500)).
+	if (
+		typeof (error as any)?.output?.statusCode === 'number' &&
+		!Number.isNaN((error as any).output.statusCode) &&
+		(error as any).output.statusCode >= 400
+	) {
+		statusCode = (error as any).output.statusCode
+	} else if (error?.message?.includes(UNEXPECTED_SERVER_CODE_TEXT)) {
 		const code = +error?.message.slice(UNEXPECTED_SERVER_CODE_TEXT.length)
 		if (!Number.isNaN(code) && code >= 400) {
 			statusCode = code

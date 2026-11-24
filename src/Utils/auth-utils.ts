@@ -43,7 +43,7 @@ export function makeCacheableSignalKeyStore(
 	store: SignalKeyStore,
 	logger?: ILogger,
 	_cache?: CacheStore
-): SignalKeyStore {
+): SignalKeyStore & { close(): void } {
 	const cache =
 		_cache ||
 		makeCacheStore<SignalDataTypeMap[keyof SignalDataTypeMap]>({
@@ -151,6 +151,17 @@ await cacheSet(getUniqueId(type, id), data[type as keyof SignalDataTypeMap]![id]
 		async clear() {
 			await cache.flushAll()
 			await store.clear?.()
+		},
+		// AunuBaileys (2.6.0, HB-346 addendum 1): the wrapper used
+		// to expose no close — its InternalCache runs a 60 s purge
+		// timer that clear() never touched, so one timer leaked per
+		// wrapper for the life of the process. close() stops the
+		// timer (entries are kept; get() still enforces expiry on
+		// read, so a closed wrapper stays correct, just without
+		// autopurge). The socket calls this from end() via the
+		// transaction wrapper below.
+		close() {
+			cache.close?.()
 		}
 	}
 }
@@ -166,7 +177,7 @@ export const addTransactionCapability = (
 	state: SignalKeyStore,
 	logger: ILogger,
 	{ maxCommitRetries, delayBetweenTriesMs }: Partial<TransactionCapabilityOptions> = {}
-): SignalKeyStoreWithTransaction & { disposeTransactionStorage: () => void } => {
+): SignalKeyStoreWithTransaction & { disposeTransactionStorage: () => void; close?: () => void } => {
 	// AunuBaileys (2.1.0, HB-104 addendum + HB-333, donor v6 1.0.89): sanitise the retry budget at the boundary — a NaN/0/negative maxCommitRetries (classically Number('') from env) made commitWithRetry run ZERO attempts and silently drop the transaction's mutations, and Infinity wedged the transaction mutex forever on a failing store. Retries clamp to 1..10; a non-finite or negative delay falls back to the default.
 	const commitRetries =
 		typeof maxCommitRetries === 'number' && Number.isFinite(maxCommitRetries)
@@ -636,6 +647,17 @@ export const addTransactionCapability = (
 
 			txStorageDisposed = true
 			txStorage.disable()
+		},
+
+		// AunuBaileys (2.6.0, HB-346 addendum 1): forward close to
+		// the wrapped store, so a cacheable wrapper's purge timer
+		// (see makeCacheableSignalKeyStore above) is reachable —
+		// and stopped on socket end — through this per-socket
+		// wrapper. A plain store has no close; the call is a no-op
+		// for it. Closing only stops the timer: entries are kept
+		// and get() still enforces expiry on read.
+		close: () => {
+			;(state as SignalKeyStore & { close?: () => void }).close?.()
 		},
 
 		transaction: async (work, key) => {

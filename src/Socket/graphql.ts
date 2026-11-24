@@ -49,7 +49,11 @@ const AUNU_GRAPHQL_IDS = {
 }
 const parseGraphQLResponse = (json, dataPath) => {
 	if (json.errors?.length) {
-		const msgs = json.errors.map(e => e.message || 'Unknown error').join(', ')
+		// AunuBaileys (2.6.0, HB-382 addendum): a null entry inside
+		// the errors array ({ errors: [null] }) used to throw a raw
+		// TypeError out of the .map — a server shape we never
+		// validated. Guard each entry like the mex.ts site (2.3.0).
+		const msgs = json.errors.map(e => e?.message || 'Unknown error').join(', ')
 		// AunuBaileys (HB-211 family, re-applied P3): sanitise the
 		// server-supplied code before Boom sees it (see mex.ts).
 		const rawCode = Number(json.errors[0]?.extensions?.error_code)

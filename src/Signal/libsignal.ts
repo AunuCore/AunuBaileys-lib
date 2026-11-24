@@ -2,9 +2,11 @@
 import * as libsignal from 'libsignal'
 // @ts-ignore
 import { PreKeyWhisperMessage } from 'libsignal/src/protobufs'
+import { Boom } from '@hapi/boom'
 import type { LIDMapping, SignalAuthState, SignalCreds, SignalKeyStoreWithTransaction } from '../Types'
 import type { SignalRepositoryWithLIDStore } from '../Types/Signal'
 import { BufferJSON, generateSignalPubKey } from '../Utils'
+import { Curve } from '../Utils/crypto'
 import type { ILogger } from '../Utils/logger'
 import {
 	isHostedLidUser,
@@ -572,6 +574,38 @@ export function makeLibSignalRepository(
 
 		async injectE2ESession({ jid, session }) {
 			logger.trace({ jid }, 'injecting E2EE session')
+			// AunuBaileys (2.6.0, HB-410): libsignal@6.0.0's
+			// SessionBuilder.initOutgoing calls
+			// curve.verifySignature with isInit=true, which only
+			// shape-checks the signed pre-key (33-byte pubkey,
+			// 64-byte signature) and NEVER runs Ed25519 verification
+			// — a bundle whose signed pre-key was signed by ANY
+			// OTHER identity key (or garbage) builds a session the
+			// peer then cannot use, and the poisoned session sits
+			// in the store. Verify here, BEFORE the transaction
+			// creates anything, mirroring the reference
+			// processPreKeyBundle behaviour (verify without isInit,
+			// reject on false). Curve.verify fail-closes (HB-361:
+			// malformed input returns false). This does NOT decide
+			// TOFU — isTrustedIdentity stays the host's decision;
+			// see the "PENDEKATAN UNTUK DITINJAU AUNU" section of
+			// the 2.6.0 Group C report.
+			const spk = session?.signedPreKey
+			if (
+				!session ||
+				!(session.identityKey instanceof Uint8Array) ||
+				!spk ||
+				typeof spk.keyId !== 'number' ||
+				!(spk.publicKey instanceof Uint8Array) ||
+				!(spk.signature instanceof Uint8Array) ||
+				!Curve.verify(session.identityKey, spk.publicKey, spk.signature)
+			) {
+				throw new Boom(
+					`Rejecting E2EE session for ${jid}: signed pre-key signature does not verify against the bundle identity key`,
+					{ statusCode: 400 }
+				)
+			}
+
 			const cipher = new libsignal.SessionBuilder(storage, jidToSignalProtocolAddress(jid))
 			return parsedKeys.transaction(
 				async () => {
@@ -670,6 +704,30 @@ export function makeLibSignalRepository(
 				// holds nothing is harmless).
 				if (resolved !== addr) {
 					sessionUpdates[resolved] = null
+				}
+
+				// AunuBaileys (2.6.0, HB-377 addendum): the reverse
+				// direction — a session stored under the PN key
+				// BEFORE the LID mapping was learned (USync learns
+				// it without migrating the record) survives a
+				// LID-addressed delete, because resolveWireAddr
+				// only maps PN→LID. Also null the PN wire key when
+				// a reverse mapping is known. getPNForLID reads
+				// only the cache + the lid-mapping store (no
+				// network), and a failed lookup keeps the old
+				// behaviour.
+				try {
+					if (isLidUser(jid) || isHostedLidUser(jid)) {
+						const pnJid = await lidMapping.getPNForLID(jid)
+						if (pnJid) {
+							const pnAddr = jidToSignalProtocolAddress(pnJid).toString()
+							if (pnAddr !== addr && pnAddr !== resolved) {
+								sessionUpdates[pnAddr] = null
+							}
+						}
+					}
+				} catch (err) {
+					logger.warn({ jid, err }, 'aunu: reverse LID→PN lookup failed in deleteSession; continuing with the forward keys')
 				}
 
 				// AunuBaileys (2.4.0, HB-94 addendum run-0646): one
@@ -967,7 +1025,14 @@ const jidToSignalProtocolAddress = (jid: string): libsignal.ProtocolAddress => {
 	const finalDevice = device || 0
 
 	if (device === 99 && decoded.server !== 'hosted' && decoded.server !== 'hosted.lid') {
-		throw new Error('Unexpected non-hosted device JID with device 99. This ID seems invalid. ID:' + jid)
+		// AunuBaileys (2.6.0, HB-424 residu): the 2.5.0 main fix
+		// filtered :99 in the devices-remove handler and the HB-440
+		// backstop isolated per-JID deletes, but this converter
+		// still threw a raw Error — unclassifiable for callers
+		// that branch on Boom status codes. Same message, Boom 400.
+		throw new Boom('Unexpected non-hosted device JID with device 99. This ID seems invalid. ID:' + jid, {
+			statusCode: 400
+		})
 	}
 
 	return new libsignal.ProtocolAddress(signalUser, finalDevice)

@@ -71,7 +71,7 @@ export type SafeHttpGetResult = {
  *   lookup / isBlocked    injection points (host hooks, tests)
  */
 export declare function safeHttpGet(input: string | URL, options?: SafeHttpGetOptions): Promise<SafeHttpGetResult>;
-/** Reads width/height from PNG, GIF, JPEG and WebP headers without decoding. null if unknown. */
+/** Reads width/height from PNG, GIF, JPEG, WebP, BMP, TIFF and AVIF/HEIC headers without decoding. null if unknown. */
 export declare const readImageDimensions: (buf: Buffer) => {
     width: number;
     height: number;

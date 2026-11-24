@@ -276,6 +276,15 @@ export type BufferedEventData = {
         [jid: string]: ChatUpdate;
     };
     chatDeletes: Set<string>;
+    chatDeleteDrops: {
+        [jid: string]: {
+            upserts: Set<string>;
+            updates: Set<string>;
+            reactions: Set<string>;
+            receipts: Set<string>;
+            history: Set<string>;
+        };
+    };
     contactUpserts: {
         [jid: string]: Contact;
     };

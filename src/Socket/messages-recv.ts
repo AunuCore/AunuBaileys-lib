@@ -60,6 +60,7 @@ import {
 	xmppPreKey,
 	xmppSignedPreKey
 } from '../Utils'
+import { getContentType } from '../Utils/messages'
 import { makeCacheStore } from '../Utils/internal-cache'
 import { makeMutex } from '../Utils/make-mutex'
 import { createOfflineNodeQueue } from '../Utils/offline-queue'
@@ -251,7 +252,11 @@ export const makeMessagesRecvSocket = (config: SocketConfig) => {
 	// messages this socket already decrypted successfully — a later
 	// failure carrying one of these ids is a redelivery of consumed
 	// content, not session damage. Bounded FIFO, same cap style as
-	// the strike map below.
+	// the strike map below. AunuBaileys (2.6.0, addendum ke-7):
+	// 1000 -> 10000 — eviction was the strike-count hole the
+	// getMessage/recent-message checks in emitDecryptFailure now
+	// cover; the wider window keeps ordinary redelivery inside the
+	// cheap in-memory check (~300 KB of short ids).
 	const decryptedMessageIds = new Set<string>()
 	// AunuBaileys (v6 parity): consecutive failures before the Bad MAC self-heal resets the session
 	const DECRYPT_FAIL_SESSION_RESET_LIMIT = 3
@@ -993,8 +998,20 @@ export const makeMessagesRecvSocket = (config: SocketConfig) => {
 		// callers at all. Extract the code from a <retry> child when
 		// the stanza carries one and wire it through (a stanza
 		// without one keeps the old behaviour exactly).
+		// AunuBaileys (2.6.0, HB-380 addendum): the stanza read above
+		// can never fire on this path — the only in-tree caller is
+		// handleMessage's CIPHERTEXT branch, which passes a raw
+		// <message> stanza, and a <retry> child only ever exists on
+		// a <receipt type="retry"> (the sendMessagesAgain site).
+		// retryErrorCode was therefore always undefined here and the
+		// immediate-recreate MAC branch below never fired for an
+		// inbound Bad MAC; the peer just re-encrypted under the old
+		// session, failed again, and only healed at strike 3. Fall
+		// back to the local failure class the caller threaded in
+		// (classifyDecryptFailureForRetry on the stub parameter,
+		// HB-453) — a real <retry> child still wins when present.
 		const retryErrorCode =
-			messageRetryManager?.parseRetryErrorCode(getBinaryNodeChild(node, 'retry')?.attrs?.error) ?? undefined
+			messageRetryManager?.parseRetryErrorCode(getBinaryNodeChild(node, 'retry')?.attrs?.error) ?? failureErrorCode
 
 		if (
 			enableAutoSessionRecreation &&
@@ -2529,22 +2546,42 @@ export const makeMessagesRecvSocket = (config: SocketConfig) => {
 			}
 
 			await messageMutex.mutex(async () => {
+				// AunuBaileys (2.6.0, HB-2026-1113-223 addendum
+				// ke-9): the early check above sits OUTSIDE this
+				// mutex, while the mark (ke-8) happens inside it
+				// after the upsert — a concurrent redelivery of
+				// the same stanza passed the early check while the
+				// first copy was still in here, then re-decrypted
+				// a consumed key and produced a CIPHERTEXT stub
+				// that overwrote the real upsert in the buffer.
+				// Re-check after acquiring: the first copy marks
+				// before releasing the mutex, so a marked id here
+				// is already delivered — ack and stop without
+				// touching the session. ke-8 is preserved: an
+				// UNmarked id (first copy failed before its
+				// upsert) still reprocesses, so the failure path
+				// keeps its visible stub.
+				if (encNode && msg.key.id && decryptedMessageIds.has(msg.key.id)) {
+					acked = true
+					await sendMessageAck(node)
+					return
+				}
+
 				await decrypt()
 
 				// AunuBaileys (2.4.0, HB-2026-1113-223 addendum
-				// ke-4): remember successfully decrypted ids so a
-				// later redelivery of the same stanza is not counted
-				// as a decrypt failure (see emitDecryptFailure), and
-				// clear the author's accumulated strikes — a success
-				// proves the session works, and the counts were never
-				// reset on success, so unrelated failure episodes
-				// accumulated across the whole process lifetime.
+				// ke-4): a success proves the session works — clear
+				// the author's accumulated strikes (the counts were
+				// never reset on success, so unrelated failure
+				// episodes accumulated across the whole process
+				// lifetime). The decryptedMessageIds add itself
+				// lives AFTER the upsert below (2.6.0, addendum
+				// ke-8): recording the id here, before the receipt
+				// and upsert, marked a message delivered that a
+				// receipt/upsert failure then dropped — and the
+				// redelivery was acked-and-dropped by the early
+				// check instead of being reprocessed.
 				if (msg.message && msg.key.id && author) {
-					decryptedMessageIds.add(msg.key.id)
-					while (decryptedMessageIds.size > 1000) {
-						decryptedMessageIds.delete(decryptedMessageIds.keys().next().value!)
-					}
-
 					try {
 						const addr = await canonicalSignalAddr(author)
 						decryptFailCounts.delete(addr)
@@ -2624,6 +2661,54 @@ export const makeMessagesRecvSocket = (config: SocketConfig) => {
 					// do not heal, do not report.
 					if (msg.key.id && decryptedMessageIds.has(msg.key.id)) {
 						return
+					}
+
+					// AunuBaileys (2.6.0, HB-2026-1113-223 addendum
+					// ke-7, strike-count facet): the id check above
+					// only covers the FIFO window — once the id
+					// evicts (or the socket restarts and the set is
+					// cold) a redelivery of an already-delivered
+					// message still failed with the same aggregate
+					// text and was strike-counted toward the session
+					// reset, even though the original delivery
+					// already proved the session healthy. Two more
+					// proofs of prior successful delivery, checked
+					// before any counting — both are populated ONLY
+					// by a successful decrypt, so a genuine Bad MAC
+					// on a never-delivered message cannot match
+					// either:
+					// (1) the retry manager's recent-message cache
+					//     (a successful decrypt stores the plaintext
+					//     here for retry receipts; a stub never
+					//     enters it — see the addRecentMessage gate);
+					// (2) the host store via getMessage — a stored
+					//     copy with a real content key proves prior
+					//     delivery. A stored CIPHERTEXT stub has no
+					//     content, so it cannot false-positive. A
+					//     getMessage failure is 'unknown', never
+					//     'delivered' — count as before.
+					if (msg.key.id && msg.key.remoteJid) {
+						if (messageRetryManager?.getRecentMessage(msg.key.remoteJid, msg.key.id)?.message) {
+							return
+						}
+
+						try {
+							const stored = await getMessage?.(msg.key)
+							// The typed contract returns message
+							// content, but the reference store
+							// returns the whole WAMessage — accept
+							// both shapes.
+							const storedContent =
+								getContentType(stored) ??
+								getContentType((stored as { message?: waproto.IMessage } | undefined)?.message)
+							if (storedContent) {
+								return
+							}
+						} catch {
+							// a store read failure says nothing
+							// about delivery — count the failure
+							// as before.
+						}
 					}
 
 					// AunuBaileys (2.3.0, HB-94 addendum): the strike
@@ -3009,6 +3094,23 @@ export const makeMessagesRecvSocket = (config: SocketConfig) => {
 				cleanMessage(msg, authState.creds.me?.id, authState.creds.me?.lid)
 
 				await upsertMessage(msg, node.attrs.offline ? 'append' : 'notify')
+
+				// AunuBaileys (2.6.0, HB-2026-1113-223 addendum
+				// ke-8): the id joins decryptedMessageIds only once
+				// the upsert has landed. A receipt/upsert failure
+				// before this point leaves the id unmarked, so the
+				// server's redelivery is processed again instead of
+				// being acked-and-dropped by the early check — the
+				// re-decrypt fails on the consumed message key, but
+				// the host then sees a visible MISSING_KEYS stub plus
+				// a retry receipt (and a resend from the retry
+				// cache), instead of the message vanishing silently.
+				if (msg.message && msg.key.id && author) {
+					decryptedMessageIds.add(msg.key.id)
+					while (decryptedMessageIds.size > 10_000) {
+						decryptedMessageIds.delete(decryptedMessageIds.keys().next().value!)
+					}
+				}
 			})
 		} catch (error) {
 			logger.error({ error, node: binaryNodeToString(node) }, 'error in handling message')
@@ -3296,9 +3398,17 @@ export const makeMessagesRecvSocket = (config: SocketConfig) => {
 		// Route it to handleMessage through the normal buffered
 		// path so it decrypts like any other message. Every other
 		// CB:status stanza keeps the newsletter path.
+		// AunuBaileys (2.6.0, HB-476): this route used to call
+		// processNodeWithBuffer directly, bypassing the ignore gates
+		// (shouldIgnoreJid + aunuIgnoreFilter) and the offline queue
+		// that only live in processNode — an ignored group's
+		// encrypted status was decrypted and upserted while the same
+		// stanza on CB:message was dropped. Route it through
+		// processNode like CB:message, with type 'message': for
+		// filtering purposes an encrypted status IS a message.
 		const from = node.attrs.from || ''
 		if ((from.endsWith('@g.us') || from.endsWith('@broadcast')) && getBinaryNodeChild(node, 'enc')) {
-			await processNodeWithBuffer(node, 'processing status message', handleMessage)
+			await processNode('message', node, 'processing status message', handleMessage)
 			return
 		}
 

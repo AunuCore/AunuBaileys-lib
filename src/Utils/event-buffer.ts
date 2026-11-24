@@ -125,6 +125,35 @@ export const makeEventBuffer = (logger: ILogger): BaileysBufferableEventEmitter 
 	let bufferGeneration = 0
 	const BUFFER_TIMEOUT_MS = 30000 // 30 seconds
 
+	// AunuBaileys (2.6.0, HB-359 addendum facet 3): the 30s watchdog
+	// used to call flush() outright. flush() releases ONE nesting
+	// level while the session is nested, so a watchdog firing mid-work
+	// STOLE a level that belonged to the outer owner — and because the
+	// watchdog was never re-armed, the session then lost its safety
+	// flush entirely. The watchdog must never consume a nesting level:
+	// while nested work is running it re-arms itself, and only flushes
+	// once the session has drained back to its outermost level.
+	const armBufferTimeout = () => {
+		if (bufferTimeout) {
+			clearTimeout(bufferTimeout)
+		}
+
+		bufferTimeout = setTimeout(() => {
+			if (!isBuffering) {
+				return
+			}
+
+			if (bufferCount > 1) {
+				logger.warn({ bufferCount }, 'Buffer timeout reached during nested work, re-arming watchdog')
+				armBufferTimeout()
+				return
+			}
+
+			logger.warn('Buffer timeout reached, auto-flushing')
+			flush()
+		}, BUFFER_TIMEOUT_MS)
+	}
+
 	// take the generic event and fire it as a baileys event
 	ev.on('event', (map: BaileysEventData) => {
 		for (const event in map) {
@@ -177,16 +206,7 @@ export const makeEventBuffer = (logger: ILogger): BaileysBufferableEventEmitter 
 				flushPendingTimeout = null
 			}
 
-			if (bufferTimeout) {
-				clearTimeout(bufferTimeout)
-			}
-
-			bufferTimeout = setTimeout(() => {
-				if (isBuffering) {
-					logger.warn('Buffer timeout reached, auto-flushing')
-					flush()
-				}
-			}, BUFFER_TIMEOUT_MS)
+			armBufferTimeout()
 		} else if (flushPendingTimeout) {
 			// AunuBaileys (2.3.0, HB-359 addendum): new work starting in
 			// the SAME session supersedes a debounced flush armed by
@@ -257,6 +277,19 @@ export const makeEventBuffer = (logger: ILogger): BaileysBufferableEventEmitter 
 				newData.chatUpdates[update.id!] = update
 				delete data.chatUpdates[update.id!]
 			}
+		}
+
+		// AunuBaileys (2.6.0, HB-404 addendum): drop the buffered
+		// messages of chats whose delete SURVIVED to the flush —
+		// see the chats.delete branch: dropping at append time was
+		// too eager, a delete cancelled mid-session had already lost
+		// its pre-delete messages. A delete cancelled by a later
+		// upsert/update is gone from data.chatDeletes by now, so its
+		// messages stay intact. Only the keys snapshotted when the
+		// delete was appended are dropped — a message that arrived
+		// after the delete is newer and survives (T4).
+		for (const chatId of data.chatDeletes) {
+			dropBufferedMessagesForChat(data, chatId)
 		}
 
 		const consolidatedData = consolidateEvents(data)
@@ -477,6 +510,7 @@ const makeBufferData = (): BufferedEventData => {
 		chatUpserts: {},
 		chatUpdates: {},
 		chatDeletes: new Set(),
+		chatDeleteDrops: {},
 		contactUpserts: {},
 		contactUpdates: {},
 		messageUpserts: {},
@@ -611,6 +645,7 @@ function append<E extends BufferableEvent>(
 
 				if (data.chatDeletes.has(id)) {
 					data.chatDeletes.delete(id)
+					delete data.chatDeleteDrops[id]
 				}
 			}
 
@@ -631,6 +666,19 @@ function append<E extends BufferableEvent>(
 						const chatUpdate = data.chatUpdates[chatId] || {}
 						data.chatUpdates[chatId] = concatChats(chatUpdate, update)
 					}
+
+					// AunuBaileys (2.6.0, HB-404 addendum): the
+					// pending delete is cancelled ONLY when the
+					// update is actually applied. The old code
+					// cancelled it unconditionally below — even an
+					// invalid update (condition false, discarded) or
+					// a pending one (condition undefined) killed a
+					// live delete, so the chat survived with no
+					// trace of the delete.
+					if (data.chatDeletes.has(chatId)) {
+						data.chatDeletes.delete(chatId)
+						delete data.chatDeleteDrops[chatId]
+					}
 				} else if (conditionMatches === undefined) {
 					// AunuBaileys (2.5.0, HB-412): a pending conditional
 					// used to REPLACE the stored update for this chat
@@ -643,12 +691,8 @@ function append<E extends BufferableEvent>(
 					data.chatUpdates[chatId] = concatChats(pendingUpdate, update)
 				}
 				// otherwise -- condition not met, update is invalid
-
-				// if the chat has been updated
-				// ignore any existing chat delete
-				if (data.chatDeletes.has(chatId)) {
-					data.chatDeletes.delete(chatId)
-				}
+				// (the pending delete above survives: only an applied
+				// update cancels it — 2.6.0, HB-404 addendum)
 			}
 
 			break
@@ -675,19 +719,28 @@ function append<E extends BufferableEvent>(
 				// BEFORE the delete in this session is pre-delete —
 				// consolidateEvents emits chats.delete BEFORE
 				// messages.upsert in fixed category order, so without
-				// this the flush delivered the delete first and the
+				// a drop the flush delivered the delete first and the
 				// older upsert after it, and the store's notify
 				// handler recreated the chat with a phantom unread
 				// (append type: the message itself survived
-				// loadMessage). Drop every buffered message event for
-				// this chat, the mirror of the keys-form
-				// messages.delete dropping its upsert above. Only
-				// events already buffered are dropped — a message
-				// arriving AFTER the delete in the same session is
-				// newer and must still recreate the chat, which the
-				// fixed emit order already delivers correctly
-				// (delete, then upsert).
-				dropBufferedMessagesForChat(chatId)
+				// loadMessage). The drop itself happens at FLUSH
+				// time, not here (2.6.0, HB-404 addendum): dropping
+				// at append time was too eager — a later upsert or
+				// update in the same session could cancel this
+				// delete, and the pre-delete messages were already
+				// gone (message lost, chat survives). Only events
+				// already buffered are dropped — a message arriving
+				// AFTER the delete in the same session is newer and
+				// must still recreate the chat, which the fixed emit
+				// order already delivers correctly (delete, then
+				// upsert). Snapshot the keys buffered for this chat
+				// NOW, so the flush drop can tell pre-delete from
+				// post-delete (2.6.0, HB-404 addendum, T4): a bare
+				// by-JID drop at flush would also eat the newer
+				// message. A second delete in the same session
+				// unions into the snapshot — it covers everything
+				// buffered before it, too.
+				snapshotChatDeleteDrops(data, chatId)
 			}
 
 			break
@@ -760,6 +813,24 @@ function append<E extends BufferableEvent>(
 					if (existing) {
 						logger.debug({ messageId: key }, 'absorbed message upsert in message set')
 					}
+				}
+
+				// AunuBaileys (2.6.0, HB-2026-1113-223 addendum
+				// ke-9): a content-less stub (failed re-decrypt of
+				// an already delivered message, e.g. a concurrent
+				// redelivery) must not overwrite a content-bearing
+				// upsert for the same key — append is
+				// last-writer-wins per key, so without this the
+				// stub replaced the real message and the flush only
+				// emitted the stub (the store's ke-7 guard never
+				// saw the original). A real message still replaces
+				// a stub, and a stub still replaces a stub; the
+				// delete-all cancellation above already ran, and a
+				// pending update for this key stays buffered and is
+				// emitted standalone at flush.
+				if (message.messageStubType !== undefined && !message.message && existing?.message) {
+					logger.debug({ messageId: key }, 'dropping content-less stub over a content-bearing upsert')
+					continue
 				}
 
 				if (existing) {
@@ -899,7 +970,13 @@ function append<E extends BufferableEvent>(
 				// whole — the merge only ran when no update was stored yet, so a
 				// subject change followed by a description change delivered only
 				// the subject. Merge into the stored update, like chats.update.
-				data.groupUpdates[id] = Object.assign(data.groupUpdates[id] || {}, update)
+				// AunuBaileys (2.6.0, HB-411 addendum 7): trim undefined
+				// from the merge source (copy first — trimUndefined
+				// mutates), like concatChats — a parameter-less stub
+				// emitting { subject: undefined } after a real change
+				// in the same window used to overwrite the real value
+				// with undefined in the flushed payload.
+				data.groupUpdates[id] = Object.assign(data.groupUpdates[id] || {}, trimUndefined({ ...update }))
 			}
 
 			break
@@ -909,7 +986,14 @@ function append<E extends BufferableEvent>(
 			const groupUpserts = eventData as BaileysEventMap['groups.upsert']
 			for (const group of groupUpserts) {
 				const id = group.id!
-				data.groupUpserts[id] = Object.assign(data.groupUpserts[id] || {}, group)
+				// AunuBaileys (2.6.0, HB-411 addendum 7): same trim
+				// as groups.update above — an undefined field in a
+				// later upsert must not erase a real value merged
+				// earlier in the window.
+				data.groupUpserts[id] = Object.assign(
+					data.groupUpserts[id] || {},
+					trimUndefined({ ...group }) as typeof group
+				)
 			}
 
 			break
@@ -925,38 +1009,6 @@ function append<E extends BufferableEvent>(
 			break
 		default:
 			throw new Error(`"${event}" cannot be buffered`)
-	}
-
-	function dropBufferedMessagesForChat(chatId: string) {
-		for (const keyStr of Object.keys(data.messageUpserts)) {
-			if (data.messageUpserts[keyStr]?.message.key.remoteJid === chatId) {
-				delete data.messageUpserts[keyStr]
-			}
-		}
-
-		for (const keyStr of Object.keys(data.messageUpdates)) {
-			if (data.messageUpdates[keyStr]?.key.remoteJid === chatId) {
-				delete data.messageUpdates[keyStr]
-			}
-		}
-
-		for (const keyStr of Object.keys(data.messageReactions)) {
-			if (data.messageReactions[keyStr]?.key.remoteJid === chatId) {
-				delete data.messageReactions[keyStr]
-			}
-		}
-
-		for (const keyStr of Object.keys(data.messageReceipts)) {
-			if (data.messageReceipts[keyStr]?.key.remoteJid === chatId) {
-				delete data.messageReceipts[keyStr]
-			}
-		}
-
-		for (const keyStr of Object.keys(data.historySets.messages)) {
-			if (data.historySets.messages[keyStr]?.key.remoteJid === chatId) {
-				delete data.historySets.messages[keyStr]
-			}
-		}
 	}
 
 	function absorbingChatUpdate(existing: Chat, fromHistorySet = false) {
@@ -981,7 +1033,19 @@ function append<E extends BufferableEvent>(
 				// snapshots: a message arriving after the read must
 				// still count, so this only applies to history chats.
 				if (fromHistorySet && typeof updateUnreadCount === 'number' && updateUnreadCount <= 0) {
-					existing.unreadCount = updateUnreadCount
+					// AunuBaileys (2.6.0, HB-393 addendum 2): the -1
+					// here is a SENTINEL (mark-unread), not a count.
+					// Assigning it literally left the history chat
+					// at unreadCount -1, so the next real +1 landed
+					// at 0 and the chat read as read (phantom read).
+					// Mirror the store's 2.3.0 normalisation: 0
+					// (mark-read) still assigns; -1 deletes the field
+					// (count unknown, recomputed from messages).
+					if (updateUnreadCount === -1) {
+						delete existing.unreadCount
+					} else {
+						existing.unreadCount = updateUnreadCount
+					}
 				}
 
 				delete data.chatUpdates[chatId]
@@ -1014,6 +1078,120 @@ function append<E extends BufferableEvent>(
 			if (chat.unreadCount === 0) {
 				delete chat.unreadCount
 			}
+		}
+	}
+}
+
+// AunuBaileys (2.6.0, HB-404 addendum): hoisted out of append()
+// (where it closed over append's `data`) so flush() can call it
+// too — the drop now happens at flush time, only for deletes that
+// survived to the flush.
+function dropBufferedMessagesForChat(data: BufferedEventData, chatId: string) {
+	const snapshot = data.chatDeleteDrops[chatId]
+	if (!snapshot) {
+		// Defensive: every delete append snapshots, so this should not
+		// happen — fall back to the old by-JID drop rather than
+		// leaving pre-delete messages to resurrect the chat.
+		for (const keyStr of Object.keys(data.messageUpserts)) {
+			if (data.messageUpserts[keyStr]?.message.key.remoteJid === chatId) {
+				delete data.messageUpserts[keyStr]
+			}
+		}
+
+		for (const keyStr of Object.keys(data.messageUpdates)) {
+			if (data.messageUpdates[keyStr]?.key.remoteJid === chatId) {
+				delete data.messageUpdates[keyStr]
+			}
+		}
+
+		for (const keyStr of Object.keys(data.messageReactions)) {
+			if (data.messageReactions[keyStr]?.key.remoteJid === chatId) {
+				delete data.messageReactions[keyStr]
+			}
+		}
+
+		for (const keyStr of Object.keys(data.messageReceipts)) {
+			if (data.messageReceipts[keyStr]?.key.remoteJid === chatId) {
+				delete data.messageReceipts[keyStr]
+			}
+		}
+
+		for (const keyStr of Object.keys(data.historySets.messages)) {
+			if (data.historySets.messages[keyStr]?.key.remoteJid === chatId) {
+				delete data.historySets.messages[keyStr]
+			}
+		}
+
+		return
+	}
+
+	// Only the keys snapshotted at delete-append time go: a message
+	// that arrived after the delete is newer and must survive.
+	for (const keyStr of snapshot.upserts) {
+		delete data.messageUpserts[keyStr]
+	}
+
+	for (const keyStr of snapshot.updates) {
+		delete data.messageUpdates[keyStr]
+	}
+
+	for (const keyStr of snapshot.reactions) {
+		delete data.messageReactions[keyStr]
+	}
+
+	for (const keyStr of snapshot.receipts) {
+		delete data.messageReceipts[keyStr]
+	}
+
+	for (const keyStr of snapshot.history) {
+		delete data.historySets.messages[keyStr]
+	}
+}
+
+// Record the message keys currently buffered for a chat, so the flush
+// drop can tell pre-delete from post-delete (2.6.0, HB-404 addendum,
+// T4). Unions into an existing snapshot — a second delete in the same
+// session covers everything buffered before it, too.
+function snapshotChatDeleteDrops(data: BufferedEventData, chatId: string) {
+	let snapshot = data.chatDeleteDrops[chatId]
+	if (!snapshot) {
+		snapshot = {
+			upserts: new Set(),
+			updates: new Set(),
+			reactions: new Set(),
+			receipts: new Set(),
+			history: new Set()
+		}
+		data.chatDeleteDrops[chatId] = snapshot
+	}
+
+	for (const keyStr of Object.keys(data.messageUpserts)) {
+		if (data.messageUpserts[keyStr]?.message.key.remoteJid === chatId) {
+			snapshot.upserts.add(keyStr)
+		}
+	}
+
+	for (const keyStr of Object.keys(data.messageUpdates)) {
+		if (data.messageUpdates[keyStr]?.key.remoteJid === chatId) {
+			snapshot.updates.add(keyStr)
+		}
+	}
+
+	for (const keyStr of Object.keys(data.messageReactions)) {
+		if (data.messageReactions[keyStr]?.key.remoteJid === chatId) {
+			snapshot.reactions.add(keyStr)
+		}
+	}
+
+	for (const keyStr of Object.keys(data.messageReceipts)) {
+		if (data.messageReceipts[keyStr]?.key.remoteJid === chatId) {
+			snapshot.receipts.add(keyStr)
+		}
+	}
+
+	for (const keyStr of Object.keys(data.historySets.messages)) {
+		if (data.historySets.messages[keyStr]?.key.remoteJid === chatId) {
+			snapshot.history.add(keyStr)
 		}
 	}
 }

@@ -207,6 +207,19 @@ export type BufferedEventData = {
 	chatUpserts: { [jid: string]: Chat }
 	chatUpdates: { [jid: string]: ChatUpdate }
 	chatDeletes: Set<string>
+	// AunuBaileys (2.6.0, HB-404 addendum, T4): the message keys
+	// buffered for a chat at the moment its delete was appended — only
+	// THOSE are dropped at flush. A message arriving after the delete
+	// is newer and must survive (it recreates the chat).
+	chatDeleteDrops: {
+		[jid: string]: {
+			upserts: Set<string>
+			updates: Set<string>
+			reactions: Set<string>
+			receipts: Set<string>
+			history: Set<string>
+		}
+	}
 	contactUpserts: { [jid: string]: Contact }
 	contactUpdates: { [jid: string]: Partial<Contact> }
 	messageUpserts: { [key: string]: { type: MessageUpsertType; message: WAMessage } }

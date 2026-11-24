@@ -122,7 +122,12 @@ export const toProductNode = (productId: string | undefined, product: ProductCre
 			tag: 'media',
 			attrs: {},
 			content: product.images.map(img => {
-				if (!('url' in img)) {
+				// AunuBaileys (2.6.0, HB-208 addendum situs ke-3):
+				// the `'url' in img` check below threw a raw
+				// TypeError for a plain-string/null/undefined image
+				// before the intended Boom 400 could run. Validate
+				// the shape first.
+				if (!img || typeof img !== 'object' || !('url' in img)) {
 					throw new Boom('Expected img for product to already be uploaded', { statusCode: 400 })
 				}
 
@@ -250,6 +255,16 @@ export const uploadingNecessaryImages = async (
 ) => {
 	const results = await Promise.all(
 		images.map<Promise<{ url: string }>>(async img => {
+			// AunuBaileys (2.6.0, HB-208 addendum situs ke-3): a
+			// plain-string/null/undefined image threw a raw TypeError
+			// on the `'url' in img` check below, before getStream's
+			// own Boom 400 could run. Reject the shape here, with
+			// the same Boom 400; Buffers, streams and {url} objects
+			// all pass through unchanged.
+			if (!img || typeof img !== 'object') {
+				throw new Boom('Invalid product image: expected an uploaded media object or a media source', { statusCode: 400 })
+			}
+
 			if ('url' in img) {
 				const url = img.url.toString()
 				if (url.includes('.whatsapp.net')) {
@@ -336,6 +351,16 @@ export const uploadingNecessaryImages = async (
 					fileEncSha256B64: sha,
 					timeoutMs
 				})
+
+				// AunuBaileys (2.6.0, HB-427 addendum facet 2): an
+				// upload host that answers url-only (no directPath)
+				// used to reach getUrlFromDirectPath(undefined) and
+				// throw a raw TypeError. Fail with a Boom 400 at the
+				// choke point instead — the product image cannot be
+				// addressed without a path.
+				if (!directPath) {
+					throw new Boom('Media upload host returned no directPath', { statusCode: 400 })
+				}
 
 				return { url: getUrlFromDirectPath(directPath) }
 			} finally {

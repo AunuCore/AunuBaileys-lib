@@ -6,7 +6,9 @@ import type { ILogger } from './logger.js';
  * @param logger to log trace events
  * @param _cache cache store to use
  */
-export declare function makeCacheableSignalKeyStore(store: SignalKeyStore, logger?: ILogger, _cache?: CacheStore): SignalKeyStore;
+export declare function makeCacheableSignalKeyStore(store: SignalKeyStore, logger?: ILogger, _cache?: CacheStore): SignalKeyStore & {
+    close(): void;
+};
 /**
  * Adds DB-like transaction capability to the SignalKeyStore
  * Uses AsyncLocalStorage for automatic context management
@@ -16,6 +18,7 @@ export declare function makeCacheableSignalKeyStore(store: SignalKeyStore, logge
  */
 export declare const addTransactionCapability: (state: SignalKeyStore, logger: ILogger, { maxCommitRetries, delayBetweenTriesMs }?: Partial<TransactionCapabilityOptions>) => SignalKeyStoreWithTransaction & {
     disposeTransactionStorage: () => void;
+    close?: () => void;
 };
 /**
  * Returns the authenticated user's JID, or throws a Boom-401 if creds are not yet authenticated.

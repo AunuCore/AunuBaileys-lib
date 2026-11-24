@@ -145,7 +145,7 @@ export declare const makeNewsletterSocket: (config: SocketConfig) => {
     updateServerTimeOffset: ({ attrs }: import("../index.js").BinaryNode) => void;
     sendUnifiedSession: () => Promise<void>;
     wamBuffer: import("../index.js").BinaryInfo;
-    waitForConnectionUpdate: (check: (u: Partial<import("../index.js").ConnectionState>) => Promise<boolean | undefined>, timeoutMs?: number) => Promise<void>;
+    waitForConnectionUpdate: (check: (u: import("../index.js").BaileysEventMap["connection.update"]) => Promise<boolean | undefined>, timeoutMs?: number) => Promise<void>;
     sendWAMBuffer: (wamBuffer: Buffer) => Promise<any>;
     executeUSyncQuery: (usyncQuery: import("../index.js").USyncQuery) => Promise<import("../index.js").USyncQueryResult | undefined>;
     onWhatsApp: (...phoneNumber: string[]) => Promise<{
@@ -172,6 +172,7 @@ export declare const makeNewsletterSocket: (config: SocketConfig) => {
             transaction<T>(exec: () => Promise<T>, key: string): Promise<T>;
         } & {
             disposeTransactionStorage: () => void;
+            close?: () => void;
         };
     };
     aunuLid: import("../index.js").LIDStore;

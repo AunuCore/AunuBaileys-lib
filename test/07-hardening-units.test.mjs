@@ -91,9 +91,15 @@ test('HB-168: GroupSessionBuilder refuses junk SKDMs, stores valid ones', async 
 		getChainKey: () => new Uint8Array(0), getSignatureKey: () => new Uint8Array(0)
 	})
 	assert.equal(stored.isEmpty(), true)
+	// AunuBaileys (2.6.0, HB-168 addendum): the "valid" signing key
+	// must start with the 0x05 version byte — libsignal's
+	// scrubPubKeyFormat throws 'Invalid public key' for any other
+	// 33-byte first byte, so an all-0x02 key is junk now, not valid.
+	const validSigningKey = new Uint8Array(33).fill(2)
+	validSigningKey[0] = 5
 	await builder.process(name, {
 		getId: () => 7, getIteration: () => 0,
-		getChainKey: () => new Uint8Array(32).fill(1), getSignatureKey: () => new Uint8Array(33).fill(2)
+		getChainKey: () => new Uint8Array(32).fill(1), getSignatureKey: () => validSigningKey
 	})
 	assert.equal(stored.isEmpty(), false)
 	assert.equal(stored.getSenderKeyState()?.getKeyId(), 7)

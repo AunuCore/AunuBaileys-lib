@@ -42,7 +42,7 @@ export declare const makeSocket: (config: SocketConfig) => {
     sendUnifiedSession: () => Promise<void>;
     wamBuffer: BinaryInfo;
     /** Waits for the connection to WA to reach a state */
-    waitForConnectionUpdate: (check: (u: Partial<import("../Types/index.js").ConnectionState>) => Promise<boolean | undefined>, timeoutMs?: number) => Promise<void>;
+    waitForConnectionUpdate: (check: (u: import("../Types/index.js").BaileysEventMap["connection.update"]) => Promise<boolean | undefined>, timeoutMs?: number) => Promise<void>;
     sendWAMBuffer: (wamBuffer: Buffer) => Promise<any>;
     executeUSyncQuery: (usyncQuery: USyncQuery) => Promise<import("../index.js").USyncQueryResult | undefined>;
     onWhatsApp: (...phoneNumber: string[]) => Promise<{
@@ -69,6 +69,7 @@ export declare const makeSocket: (config: SocketConfig) => {
             transaction<T>(exec: () => Promise<T>, key: string): Promise<T>;
         } & {
             disposeTransactionStorage: () => void;
+            close?: () => void;
         };
     };
     aunuLid: import("../index.js").LIDStore;

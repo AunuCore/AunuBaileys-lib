@@ -328,6 +328,19 @@ export const makeNoiseHandler = ({
 			}
 
 			const dataLen = data.byteLength
+			// AunuBaileys (2.6.0, HB-463): the 24-bit length field
+			// used to be written with masking, so a payload above
+			// 16 MiB was silently truncated in the header (dataLen
+			// mod 2^24) while the whole payload followed — the peer
+			// then reads a short frame and parses the leftover
+			// payload bytes as the next frame header: stream
+			// desync, with no error at the send site. Refuse
+			// oversize frames here, like the decode side refuses
+			// them (HB-91).
+			if (dataLen > 0xffffff) {
+				throw new Boom(`noise frame too large: ${dataLen} bytes`, { statusCode: 400 })
+			}
+
 			const introSize = sentIntro ? 0 : introHeader.length
 			const frame = Buffer.allocUnsafe(introSize + 3 + dataLen)
 

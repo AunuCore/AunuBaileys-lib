@@ -135,17 +135,36 @@ export const getUrlInfo = async (
 				// pipeline. The `&& image` guard also closes HB-150: a
 				// page without an og:image used to explode here with a
 				// raw TypeError and lose the whole preview.
-				const thumb = await fetchThumbnailBuffer(image, opts.fetchOpts)
-				const { imageMessage } = await prepareWAMessageMedia(
-					{ image: thumb },
-					{
-						upload: opts.uploadImage,
-						mediaTypeOverride: 'thumbnail-link',
-						options: opts.fetchOpts
+				// AunuBaileys (2.6.0, HB-426): this branch used to
+				// run with NO error isolation — one og:image that
+				// failed to fetch (404, oversize, pixel bomb, SSRF
+				// block) threw out of getUrlInfo and killed the
+				// whole preview, title and description included,
+				// while the low-quality branch below catches its own
+				// failures and keeps the preview. Isolate it the
+				// same way: on failure fall back to the compressed
+				// thumbnail, and if that fails too keep the preview
+				// without any thumbnail.
+				try {
+					const thumb = await fetchThumbnailBuffer(image, opts.fetchOpts)
+					const { imageMessage } = await prepareWAMessageMedia(
+						{ image: thumb },
+						{
+							upload: opts.uploadImage,
+							mediaTypeOverride: 'thumbnail-link',
+							options: opts.fetchOpts
+						}
+					)
+					urlInfo.jpegThumbnail = imageMessage?.jpegThumbnail ? Buffer.from(imageMessage.jpegThumbnail) : undefined
+					urlInfo.highQualityThumbnail = imageMessage || undefined
+				} catch (error: any) {
+					opts.logger?.debug({ err: error?.stack || error, url: previewLink }, 'error in generating high-quality thumbnail')
+					try {
+						urlInfo.jpegThumbnail = (await getCompressedJpegThumbnail(image, opts)).buffer
+					} catch (error: any) {
+						opts.logger?.debug({ err: error.stack, url: previewLink }, 'error in generating thumbnail')
 					}
-				)
-				urlInfo.jpegThumbnail = imageMessage?.jpegThumbnail ? Buffer.from(imageMessage.jpegThumbnail) : undefined
-				urlInfo.highQualityThumbnail = imageMessage || undefined
+				}
 			} else {
 				try {
 					urlInfo.jpegThumbnail = image ? (await getCompressedJpegThumbnail(image, opts)).buffer : undefined

@@ -384,6 +384,22 @@ export const makeCommunitiesSocket = (config: SocketConfig) => {
 						statusCode: 400
 					})
 				}
+
+				// AunuBaileys (2.6.0, HB-2026-1112-22 addendum 4): a
+				// key without remoteJid used to sail through as
+				// `admin: undefined` and the encoder silently dropped
+				// the attr, so the <accept> IQ went out without the
+				// admin the server needs to attribute the accept.
+				// A bare string key is normalised to { remoteJid }
+				// above, so a missing remoteJid here means the caller
+				// passed a key object without one — reject it like
+				// the missing-field guard above.
+				if (!key.remoteJid) {
+					throw new Boom('communityAcceptInviteV4: invite key is missing remoteJid (admin)', {
+						statusCode: 400
+					})
+				}
+
 				const results = await communityQuery(groupJid, 'set', [
 					{
 						tag: 'accept',
