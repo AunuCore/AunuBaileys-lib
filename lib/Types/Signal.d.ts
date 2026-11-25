@@ -44,6 +44,20 @@ type E2ESessionOpts = {
     jid: string;
     session: E2ESession;
 };
+/**
+ * Options for the syncSignalSession socket method (2.7.0, Zapo D3).
+ * With neither option set the method is a plain session assertion
+ * (fetch only when no open session exists). `force` drops the stored
+ * session first, then fetches a fresh pre-key bundle. `reasonIdentity`
+ * additionally drops the stored identity key, so the fresh bundle is
+ * trusted as a NEW identity (the storage layer's TOFU saveIdentity
+ * path) and the bundle fetch goes out with reason="identity" — the
+ * rebuild to use after a peer identity change.
+ */
+export type SyncSignalSessionOptions = {
+    force?: boolean;
+    reasonIdentity?: boolean;
+};
 export type SignalRepository = {
     decryptGroupMessage(opts: DecryptGroupSignalOpts): Promise<Uint8Array>;
     processSenderKeyDistributionMessage(opts: ProcessSenderKeyDistributionMessageOpts): Promise<void>;

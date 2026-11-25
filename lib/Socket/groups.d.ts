@@ -24,6 +24,23 @@ export declare const makeGroupsSocket: (config: SocketConfig) => {
     groupRevokeInvite: (jid: string) => Promise<string | undefined>;
     groupAcceptInvite: (code: string) => Promise<string | undefined>;
     /**
+     * AunuBaileys (2.7.0, Zapo D2): structured variant of
+     * groupAcceptInvite. A group that requires admin approval
+     * answers the invite IQ with a <membership_approval_request>
+     * node instead of a <group> node — groupAcceptInvite returns
+     * undefined for that case, indistinguishable from a malformed
+     * response. This variant reports the outcome explicitly:
+     * { status: 'joined', jid } when the <group> node is present,
+     * { status: 'pending', jid } when the server registered a
+     * membership approval request (jid may be undefined if the
+     * node carries none). groupAcceptInvite is unchanged and
+     * keeps returning string | undefined for existing callers.
+     */
+    groupAcceptInviteWithStatus: (code: string) => Promise<{
+        status: "joined" | "pending";
+        jid: string | undefined;
+    }>;
+    /**
      * revoke a v4 invite for someone
      * @param groupJid group jid
      * @param invitedJid jid of person you invited

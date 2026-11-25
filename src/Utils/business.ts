@@ -17,7 +17,7 @@ import type {
 } from '../Types'
 import { type BinaryNode, getBinaryNodeChild, getBinaryNodeChildren, getBinaryNodeChildString } from '../WABinary'
 import { generateMessageIDV2 } from './generics'
-import { getStream, getUrlFromDirectPath, sanitizeMediaTimeoutMs } from './messages-media'
+import { asMediaBufferChunk, getStream, getUrlFromDirectPath, sanitizeMediaTimeoutMs } from './messages-media'
 
 export const parseCatalogNode = (node: BinaryNode) => {
 	const catalogNode = getBinaryNodeChild(node, 'product_catalog')
@@ -51,6 +51,15 @@ export const parseCollectionsNode = (node: BinaryNode) => {
 }
 
 export const parseOrderDetailsNode = (node: BinaryNode) => {
+	// AunuBaileys (2.7.0, HB-435 facet 1): getOrderDetails passes
+	// the query() result straight here — on an IQ timeout that
+	// result is undefined, and the parser used to fabricate
+	// { price: { total: NaN, currency: undefined }, products: [] }
+	// out of the missing node instead of failing.
+	if (!node) {
+		throw new Boom('Order details request timed out or returned no response', { statusCode: 408 })
+	}
+
 	const orderNode = getBinaryNodeChild(node, 'order')
 	const products = getBinaryNodeChildren(orderNode, 'product').map<OrderProduct>(productNode => {
 		const imageNode = getBinaryNodeChild(productNode, 'image')!
@@ -77,11 +86,21 @@ export const parseOrderDetailsNode = (node: BinaryNode) => {
 	return orderDetails
 }
 
+// AunuBaileys (2.7.0, HB-208 toProductNode facet): the string
+// fields below were guarded only with typeof !== 'undefined', so
+// a number/object value reached Buffer.from(...) and threw a raw
+// TypeError with no statusCode. Each field now rejects
+// non-strings with Boom 400. price is deliberately excluded —
+// its .toString() legitimately accepts numbers.
 export const toProductNode = (productId: string | undefined, product: ProductCreate | ProductUpdate) => {
 	const attrs: BinaryNode['attrs'] = {}
 	const content: BinaryNode[] = []
 
 	if (typeof productId !== 'undefined') {
+		if (typeof productId !== 'string') {
+			throw new Boom('Invalid product: id must be a string', { statusCode: 400 })
+		}
+
 		content.push({
 			tag: 'id',
 			attrs: {},
@@ -90,6 +109,10 @@ export const toProductNode = (productId: string | undefined, product: ProductCre
 	}
 
 	if (typeof product.name !== 'undefined') {
+		if (typeof product.name !== 'string') {
+			throw new Boom('Invalid product: name must be a string', { statusCode: 400 })
+		}
+
 		content.push({
 			tag: 'name',
 			attrs: {},
@@ -98,6 +121,10 @@ export const toProductNode = (productId: string | undefined, product: ProductCre
 	}
 
 	if (typeof product.description !== 'undefined') {
+		if (typeof product.description !== 'string') {
+			throw new Boom('Invalid product: description must be a string', { statusCode: 400 })
+		}
+
 		content.push({
 			tag: 'description',
 			attrs: {},
@@ -106,6 +133,10 @@ export const toProductNode = (productId: string | undefined, product: ProductCre
 	}
 
 	if (typeof product.retailerId !== 'undefined') {
+		if (typeof product.retailerId !== 'string') {
+			throw new Boom('Invalid product: retailerId must be a string', { statusCode: 400 })
+		}
+
 		content.push({
 			tag: 'retailer_id',
 			attrs: {},
@@ -128,6 +159,14 @@ export const toProductNode = (productId: string | undefined, product: ProductCre
 				// before the intended Boom 400 could run. Validate
 				// the shape first.
 				if (!img || typeof img !== 'object' || !('url' in img)) {
+					throw new Boom('Expected img for product to already be uploaded', { statusCode: 400 })
+				}
+
+				// AunuBaileys (2.7.0, HB-208 site-3 facet 2): a
+				// present-but-null/undefined url passed the
+				// container guard above and then threw a raw
+				// TypeError on img.url.toString() below.
+				if ((img as { url?: unknown }).url == null) {
 					throw new Boom('Expected img for product to already be uploaded', { statusCode: 400 })
 				}
 
@@ -155,6 +194,10 @@ export const toProductNode = (productId: string | undefined, product: ProductCre
 	}
 
 	if (typeof product.currency !== 'undefined') {
+		if (typeof product.currency !== 'string') {
+			throw new Boom('Invalid product: currency must be a string', { statusCode: 400 })
+		}
+
 		content.push({
 			tag: 'currency',
 			attrs: {},
@@ -166,6 +209,10 @@ export const toProductNode = (productId: string | undefined, product: ProductCre
 		if (typeof product.originCountryCode === 'undefined') {
 			attrs['compliance_category'] = 'COUNTRY_ORIGIN_EXEMPT'
 		} else {
+			if (typeof product.originCountryCode !== 'string') {
+				throw new Boom('Invalid product: originCountryCode must be a string', { statusCode: 400 })
+			}
+
 			content.push({
 				tag: 'compliance_info',
 				attrs: {},
@@ -266,8 +313,30 @@ export const uploadingNecessaryImages = async (
 			}
 
 			if ('url' in img) {
+				// AunuBaileys (2.7.0, HB-208 site-3 facet 2): a
+				// present-but-null/undefined url passed the
+				// container guard above and then threw a raw
+				// TypeError on toString().
+				if ((img as { url?: unknown }).url == null) {
+					throw new Boom('Expected img for product to already be uploaded', { statusCode: 400 })
+				}
+
 				const url = img.url.toString()
-				if (url.includes('.whatsapp.net')) {
+				// AunuBaileys (2.7.0, HB-488): the "already
+				// uploaded" check used to substring-match
+				// '.whatsapp.net' over the WHOLE url — a URL
+				// carrying that substring in its path or query
+				// was returned verbatim as a product image
+				// without ever being uploaded. Match the
+				// hostname against the WA media hosts instead.
+				let hostname: string | undefined
+				try {
+					hostname = new URL(url).hostname
+				} catch {
+					hostname = undefined
+				}
+
+				if (hostname && (hostname === 'whatsapp.net' || hostname.endsWith('.whatsapp.net'))) {
 					return { url }
 				}
 			}
@@ -321,7 +390,16 @@ export const uploadingNecessaryImages = async (
 			// a finally.
 			try {
 				let bytes = 0
-				for await (const block of stream) {
+				for await (const rawBlock of stream) {
+					// AunuBaileys (2.7.0, HB-208 site-5): this
+					// loop used the chunk as-is — string chunks
+					// were counted per CHARACTER, not per byte
+					// (10M '€' chars = 30 MB on disk counted as
+					// 10M, evading the 16 MiB cap), and a
+					// non-Buffer chunk threw a raw TypeError
+					// from hasher.update. Normalise exactly
+					// like the site-4 media fix.
+					const block = asMediaBufferChunk(rawBlock)
 					bytes += block.length
 					if (bytes > MAX_PRODUCT_IMAGE_BYTES) {
 						throw new Boom(`product image exceeds the ${MAX_PRODUCT_IMAGE_BYTES} byte limit`, {

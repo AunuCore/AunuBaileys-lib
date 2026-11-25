@@ -50,6 +50,7 @@ import {
 	sanitizeMediaTimeoutMs,
 	toBufferWithLimit
 } from './messages-media'
+import { SimpleQueue } from './simple-queue'
 import { shouldIncludeReportingToken } from './reporting-utils'
 import { prepareRichResponseMessage } from './rich-message-utils'
 import { isAunuViewOnceContent, wrapAunuViewOnce } from './aunu-view-once'
@@ -530,6 +531,152 @@ function isAnimatedWebP(buffer: Buffer) {
 	return false
 }
 
+// AunuBaileys (2.7.0, D-1081-A): sound-sticker EXIF injection. The
+// tree's other WebP paths only PRESERVE an existing EXIF (the sticker
+// pack path above); nothing could WRITE one. A sound sticker's WebP
+// must carry "sound-sha256" (the SHA-256 of its audio, hex) in its
+// EXIF — the receiving client pairs sticker and sound by that hash.
+// The payload is the WhatsApp sticker EXIF shape: a little-endian
+// TIFF header with a single IFD entry (tag 0x5741, type undefined)
+// whose value is a JSON document, stored in the WebP 'EXIF' chunk.
+const SOUND_STICKER_MAX_STICKER_BYTES = 5 * 1024 * 1024
+const SOUND_STICKER_MAX_AUDIO_BYTES = 16 * 1024 * 1024
+
+const buildSoundSha256Exif = (soundSha256Hex: string): Buffer => {
+	const payload = Buffer.from(JSON.stringify({ 'sound-sha256': soundSha256Hex }), 'utf-8')
+	const exif = Buffer.alloc(26 + payload.length)
+	exif.write('II', 0, 'ascii')
+	exif.writeUInt16LE(0x2a, 2)
+	exif.writeUInt32LE(8, 4) // IFD0 offset
+	exif.writeUInt16LE(1, 8) // one IFD entry
+	exif.writeUInt16LE(0x5741, 10) // tag 'AW'
+	exif.writeUInt16LE(7, 12) // type: undefined (byte blob)
+	exif.writeUInt32LE(payload.length, 14)
+	exif.writeUInt32LE(26, 18) // value offset (right after the IFD)
+	exif.writeUInt32LE(0, 22) // no next IFD
+	payload.copy(exif, 26)
+	return exif
+}
+
+// Canvas size of a WebP whose first chunk is 'VP8 ' (lossy) or 'VP8L'
+// (lossless) — needed to synthesise a VP8X header when the file has
+// none (an EXIF chunk is only valid in the extended container).
+const webpCanvasSize = (webp: Buffer): { width: number; height: number } | undefined => {
+	if (webp.length < 25) {
+		return undefined
+	}
+
+	const fourCC = webp.toString('ascii', 12, 16)
+	const data = 20
+	if (fourCC === 'VP8L') {
+		// signature byte, then width-1 and height-1 as 14-bit LE fields
+		if (webp[data] !== 0x2f) {
+			return undefined
+		}
+
+		const bits =
+			webp[data + 1]! | (webp[data + 2]! << 8) | (webp[data + 3]! << 16) | (webp[data + 4]! << 24)
+		return { width: (bits & 0x3fff) + 1, height: ((bits >>> 14) & 0x3fff) + 1 }
+	}
+
+	if (fourCC === 'VP8 ') {
+		// 3-byte frame tag, 3-byte start code, then 14-bit width/height
+		if (webp.length < data + 10 || webp[data + 3] !== 0x9d || webp[data + 4] !== 0x01 || webp[data + 5] !== 0x2a) {
+			return undefined
+		}
+
+		return {
+			width: webp.readUInt16LE(data + 6) & 0x3fff,
+			height: webp.readUInt16LE(data + 8) & 0x3fff
+		}
+	}
+
+	return undefined
+}
+
+/**
+ * Write the "sound-sha256" EXIF into a WebP sticker (2.7.0, D-1081-A).
+ * Replaces any existing EXIF chunk, sets the VP8X EXIF flag (a VP8X
+ * header is synthesised for plain VP8/VP8L files), and rebuilds the
+ * RIFF size. Throws Boom 400 for a non-WebP input or a WebP whose
+ * canvas size cannot be determined when a VP8X header is needed.
+ */
+export const addSoundSha256ToStickerWebP = (webp: Buffer, soundSha256Hex: string): Buffer => {
+	if (!isWebPBuffer(webp)) {
+		throw new Boom('sound sticker EXIF can only be written into a WebP image', { statusCode: 400 })
+	}
+
+	if (!/^[0-9a-f]{64}$/i.test(soundSha256Hex)) {
+		throw new Boom('sound-sha256 must be a hex SHA-256 digest', { statusCode: 400 })
+	}
+
+	const exif = buildSoundSha256Exif(soundSha256Hex.toLowerCase())
+	const chunks: { fourCC: string; data: Buffer }[] = []
+	let offset = 12
+	while (offset + 8 <= webp.length) {
+		const fourCC = webp.toString('ascii', offset, offset + 4)
+		const size = webp.readUInt32LE(offset + 4)
+		if (offset + 8 + size > webp.length) {
+			throw new Boom('malformed WebP: chunk overruns the file', { statusCode: 400 })
+		}
+
+		chunks.push({ fourCC, data: Buffer.from(webp.subarray(offset + 8, offset + 8 + size)) })
+		offset += 8 + size + (size % 2)
+	}
+
+	const kept = chunks.filter(chunk => chunk.fourCC !== 'EXIF')
+	const vp8x = kept.find(chunk => chunk.fourCC === 'VP8X')
+	if (vp8x) {
+		if (vp8x.data.length < 10) {
+			throw new Boom('malformed WebP: VP8X chunk too short', { statusCode: 400 })
+		}
+
+		// copy before mutating — the chunk data aliases the caller's buffer
+		vp8x.data = Buffer.from(vp8x.data)
+		vp8x.data[0] = vp8x.data[0]! | 0x20 // EXIF flag
+	} else {
+		const size = webpCanvasSize(webp)
+		if (!size || size.width < 1 || size.height < 1) {
+			throw new Boom('cannot determine the WebP canvas size needed to add an EXIF chunk', { statusCode: 400 })
+		}
+
+		const data = Buffer.alloc(10)
+		data[0] = 0x20 // EXIF flag
+		data.writeUIntLE(size.width - 1, 4, 3)
+		data.writeUIntLE(size.height - 1, 7, 3)
+		kept.unshift({ fourCC: 'VP8X', data })
+	}
+
+	kept.push({ fourCC: 'EXIF', data: exif })
+	const body = Buffer.concat(
+		kept.flatMap(chunk => {
+			const header = Buffer.alloc(8)
+			header.write(chunk.fourCC, 0, 'ascii')
+			header.writeUInt32LE(chunk.data.length, 4)
+			return chunk.data.length % 2 ? [header, chunk.data, Buffer.alloc(1)] : [header, chunk.data]
+		})
+	)
+	const out = Buffer.alloc(12 + body.length)
+	out.write('RIFF', 0, 'ascii')
+	out.writeUInt32LE(4 + body.length, 4)
+	out.write('WEBP', 8, 'ascii')
+	body.copy(out, 12)
+	return out
+}
+
+const soundStickerMediaToBuffer = async (
+	media: WAMediaUpload,
+	options: MessageContentGenerationOptions,
+	maxBytes: number
+): Promise<Buffer> => {
+	const { stream } = await getStream(media, {
+		// host signal forwarded, else the sanitised media budget —
+		// same discipline as the sticker-pack downloads above.
+		signal: options.options?.signal ?? AbortSignal.timeout(sanitizeMediaTimeoutMs(options.mediaUploadTimeoutMs))
+	})
+	return toBufferWithLimit(stream, maxBytes)
+}
+
 // Minimal stored (level 0) ZIP writer — v6 used fflate's `zip` with
 // `{ level: 0 }` for every entry; the v7 tree carries no zip dependency
 // (P2b proved fflate unneeded), so the pack archive is built directly.
@@ -609,6 +756,13 @@ const buildStoredZip = (files: { [fileName: string]: Uint8Array }): Buffer => {
 	return Buffer.concat([...localParts, centralBuf, end])
 }
 
+// AunuBaileys (2.7.0, HB-492): max sticker conversions in flight
+// inside prepareStickerPackMessage. 4 bounds the worst-case RSS
+// growth to ~4x one 40 MP decode (~+300 MiB over baseline in the
+// run-1097 harness) while still converting packs ~4x faster than
+// fully sequential; the per-image HB-277 pixel guard is unchanged.
+const STICKER_PACK_CONVERSION_CONCURRENCY = 4
+
 type StickerPackImageLibrary = {
 	sharp?: { default: (input: Buffer) => any }
 	image?: { Transformer: new (input: Buffer) => any }
@@ -652,7 +806,16 @@ export const prepareStickerPackMessage = async (
 	}
 
 	const stickerData: { [fileName: string]: Uint8Array } = {}
-	const stickerPromises = stickers.map(async (s, i) => {
+	// AunuBaileys (2.7.0, HB-492): the conversions below used to fan
+	// out in an unbounded Promise.all — up to 60 concurrent 40 MP
+	// decodes. Each image passes the HB-277 pixel guard on its own,
+	// but 12 in parallel already peaked at 1101 MiB RSS (vs 445 MiB
+	// sequential), so a full 60-sticker pack extrapolates to ~+4.4 GiB
+	// and OOMs a 2–4 GiB host. Run them through the in-tree queue
+	// with a small bound instead; submission order is preserved, so
+	// the resulting sticker list is identical.
+	const stickerQueue = new SimpleQueue({ concurrency: STICKER_PACK_CONVERSION_CONCURRENCY })
+	const processSticker = async (s: StickerPackInfo['stickers'][number], i: number) => {
 		try {
 			// AunuBaileys (2.3.0, HB-344 addendum + HB-392): the pack
 			// path built its own 120s signal and DROPPED the host's
@@ -726,7 +889,8 @@ export const prepareStickerPackMessage = async (
 			options.logger?.warn(`Skipping sticker ${i}: ${e.message}`)
 			return null
 		}
-	})
+	}
+	const stickerPromises = stickers.map((s, i) => stickerQueue.add(() => processSticker(s, i)))
 	const stickerMetadata = (await Promise.all(stickerPromises)).filter(
 		(s): s is NonNullable<typeof s> => !!s
 	)
@@ -951,7 +1115,7 @@ export const generateWAMessageContent = async (
 	options: MessageContentGenerationOptions
 ) => {
 	let m: WAMessageContent = {}
-	// AunuBaileys (2.6.0, HB-452): the rich-response branch below
+	// AunuBaileys (2.6.0): the rich-response branch below
 	// starts with `'code' in message` — on a non-object content
 	// (a bare string, null, a number) that threw a raw TypeError
 	// with no statusCode, before any guard could run. Hosts coming
@@ -1457,6 +1621,121 @@ export const generateWAMessageContent = async (
 			}),
 			senderTimestampMs: Date.now()
 		}
+	} else if (hasNonNullishProperty(message, 'pollResult')) {
+		// AunuBaileys (2.7.0, HB-491): the poll-result snapshot
+		// builder existed up to 1.0.76 (the HB-246 branch) but the
+		// branch itself was lost in the 2.x line — only the proto
+		// fields survived the 2.3.0 WAProto regen (field 88 and
+		// field 115) — so sendMessage({ pollResult }) fell through
+		// to prepareWAMessageMedia and died with 'Invalid media
+		// type'. Restored: a plain poll writes
+		// pollResultSnapshotMessage (88); a quiz (pollType === 1)
+		// writes pollResultSnapshotMessageV3 (115). The votes are
+		// validated item by item like the sibling poll branch —
+		// protobufjs would otherwise coerce a malformed tally into
+		// garbage on the wire. optionVoteCount is the proto int64,
+		// passed through as a number.
+		const pollResult = message.pollResult
+		if (typeof pollResult.name !== 'string' || !pollResult.name) {
+			throw new Boom('pollResult.name is required', { statusCode: 400 })
+		}
+
+		if (!Array.isArray(pollResult.pollVotes)) {
+			throw new Boom('pollResult.pollVotes must be an array', { statusCode: 400 })
+		}
+
+		for (const vote of pollResult.pollVotes) {
+			if (
+				!vote ||
+				typeof vote.optionName !== 'string' ||
+				typeof vote.optionVoteCount !== 'number' ||
+				!Number.isFinite(vote.optionVoteCount)
+			) {
+				throw new Boom('pollResult.pollVotes entries require an optionName string and a finite optionVoteCount', {
+					statusCode: 400
+				})
+			}
+		}
+
+		const snapshot: waproto.Message.IPollResultSnapshotMessage = {
+			name: pollResult.name,
+			pollVotes: pollResult.pollVotes.map(vote => ({
+				optionName: vote.optionName,
+				optionVoteCount: vote.optionVoteCount
+			}))
+		}
+		if (pollResult.pollType === 1) {
+			m.pollResultSnapshotMessageV3 = { ...snapshot, pollType: waproto.Message.PollType.QUIZ }
+		} else {
+			m.pollResultSnapshotMessage = snapshot
+		}
+	} else if (hasNonNullishProperty(message, 'stickerAudio')) {
+		// AunuBaileys (2.7.0, D-1081-A): sound sticker — an animated
+		// sticker carrying a nested audio message (StickerMessage
+		// field 26, already in our WAProto, so no proto patch is
+		// needed). The sticker WebP must carry the SHA-256 of the
+		// audio in its EXIF ("sound-sha256") — that hash is the link
+		// the receiving client uses to pair sticker and sound — so
+		// both media are resolved to bytes first: the hash is
+		// computed here and injected into the WebP EXIF by
+		// addSoundSha256ToStickerWebP before the two uploads run in
+		// parallel, exactly like a plain sticker + audio send.
+		const sound = message.stickerAudio
+		if (!sound || typeof sound !== 'object' || !sound.sticker || !sound.audio) {
+			throw new Boom('stickerAudio requires both a sticker and an audio', { statusCode: 400 })
+		}
+
+		if (
+			typeof sound.seconds !== 'undefined' &&
+			(typeof sound.seconds !== 'number' || !Number.isFinite(sound.seconds) || sound.seconds < 0)
+		) {
+			throw new Boom('stickerAudio.seconds must be a non-negative finite number', { statusCode: 400 })
+		}
+
+		if (
+			typeof sound.mentions !== 'undefined' &&
+			(!Array.isArray(sound.mentions) || sound.mentions.some(jid => typeof jid !== 'string'))
+		) {
+			throw new Boom('stickerAudio.mentions must be an array of JID strings', { statusCode: 400 })
+		}
+
+		const stickerBuffer = await soundStickerMediaToBuffer(sound.sticker, options, SOUND_STICKER_MAX_STICKER_BYTES)
+		if (!isWebPBuffer(stickerBuffer)) {
+			throw new Boom('stickerAudio.sticker must be a WebP image (the sound-sha256 EXIF is written into the WebP)', {
+				statusCode: 400
+			})
+		}
+
+		const audioBuffer = await soundStickerMediaToBuffer(sound.audio, options, SOUND_STICKER_MAX_AUDIO_BYTES)
+		const soundSha256 = sha256(audioBuffer).toString('hex')
+		const stickerWithExif = addSoundSha256ToStickerWebP(stickerBuffer, soundSha256)
+
+		const [stickerMedia, audioMedia] = await Promise.all([
+			prepareWAMessageMedia({ sticker: stickerWithExif, isAnimated: true }, options),
+			prepareWAMessageMedia(
+				{
+					audio: audioBuffer,
+					mimetype: 'audio/ogg; codecs=opus',
+					...(typeof sound.seconds === 'number' ? { seconds: sound.seconds } : {})
+				},
+				options
+			)
+		])
+		const stickerMessage = stickerMedia.stickerMessage
+		const audioMessage = audioMedia.audioMessage
+		if (!stickerMessage || !audioMessage) {
+			throw new Boom('failed to prepare sound sticker media', { statusCode: 500 })
+		}
+
+		stickerMessage.isAnimated = true
+		stickerMessage.isLottie = false
+		stickerMessage.stickerSentTs = Date.now()
+		stickerMessage.audioMessage = audioMessage
+		if (sound.mentions?.length) {
+			stickerMessage.contextInfo = { ...(stickerMessage.contextInfo || {}), mentionedJid: sound.mentions }
+		}
+
+		m.stickerMessage = stickerMessage
 	} else if (hasNonNullishProperty(message, 'aiRich')) {
 		// AunuBaileys (ported P2d): Meta AI-style rich response
 		// (AIRichResponseMessage) — the v6 lib/Utils/messages.js 'aiRich'

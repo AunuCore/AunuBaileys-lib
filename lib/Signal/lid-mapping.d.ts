@@ -6,6 +6,12 @@ export declare class LIDMappingStore {
     private readonly logger;
     private readonly maxPersistentEntries;
     private readonly persistedPairs;
+    private readonly negativeCache;
+    private static readonly NEGATIVE_CACHE_TTL_MS;
+    private static readonly NEGATIVE_CACHE_MAX_ENTRIES;
+    private hasFreshNegativeMapping;
+    private recordNegativeMapping;
+    private clearNegativeMapping;
     private pnToLIDFunc?;
     private readonly inflightLIDLookups;
     private readonly inflightPNLookups;

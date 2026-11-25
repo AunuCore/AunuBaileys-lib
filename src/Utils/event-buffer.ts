@@ -1023,7 +1023,17 @@ function append<E extends BufferableEvent>(
 				// — concatChats assigns the merged result back into the
 				// update object, overwriting its unreadCount.
 				const updateUnreadCount = update.unreadCount
-				Object.assign(existing, concatChats(update as Chat, existing))
+				// AunuBaileys (2.7.0, HB-490): concatChats(a, b) lets b
+				// win — the old argument order merged the pending
+				// update UNDER the stored snapshot/upsert, so an
+				// absorbed chats.update (archive/mute/pin) was
+				// silently discarded when the snapshot carried the
+				// opposite value. Every other merge site passes
+				// (stored, incoming); do the same here so the pending
+				// update wins. The HB-393 unreadCount override below
+				// is unaffected: it captures the update's count before
+				// the merge and re-applies it for history chats.
+				Object.assign(existing, concatChats(existing, update as Chat))
 				// AunuBaileys (2.3.0, HB-393): a pending app-state
 				// update absorbed into a HISTORY snapshot overlays
 				// state newer than the snapshot itself — an absolute

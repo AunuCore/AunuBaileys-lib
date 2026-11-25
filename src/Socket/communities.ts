@@ -59,6 +59,15 @@ export const makeCommunitiesSocket = (config: SocketConfig) => {
 				}
 			]
 		})
+		// AunuBaileys (2.7.0, HB-435 addendum facet 2): same timeout
+		// fabrication as groupFetchAllParticipating — a get-IQ
+		// timeout resolves query() as undefined (HB-340 contract) and
+		// must fail with Boom 408 instead of resolving {} and
+		// emitting an empty groups.update.
+		if (!result) {
+			throw new Boom('communityFetchAllParticipating timed out waiting for the IQ response', { statusCode: 408 })
+		}
+
 		const data: { [_: string]: GroupMetadata } = {}
 		const communitiesChild = getBinaryNodeChild(result, 'communities')
 		if (communitiesChild) {
@@ -491,6 +500,14 @@ export const extractCommunityMetadata = (result: BinaryNode) => {
 		}
 		throw new Boom('Invalid community metadata response: missing <community> node', { data: result })
 	}
+	// AunuBaileys (2.7.0, HB-301 addendum, id-missing facet): mirror
+	// extractGroupMetadata's guard — a <community> node without an id
+	// used to produce the bogus jidEncode('', 'g.us') === '@g.us'
+	// instead of failing.
+	if (!community.attrs.id) {
+		throw new Boom('Invalid community metadata response: missing community id', { data: community })
+	}
+
 	const descChild = getBinaryNodeChild(community, 'description')
 	let desc: string | undefined
 	let descId: string | undefined

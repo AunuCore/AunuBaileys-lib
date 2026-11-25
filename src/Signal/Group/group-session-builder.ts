@@ -1,4 +1,5 @@
 import * as keyhelper from './keyhelper'
+import { SenderChainKey } from './sender-chain-key'
 import { SenderKeyDistributionMessage } from './sender-key-distribution-message'
 import { SenderKeyName } from './sender-key-name'
 import { SenderKeyRecord } from './sender-key-record'
@@ -74,19 +75,55 @@ export class GroupSessionBuilder {
 		// shift evicted DISTINCT states — five replays of one
 		// SKDM left [5,5,5,5,5] and broke decryption of messages
 		// under the evicted keys. Skip an exact duplicate
-		// (same keyId, iteration, chain seed and signing key)
-		// with no store write. A genuine rotation — same keyId
-		// but a new chain key — still adds and evicts the oldest,
-		// as before.
-		const duplicate = senderKeyRecord
-			.serialize()
-			.some(
-				state =>
-					state.senderKeyId === id &&
-					state.senderChainKey.iteration === iteration &&
-					Buffer.from(state.senderChainKey.seed).equals(Buffer.from(chainKey)) &&
-					Buffer.from(state.senderSigningKey.public).equals(Buffer.from(signatureKey))
-			)
+		// (same keyId, chain seed and signing key) with no store
+		// write. A genuine rotation — same keyId but a new chain
+		// key — still adds and evicts the oldest, as before.
+		// AunuBaileys (2.7.0, HB-456 addendum facet 1): the
+		// iteration comparison above defeated the dedup after a
+		// single group decrypt — the STORED state's chain
+		// advances on every decrypt (GroupCipher steps the
+		// chain: iteration +1 AND seed replaced by its HMAC
+		// derivative), while a re-delivered SKDM still carries
+		// its ORIGINAL iteration and seed, so the byte-identical
+		// SKDM no longer matched, was pushed again, and evicted
+		// a DISTINCT state. Neither field is immutable, so
+		// compare the state's LINEAGE instead: same keyId and
+		// signing key, and the stored seed must be exactly the
+		// SKDM seed advanced by the iteration difference (or
+		// vice versa when the SKDM is the ahead one) along the
+		// chain derivation. A genuine rotation has a different
+		// signing key and an unrelated seed, so it never
+		// matches. The step count is capped at the same 2000
+		// bound getSenderKey enforces — beyond it the states
+		// are treated as distinct.
+		const MAX_DEDUP_CHAIN_STEPS = 2000
+		const advanceSeed = (fromIteration: number, seed: Uint8Array, steps: number): Buffer => {
+			let chain = new SenderChainKey(fromIteration, seed)
+			for (let i = 0; i < steps; i++) {
+				chain = chain.getNext()
+			}
+
+			return Buffer.from(chain.getSeed())
+		}
+		const duplicate = senderKeyRecord.serialize().some(state => {
+			if (state.senderKeyId !== id) {
+				return false
+			}
+
+			if (!Buffer.from(state.senderSigningKey.public).equals(Buffer.from(signatureKey))) {
+				return false
+			}
+
+			const storedIteration = state.senderChainKey.iteration
+			const storedSeed = Buffer.from(state.senderChainKey.seed)
+			if (storedIteration >= iteration) {
+				const steps = storedIteration - iteration
+				return steps <= MAX_DEDUP_CHAIN_STEPS && advanceSeed(iteration, chainKey, steps).equals(storedSeed)
+			}
+
+			const steps = iteration - storedIteration
+			return steps <= MAX_DEDUP_CHAIN_STEPS && advanceSeed(storedIteration, storedSeed, steps).equals(Buffer.from(chainKey))
+		})
 		if (duplicate) {
 			return
 		}

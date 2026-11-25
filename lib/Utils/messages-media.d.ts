@@ -10,6 +10,7 @@ import type { ILogger } from './logger.js';
 export declare const sanitizeMediaTimeoutMs: (value: unknown, fallback?: number) => number;
 export declare const isMediaAbortError: (error: unknown) => boolean;
 export declare const destroyQuietly: (stream: unknown) => void;
+export declare const asMediaBufferChunk: (chunk: unknown) => Buffer;
 export declare const getImageProcessingLibrary: () => Promise<{
     sharp: typeof import("sharp");
     image?: undefined;

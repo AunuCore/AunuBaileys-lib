@@ -10,6 +10,8 @@ import type {
 	PatchedMessageWithRecipientJID,
 	PollVoteOptions,
 	SignalDataTypeMap,
+	SoundStickerOptions,
+	SyncSignalSessionOptions,
 	SocketConfig,
 	WAMessage,
 	WAMessageKey
@@ -369,7 +371,12 @@ export const makeMessagesSocket = (config: SocketConfig) => {
 		let mgetDevices: undefined | Record<string, FullJid[] | undefined>
 
 		if (useCache && userDevicesCache.mget) {
-			const usersToFetch = jidsWithUser.map(j => j?.user).filter(Boolean) as string[]
+			// AunuBaileys (2.7.0, HB-489): the cache is keyed by the
+			// normalised JID (user + server), not the bare user — the
+			// same number exists as both a @s.whatsapp.net and a
+			// @hosted identity, and a bare-user key served one
+			// identity's devices for the other.
+			const usersToFetch = jidsWithUser.map(j => j?.jid).filter(Boolean) as string[]
 			// AunuBaileys (2.5.0, HB-475): a host-provided cache whose
 			// read rejects (e.g. a down Redis backend) used to abort
 			// the whole send — the USync fetch one branch below
@@ -386,15 +393,20 @@ export const makeMessagesSocket = (config: SocketConfig) => {
 				// AunuBaileys (2.5.0, HB-475): same as the mget read
 				// above — a throwing single-get is a cache miss, not
 				// a failed send; the USync fetch below serves it.
-				let devices: FullJid[] | undefined = mgetDevices?.[user!]
+				let devices: FullJid[] | undefined = mgetDevices?.[jid]
 				if (!devices && !userDevicesCache.mget) {
 					try {
-						devices = (await userDevicesCache.get(user!)) as FullJid[]
+						devices = (await userDevicesCache.get(jid)) as FullJid[]
 					} catch (err) {
 						logger?.warn({ err, user }, 'failed to read user devices from cache; falling back to USync')
 					}
 				}
-				if (devices) {
+				// AunuBaileys (2.7.0, HB-484): an empty array is a
+				// cache MISS, not a hit — a host cache holding [] for
+				// a user (a negative-cache entry) used to drop that
+				// user from the send entirely, silently, because the
+				// user never reached the USync fetch below.
+				if (devices?.length) {
 					const devicesWithJid = devices.map(d => ({
 						...d,
 						jid: jidEncode(d.user, d.server, d.device)
@@ -506,21 +518,29 @@ export const makeMessagesSocket = (config: SocketConfig) => {
 				authState.creds.me!.lid!,
 				ignoreZeroDevices
 			)
+			// AunuBaileys (2.7.0, HB-489): key the map by the
+			// normalised JID (user + server) — the same key the
+			// cache read above and the cache write below use — so
+			// a single USync result mixing a user's @hosted and
+			// @s.whatsapp.net devices no longer merges them into
+			// one cache entry.
 			const deviceMap: { [_: string]: FullJid[] } = {}
 
 			for (const item of extracted) {
-				deviceMap[item.user] = deviceMap[item.user] || []
-				deviceMap[item.user]?.push(item)
+				const mapKey = jidEncode(item.user, item.server)
+				deviceMap[mapKey] = deviceMap[mapKey] || []
+				deviceMap[mapKey]?.push(item)
 			}
 
 			// Process each user's devices as a group for bulk LID migration
-			for (const [user, userDevices] of Object.entries(deviceMap)) {
-				const isLidUser = requestedLidUsers.has(user)
+			for (const [mapKey, userDevices] of Object.entries(deviceMap)) {
+				const keyUser = jidDecode(mapKey)?.user ?? mapKey
+				const isLidUser = requestedLidUsers.has(keyUser)
 
 				// Process all devices for this user
 				for (const item of userDevices) {
 					const finalJid = isLidUser
-						? jidEncode(user, item.server, item.device)
+						? jidEncode(keyUser, item.server, item.device)
 						: jidEncode(item.user, item.server, item.device)
 
 					deviceResults.push({
@@ -540,6 +560,36 @@ export const makeMessagesSocket = (config: SocketConfig) => {
 				}
 			}
 
+			// AunuBaileys (2.7.0, HB-489 addendum facet 1): a USync
+			// result for a chat input (always PN/LID) can return
+			// HOSTED devices — the server resolves that input to a
+			// Cloud API identity — so the device-server key
+			// ('user@hosted') never matched a later read for the same
+			// input ('user@s.whatsapp.net') and the entry was
+			// write-only: every send paid a full USync IQ. Also seed
+			// the entry under the input key that produced it, so the
+			// next send for the same chat input hits. The alias is
+			// only written when the server itself resolved this input
+			// to hosted devices, and it never overwrites an entry the
+			// same result already wrote under the input key (a mixed
+			// PN+hosted result keeps the PN entry authoritative for
+			// PN reads) — the HB-489 separation is preserved.
+			const cacheEntries = { ...deviceMap }
+			for (const [mapKey, userDevices] of Object.entries(deviceMap)) {
+				const keyUser = jidDecode(mapKey)?.user
+				if (!keyUser) {
+					continue
+				}
+
+				for (const inputJid of toFetch) {
+					if (jidDecode(inputJid)?.user !== keyUser || inputJid === mapKey || cacheEntries[inputJid]) {
+						continue
+					}
+
+					cacheEntries[inputJid] = userDevices
+				}
+			}
+
 			await devicesMutex.mutex(async () => {
 				// AunuBaileys (2.5.0, HB-475): the device list is
 				// already in hand — a throwing cache write must not
@@ -547,10 +597,10 @@ export const makeMessagesSocket = (config: SocketConfig) => {
 				try {
 					if (userDevicesCache.mset) {
 						// if the cache supports mset, we can set all devices in one go
-						await userDevicesCache.mset(Object.entries(deviceMap).map(([key, value]) => ({ key, value })))
+						await userDevicesCache.mset(Object.entries(cacheEntries).map(([key, value]) => ({ key, value })))
 					} else {
-						for (const key in deviceMap) {
-							if (deviceMap[key]) await userDevicesCache.set(key, deviceMap[key])
+						for (const key in cacheEntries) {
+							if (cacheEntries[key]) await userDevicesCache.set(key, cacheEntries[key])
 						}
 					}
 				} catch (err) {
@@ -559,8 +609,13 @@ export const makeMessagesSocket = (config: SocketConfig) => {
 			})
 
 			const userDeviceUpdates: { [userId: string]: string[] } = {}
-			for (const [userId, devices] of Object.entries(deviceMap)) {
+			for (const [mapKey, devices] of Object.entries(deviceMap)) {
 				if (devices && devices.length > 0) {
+					// The 'device-list' store stays keyed by the bare
+					// user (its readers in libsignal/socket decode the
+					// user portion) — only the device CACHE key gained
+					// the server (HB-489).
+					const userId = jidDecode(mapKey)?.user ?? mapKey
 					userDeviceUpdates[userId] = devices.map(d => d.device?.toString() || '0')
 				}
 			}
@@ -618,15 +673,34 @@ export const makeMessagesSocket = (config: SocketConfig) => {
 
 		logger.debug({ jids }, 'assertSessions call with jids')
 
-		for (const jid of uniqueJids) {
-			if (!force) {
-				const sessionValidation = await signalRepository.validateSession(jid)
-				if (sessionValidation.exists) {
+		if (force) {
+			jidsRequiringFetch.push(...uniqueJids)
+		} else {
+			// AunuBaileys (2.7.0, LAT-1): the validations used to run
+			// one at a time — N cold recipients meant N sequential
+			// store reads before the (already batched) bundle IQ
+			// could leave. validateSession is a per-JID read with
+			// an isolated {exists, reason} result, so run them
+			// concurrently. Promise.allSettled + a rethrow of the
+			// FIRST rejection in input order keeps the sequential
+			// semantics exact: jidsRequiringFetch keeps input
+			// order, and the error a caller sees is the one the
+			// old loop would have thrown.
+			const validations = await Promise.allSettled(uniqueJids.map(jid => signalRepository.validateSession(jid)))
+			for (const [index, validation] of validations.entries()) {
+				if (validation.status === 'rejected') {
+					throw validation.reason
+				}
+
+				if (validation.value.exists) {
 					continue
 				}
-			}
 
-			jidsRequiringFetch.push(jid)
+				const jid = uniqueJids[index]
+				if (jid) {
+					jidsRequiringFetch.push(jid)
+				}
+			}
 		}
 
 		if (jidsRequiringFetch.length) {
@@ -1142,7 +1216,20 @@ export const makeMessagesSocket = (config: SocketConfig) => {
 							// (HB-416).
 							try {
 								const result = await authState.keys.get('sender-key-memory', [jid]) // TODO: check out what if the sender key memory doesn't include the LID stuff now?
-								return result[jid] || {}
+								// AunuBaileys (2.7.0, HB-71 addendum
+								// facet 2): copy-on-write — a cacheable
+								// store's get() returns the cache's LIVE
+								// object, so marking the loaded map in
+								// place (below, before sendNode) leaked
+								// the mark into the cache even when the
+								// send then failed and the deferred
+								// persist never ran: a ghost mark that
+								// suppressed the sender-key re-offer
+								// until the cache TTL expired. Mark a
+								// copy; only the deferred persist (after
+								// a successful send) writes it back.
+								const loaded = result[jid]
+								return loaded ? { ...loaded } : {}
 							} catch (err) {
 								logger.warn({ err, jid }, 'aunu: sender-key-memory read failed; continuing with an empty map')
 								return {}
@@ -1469,6 +1556,29 @@ export const makeMessagesSocket = (config: SocketConfig) => {
 					allRecipients.push(jid)
 				}
 
+				// AunuBaileys (2.7.0, HB-299 addendum + facet 2):
+				// both pre-partition guards can pass while the
+				// partition above still empties the recipient list —
+				// a phone session (device 0) sending to itself: the
+				// peer-placeholder (category 'peer', PDO) is never
+				// replaced by USync enumeration, and a non-peer
+				// self-DM's USync result [device 0] survives
+				// extractDeviceJids because a bare me.id decodes to
+				// device undefined (not 0). In both cases the sole
+				// device is then dropped as the exact sender device
+				// and the stanza went out with no <enc> and no
+				// <participants>, resolving as if delivered. Reject
+				// an empty post-partition recipient list for
+				// non-retry sends (retry resends address their
+				// participant directly and are excluded, as in the
+				// guards above and below).
+				if (!participant && !isRetryResend && !allRecipients.length) {
+					throw new Boom(
+						'relayMessage: no recipient devices remain after excluding the sender device for this direct message; refusing to send an undeliverable message',
+						{ statusCode: 400 }
+					)
+				}
+
 				// AunuBaileys (2.2.0, HB-299 addendum): the HB-299
 				// guard above only fires when NOTHING resolved. When
 				// the peer has zero devices but our own devices
@@ -1684,7 +1794,38 @@ export const makeMessagesSocket = (config: SocketConfig) => {
 				// no identity to assert; skip the node instead of
 				// sending an empty one.
 				const account = authState.creds.account
-				if (account && typeof account === 'object' && Object.keys(account).length) {
+				// AunuBaileys (2.7.0, HB-201 addendum 4, sibling site): a
+				// present-but-garbage account.details passed this guard and
+				// produced a <device-identity> the peer cannot decode.
+				// Require the details blob to actually decode; garbage is
+				// treated like a missing account (skip the node, warn).
+				const accountDetailsDecodable = (() => {
+					const detailsValue: unknown = account?.details
+					if (detailsValue instanceof Uint8Array) {
+						try {
+							waproto.ADVDeviceIdentity.decode(detailsValue)
+							return true
+						} catch {
+							return false
+						}
+					}
+
+					if (typeof detailsValue === 'string' && detailsValue.length > 0) {
+						if (!/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(detailsValue)) {
+							return false
+						}
+
+						try {
+							waproto.ADVDeviceIdentity.decode(Buffer.from(detailsValue, 'base64'))
+							return true
+						} catch {
+							return false
+						}
+					}
+
+					return false
+				})()
+				if (account && typeof account === 'object' && Object.keys(account).length && accountDetailsDecodable) {
 					;(stanza.content as BinaryNode[]).push({
 						tag: 'device-identity',
 						attrs: {},
@@ -1693,7 +1834,7 @@ export const makeMessagesSocket = (config: SocketConfig) => {
 
 					logger.debug({ jid }, 'adding device identity')
 				} else {
-					logger.warn({ jid }, 'aunu: skipping device-identity: creds.account is missing; the peer cannot use an empty identity')
+					logger.warn({ jid }, 'aunu: skipping device-identity: creds.account is missing or its details do not decode; the peer cannot use an empty or garbage identity')
 				}
 			}
 
@@ -2279,6 +2420,100 @@ export const makeMessagesSocket = (config: SocketConfig) => {
 			}
 
 			return fullMsg
+		},
+		sendSoundSticker: async (jid: string, content: SoundStickerOptions, options: MiscMessageGenerationOptions = {}) => {
+			// AunuBaileys (2.7.0, D-1081-A): sound sticker — mirrors
+			// sendPollVote: a thin socket wrapper over a content
+			// branch. The `stickerAudio` branch of
+			// generateWAMessageContent does the real work (audio
+			// SHA-256 -> WebP EXIF injection, parallel sticker +
+			// audio uploads, nested audioMessage on field 26); this
+			// method only builds, relays and returns the message —
+			// fullMsg.key.id is the sent message id.
+			const userJid = authState.creds.me?.id
+			if (!userJid) {
+				throw new Boom('Not authenticated')
+			}
+			const fullMsg = await generateWAMessage(
+				jid,
+				{ stickerAudio: content },
+				{
+					logger,
+					userJid,
+					userJidLid: authState.creds.me?.lid,
+					upload: waUploadToServer,
+					mediaCache: config.mediaCache,
+					options: config.options,
+					messageId: generateMessageIDV2(sock.user?.id),
+					...options
+				}
+			)
+			await relayMessage(jid, fullMsg.message!, {
+				messageId: fullMsg.key.id!,
+				useCachedGroupMetadata: options.useCachedGroupMetadata,
+				statusJidList: options.statusJidList
+			})
+			if (config.emitOwnEvents) {
+				process.nextTick(async () => {
+					await messageMutex.mutex(() => upsertMessage(fullMsg, 'append'))
+				})
+			}
+
+			return fullMsg
+		},
+		syncSignalSession: async (jid: string, options: SyncSignalSessionOptions = {}) => {
+			// AunuBaileys (2.7.0, Zapo D3): public session-sync API
+			// over assertSessions. Default (no options) is the plain
+			// assertion the send path already performs — fetch only
+			// when no open session exists, existing behaviour
+			// untouched. `force` drops the stored session first and
+			// then fetches a fresh bundle. `reasonIdentity` is the
+			// identity-change rebuild: the stored identity key is
+			// dropped as well, so the fresh bundle is saved through
+			// the storage layer's TOFU path as a NEW identity, and
+			// the forced fetch carries reason="identity" on the wire
+			// (assertSessions stamps it for every forced fetch).
+			// Returns whether a fresh bundle was fetched + injected.
+			const userJid = authState.creds.me?.id
+			if (!userJid) {
+				throw new Boom('Not authenticated')
+			}
+
+			if (!jidDecode(jid)) {
+				throw new Boom(`Invalid jid: ${jid}`, { statusCode: 400 })
+			}
+
+			const { force = false, reasonIdentity = false } = options
+			if (!force && !reasonIdentity) {
+				return assertSessions([jid])
+			}
+
+			await signalRepository.deleteSession([jid])
+			if (reasonIdentity) {
+				// Null the stored identity key under every address
+				// the session could live at: the JID's own wire
+				// address, plus the LID wire address when a PN->LID
+				// mapping is known (the storage layer resolves PN
+				// addresses to their LID form, HB-377's lesson). A
+				// failed mapping lookup keeps the raw-address drop.
+				const identityUpdates: { [address: string]: null } = {
+					[signalRepository.jidToSignalProtocolAddress(jid)]: null
+				}
+				try {
+					if (isPnUser(jid) || isHostedPnUser(jid)) {
+						const lid = await signalRepository.lidMapping.getLIDForPN(jid)
+						if (lid) {
+							identityUpdates[signalRepository.jidToSignalProtocolAddress(lid)] = null
+						}
+					}
+				} catch (err) {
+					logger.warn({ err, jid }, 'aunu: lid-mapping lookup failed in syncSignalSession; dropping only the raw identity address')
+				}
+
+				await authState.keys.set({ 'identity-key': identityUpdates })
+			}
+
+			return assertSessions([jid], true)
 		}
 	}
 }

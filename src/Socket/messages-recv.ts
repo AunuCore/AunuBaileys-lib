@@ -230,8 +230,18 @@ export const makeMessagesRecvSocket = (config: SocketConfig) => {
 			if (authorJid) {
 				try {
 					const validation = await signalRepository.validateSession(authorJid)
-					if (validation.exists || validation.reason !== 'no session') {
+					// AunuBaileys (2.7.0, HB-453 addendum facet 1): only a
+					// proven record or a proven absence of an OPEN session
+					// may classify — an inconclusive store read
+					// ('validation error') is neither, so it falls through
+					// to UnknownError below instead of fabricating a
+					// BadMac(7) the HB-453 contract forbids.
+					if (validation.exists || validation.reason === 'no open session') {
 						return RetryReason.SignalErrorBadMac
+					}
+
+					if (validation.reason === 'validation error') {
+						return RetryReason.UnknownError
 					}
 				} catch {
 					return RetryReason.UnknownError
@@ -925,6 +935,35 @@ export const makeMessagesRecvSocket = (config: SocketConfig) => {
 			)
 		}
 
+		// AunuBaileys (2.7.0, HB-201 addendum 4): non-empty is not
+		// enough — a present-but-garbage details blob (corrupt restore,
+		// hand-edited creds file) passed the check above and encoded
+		// into a <device-identity> whose inner details the peer cannot
+		// decode at all. Require decode-ability here, before the
+		// encodeSignedDeviceIdentity call below spends the counter:
+		// the blob must be bytes (or a strict-base64 string) that
+		// ADVDeviceIdentity.decode accepts.
+		const detailsValue: unknown = authState.creds.account?.details
+		let detailsDecodable = false
+		try {
+			if (typeof detailsValue === 'string' && !/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(detailsValue)) {
+				throw new Error('details is not strict base64')
+			}
+
+			const detailsBytes =
+				detailsValue instanceof Uint8Array ? detailsValue : Buffer.from(String(detailsValue), 'base64')
+			waproto.ADVDeviceIdentity.decode(detailsBytes)
+			detailsDecodable = true
+		} catch {
+			detailsDecodable = false
+		}
+
+		if (!detailsDecodable) {
+			throw new Error(
+				'AunuBaileys: creds.account.details is present but does not decode as a device identity — cannot build the retry receipt device-identity; restore a full backup or pair again'
+			)
+		}
+
 		const { fullMessage } = decodeMessageNode(node, authState.creds.me.id, authState.creds.me.lid || '')
 		const { key: msgKey } = fullMessage
 		const msgId = msgKey.id!
@@ -1487,6 +1526,16 @@ export const makeMessagesRecvSocket = (config: SocketConfig) => {
 
 				break
 			case 'created_membership_requests':
+				// AunuBaileys (2.7.0, HB-2026-1112-40 addendum 5): a
+				// double-malformed notification — participant child
+				// resolving to nothing AND no actor on the stanza —
+				// used to fall back to undefined actor fields and emit
+				// a phantom group.join-request with no participant at
+				// all. Skip the stub entirely in that case.
+				if (!affectedResolvedId && !actingParticipantLid && !actingParticipantPn) {
+					break
+				}
+
 				msg.messageStubType = WAMessageStubType.GROUP_MEMBERSHIP_JOIN_APPROVAL_REQUEST_NON_ADMIN_ADD
 				msg.messageStubParameters = [
 					JSON.stringify({ lid: affectedParticipantLid, pn: affectedParticipantPn }),
@@ -1495,6 +1544,14 @@ export const makeMessagesRecvSocket = (config: SocketConfig) => {
 				]
 				break
 			case 'revoked_membership_requests':
+				// AunuBaileys (2.7.0, HB-2026-1112-40 addendum 5): same
+				// double-malformed guard as created_membership_requests
+				// above — no resolved participant and no actor means
+				// there is no join request to report.
+				if (!affectedResolvedId && !actingParticipantLid && !actingParticipantPn) {
+					break
+				}
+
 				// AunuBaileys (2.3.0, HB-2026-1112-40 addendum 3):
 				// never let an unresolved id reach areJidsSameUser —
 				// (undefined, undefined) compares EQUAL there, which
@@ -1785,7 +1842,12 @@ export const makeMessagesRecvSocket = (config: SocketConfig) => {
 				const encryptedPayload = Buffer.concat([linkCodeSalt, encryptIv, encrypted])
 				const identitySharedKey = Curve.sharedKey(authState.creds.signedIdentityKey.private, primaryIdentityPublicKey)
 				const identityPayload = Buffer.concat([companionSharedKey, identitySharedKey, random])
-				authState.creds.advSecretKey = Buffer.from(hkdf(identityPayload, 32, { info: 'adv_secret' })).toString('base64')
+				// AunuBaileys (2.7.0, HB-480): hold the derived key in a
+				// local until the companion_finish IQ succeeds — writing
+				// it into live creds first let an unconfirmed key leak
+				// into the next unrelated creds.update persist (mirror
+				// HB-479/HB-262: no mutation before confirmation).
+				const pendingAdvSecretKey = Buffer.from(hkdf(identityPayload, 32, { info: 'adv_secret' })).toString('base64')
 				await query({
 					tag: 'iq',
 					attrs: {
@@ -1824,6 +1886,7 @@ export const makeMessagesRecvSocket = (config: SocketConfig) => {
 						}
 					]
 				})
+				authState.creds.advSecretKey = pendingAdvSecretKey
 				authState.creds.registered = true
 				try {
 					ev.emit('creds.update', authState.creds)
@@ -2486,6 +2549,14 @@ export const makeMessagesRecvSocket = (config: SocketConfig) => {
 		}
 
 		let acked = false
+		// AunuBaileys (2.7.0, HB-481 + addendum facet 1): acked is set
+		// ONLY after the send it records has resolved, at every site
+		// below. Setting it optimistically before an awaited
+		// sendReceipt/sendMessageAck meant a transport throw (socket
+		// closing mid-handler) suppressed the outer catch's NACK while
+		// the upsert below the send never ran — a decrypted message
+		// vanished with no trace. Now a failed send leaves acked false,
+		// the catch NACKs, and the server redelivers.
 
 		try {
 			const {
@@ -2510,8 +2581,8 @@ export const makeMessagesRecvSocket = (config: SocketConfig) => {
 			// dedup further down remains as a second layer for
 			// paths that reach it without this check.)
 			if (encNode && msg.key.id && decryptedMessageIds.has(msg.key.id)) {
-				acked = true
 				await sendMessageAck(node)
+				acked = true
 				return
 			}
 
@@ -2562,8 +2633,8 @@ export const makeMessagesRecvSocket = (config: SocketConfig) => {
 				// upsert) still reprocesses, so the failure path
 				// keeps its visible stub.
 				if (encNode && msg.key.id && decryptedMessageIds.has(msg.key.id)) {
-					acked = true
 					await sendMessageAck(node)
+					acked = true
 					return
 				}
 
@@ -2881,9 +2952,10 @@ export const makeMessagesRecvSocket = (config: SocketConfig) => {
 						// this text — it marks a consumed message key (a redelivery),
 						// not a broken session.
 						await emitDecryptFailure()
-						acked = true
 						await upsertMessage(msg, node.attrs.offline ? 'append' : 'notify')
-						return sendMessageAck(node, NACK_REASONS.ParsingError)
+						await sendMessageAck(node, NACK_REASONS.ParsingError)
+						acked = true
+						return
 					}
 
 					const stubParam = msg?.messageStubParameters?.[0]
@@ -2902,14 +2974,20 @@ export const makeMessagesRecvSocket = (config: SocketConfig) => {
 							{ msgId: msg.key.id, author, stubParam },
 							'aunu: msmsg decrypt failure; no retry receipt and no session failure counted (a secret problem, not a session problem)'
 						)
-						acked = true
 						await sendMessageAck(node)
+						acked = true
 					} else if (msg.messageStubParameters?.[0] === NO_MESSAGE_FOUND_ERROR_TEXT) {
 						// Message arrived without encryption (e.g. CTWA ads messages).
 						// Check if this is eligible for placeholder resend (matching WA Web filters).
 						const unavailableNode = getBinaryNodeChild(node, 'unavailable')
 						const unavailableType = unavailableNode?.attrs?.type
+						// AunuBaileys (2.7.0, Zapo D1): 'sender_drop' is its
+						// own unavailable kind — the sender dropped the
+						// message, so no placeholder resend can ever bring
+						// it back; classify and skip it like the fanout
+						// kinds below instead of burning a resend request.
 						if (
+							unavailableType === 'sender_drop' ||
 							unavailableType === 'bot_unavailable_fanout' ||
 							unavailableType === 'hosted_unavailable_fanout' ||
 							unavailableType === 'view_once_unavailable_fanout'
@@ -2918,15 +2996,17 @@ export const makeMessagesRecvSocket = (config: SocketConfig) => {
 								{ msgId: msg.key.id, unavailableType },
 								'skipping placeholder resend for excluded unavailable type'
 							)
+							await sendMessageAck(node)
 							acked = true
-							return sendMessageAck(node)
+							return
 						}
 
 						const messageAge = unixTimestampSeconds() - toNumber(msg.messageTimestamp)
 						if (messageAge > PLACEHOLDER_MAX_AGE_SECONDS) {
 							logger.debug({ msgId: msg.key.id, messageAge }, 'skipping placeholder resend for old message')
+							await sendMessageAck(node)
 							acked = true
-							return sendMessageAck(node)
+							return
 						}
 
 						// Request the real content from the phone via placeholder resend PDO.
@@ -2963,8 +3043,8 @@ export const makeMessagesRecvSocket = (config: SocketConfig) => {
 							.catch(err => {
 								logger.warn({ err, msgId: msg.key.id }, 'failed to request placeholder resend for unavailable message')
 							})
-						acked = true
 						await sendMessageAck(node)
+						acked = true
 						// Don't return — fall through to upsertMessage so the stub is emitted
 					} else {
 						// Skip retry for expired status messages (>24h old)
@@ -2975,8 +3055,9 @@ export const makeMessagesRecvSocket = (config: SocketConfig) => {
 									{ msgId: msg.key.id, messageAge, remoteJid: msg.key.remoteJid },
 									'skipping retry for expired status message'
 								)
+								await sendMessageAck(node)
 								acked = true
-								return sendMessageAck(node)
+								return
 							}
 						}
 
@@ -2991,8 +3072,8 @@ export const makeMessagesRecvSocket = (config: SocketConfig) => {
 						// MISSING_KEYS branch above, as in v6.)
 						if (msg.key.fromMe) {
 							logger.debug({ msgId: msg.key.id }, 'skipping retry request for own undecryptable message')
-							acked = true
 							await sendMessageAck(node)
+							acked = true
 						} else {
 							logger.debug('[handleMessage] Attempting retry request for failed decryption')
 
@@ -3012,6 +3093,18 @@ export const makeMessagesRecvSocket = (config: SocketConfig) => {
 							const healedBeforeRetry = (await emitDecryptFailure()) ?? false
 
 							// WAWeb only retry-receipts here; server emits PreKeyLow if prekeys run low.
+							// AunuBaileys (2.7.0, LAT-2): the retry backoff delay
+							// sits BEFORE the global retryMutex, not inside it —
+							// inside, a decrypt-failure flood serialized every
+							// later receipt behind N x retryRequestDelayMs of
+							// pure waiting. Per-item pacing is unchanged (each
+							// failure still waits its own delay before its
+							// receipt); the mutex now only guards the receipt
+							// construction, send and retry counter.
+							if (retryRequestDelayMs) {
+								await delay(retryRequestDelayMs)
+							}
+
 							await retryMutex.mutex(async () => {
 							try {
 								if (!ws.isOpen) {
@@ -3031,15 +3124,12 @@ export const makeMessagesRecvSocket = (config: SocketConfig) => {
 									author
 								)
 								await sendRetryRequest(node, !encNode || healedBeforeRetry, failureErrorCode)
-								if (retryRequestDelayMs) {
-									await delay(retryRequestDelayMs)
-								}
 							} catch (err) {
 								logger.error({ err }, 'Failed to send retry')
 							}
 
-							acked = true
 							await sendMessageAck(node, NACK_REASONS.UnhandledError)
+							acked = true
 						})
 						}
 					}
@@ -3074,7 +3164,6 @@ export const makeMessagesRecvSocket = (config: SocketConfig) => {
 							type = 'inactive'
 						}
 
-						acked = true
 						await sendReceipt(msg.key.remoteJid!, participant!, [msg.key.id!], type)
 
 						// send ack for history message
@@ -3083,9 +3172,18 @@ export const makeMessagesRecvSocket = (config: SocketConfig) => {
 							const jid = jidNormalizedUser(msg.key.remoteJid!)
 							await sendReceipt(jid, undefined, [msg.key.id!], 'hist_sync') // TODO: investigate
 						}
-					} else {
+
+						// AunuBaileys (2.7.0, HB-481 addendum facet 2):
+						// acked is set only AFTER both receipts have
+						// resolved — the hist_sync receipt used to be
+						// awaited after the flag, so its throw skipped
+						// the upsert below and the outer catch
+						// suppressed the NACK (acked already true),
+						// losing the history message silently.
 						acked = true
+					} else {
 						await sendMessageAck(node)
+						acked = true
 						logger.debug({ key: msg.key }, 'processed newsletter message without receipts')
 					}
 				}
@@ -3360,7 +3458,12 @@ export const makeMessagesRecvSocket = (config: SocketConfig) => {
 		}
 
 		if (ignored) {
-			await sendMessageAck(node, type === 'message' ? NACK_REASONS.UnhandledError : undefined).catch(() => {})
+			// AunuBaileys (2.7.0, HB-483): an ignored MESSAGE stanza gets a
+			// PLAIN ack, never a 500 NACK — the NACK told the server the
+			// stanza failed handling, so it redelivered the very message
+			// the host asked to drop, looping for as long as the ignore
+			// rule stayed active. Dropping is a success outcome.
+			await sendMessageAck(node).catch(() => {})
 			return
 		}
 
@@ -3409,6 +3512,32 @@ export const makeMessagesRecvSocket = (config: SocketConfig) => {
 		const from = node.attrs.from || ''
 		if ((from.endsWith('@g.us') || from.endsWith('@broadcast')) && getBinaryNodeChild(node, 'enc')) {
 			await processNode('message', node, 'processing status message', handleMessage)
+			return
+		}
+
+		// AunuBaileys (2.7.0, HB-476 addendum facet 1): the newsletter
+		// branch called handleNewsletterStatus directly, bypassing the
+		// ignore gates that live in processNode — an ignored channel's
+		// status still emitted 'newsletter.status'. Apply both gates
+		// here (aunuIgnoreFilter + shouldIgnoreJid, with the HB-362
+		// throw guard) and plain-ack a dropped stanza so the server
+		// stops redelivering it (HB-210/HB-483).
+		let statusIgnored = false
+		if (
+			aunuIgnoreFilter?.shouldDrop('message', node, [authState.creds.me?.id, authState.creds.me?.lid].filter(Boolean) as string[])
+		) {
+			statusIgnored = true
+		} else if (from && from !== S_WHATSAPP_NET) {
+			try {
+				statusIgnored = !!shouldIgnoreJid(from)
+			} catch (err) {
+				logger.warn({ err, jid: from }, 'shouldIgnoreJid callback threw — treating the stanza as not ignored')
+			}
+		}
+
+		if (statusIgnored) {
+			await sendMessageAck(node).catch(() => {})
+			logger.debug({ from, id: node.attrs.id }, 'aunu: newsletter status dropped by ignore gate')
 			return
 		}
 

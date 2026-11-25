@@ -21,6 +21,14 @@ export declare const prepareDisappearingMessageSettingContent: (ephemeralExpirat
  */
 export declare const generateForwardMessageContent: (message: WAMessage, forceForward?: boolean) => waproto.IMessage;
 export declare const hasNonNullishProperty: <K extends PropertyKey>(message: AnyMessageContent, key: K) => message is ExtractByKey<AnyMessageContent, K>;
+/**
+ * Write the "sound-sha256" EXIF into a WebP sticker (2.7.0, D-1081-A).
+ * Replaces any existing EXIF chunk, sets the VP8X EXIF flag (a VP8X
+ * header is synthesised for plain VP8/VP8L files), and rebuilds the
+ * RIFF size. Throws Boom 400 for a non-WebP input or a WebP whose
+ * canvas size cannot be determined when a VP8X header is needed.
+ */
+export declare const addSoundSha256ToStickerWebP: (webp: Buffer, soundSha256Hex: string) => Buffer;
 export declare const prepareStickerPackMessage: (stickerPack: StickerPackInfo, options: MessageContentGenerationOptions) => Promise<{
     stickerPackMessage: waproto.Message.IStickerPackMessage;
 }>;

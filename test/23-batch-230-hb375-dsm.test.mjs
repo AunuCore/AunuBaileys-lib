@@ -63,8 +63,12 @@ const makeSocket = async ({ withPatch, patchFn }) => {
 	state.creds.registered = true
 
 	const userDevicesCache = makeCacheStore({ stdTTL: 300, maxEntries: 1000 })
-	userDevicesCache.set(PEER_PN_USER, [{ user: PEER_PN_USER, device: 0, server: 's.whatsapp.net' }])
-	userDevicesCache.set(ME_PN_USER, [
+	// AunuBaileys (2.7.0, HB-489): the device cache is keyed by the
+	// normalised JID (user + server), not the bare user — seeds keyed
+	// by the bare user are never read back and the send falls through
+	// to a USync query the stub transport cannot answer.
+	userDevicesCache.set(PEER_PN, [{ user: PEER_PN_USER, device: 0, server: 's.whatsapp.net' }])
+	userDevicesCache.set(ME_PN_BARE, [
 		{ user: ME_PN_USER, device: 0, server: 's.whatsapp.net' },
 		{ user: ME_PN_USER, device: 1, server: 's.whatsapp.net' }
 	])

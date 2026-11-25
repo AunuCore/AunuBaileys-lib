@@ -278,12 +278,49 @@ export const makeNoiseHandler = ({
 			authenticate(serverHello.ephemeral)
 			mixIntoKey(Curve.sharedKey(privateKey, serverHello!.ephemeral!))
 
-			const decStaticContent = decrypt(serverHello!.static!)
+			// AunuBaileys (2.7.0, HB-238 addendum 2): the shape and
+			// length guards above cannot catch a correctly-sized
+			// part with a corrupt GCM tag, an empty payload, or a
+			// payload that decrypts to non-protobuf bytes — those
+			// died below as raw GCM/protobuf errors. In Noise XX a
+			// middlebox that completes the handshake derives the
+			// same session keys, so it CAN deliver all of these;
+			// the certificate signature check only runs after
+			// these decodes. Fail descriptively, in the HB-238 style.
+			let decStaticContent: Uint8Array
+			try {
+				decStaticContent = decrypt(serverHello!.static!)
+			} catch {
+				throw new Error(
+					'AunuBaileys: the server handshake is malformed — serverHello.static could not be decrypted (the connection may have been intercepted); reconnecting will retry'
+				)
+			}
+
 			mixIntoKey(Curve.sharedKey(privateKey, decStaticContent))
 
-			const certDecoded = decrypt(serverHello!.payload!)
+			let certDecoded: Uint8Array
+			try {
+				if (!serverHello!.payload!.length) {
+					throw new Error('empty payload')
+				}
 
-			const { intermediate: certIntermediate, leaf } = waproto.CertChain.decode(certDecoded)
+				certDecoded = decrypt(serverHello!.payload!)
+			} catch {
+				throw new Error(
+					'AunuBaileys: the server handshake is malformed — serverHello.payload could not be decrypted (the connection may have been intercepted); reconnecting will retry'
+				)
+			}
+
+			let certChain: waproto.ICertChain
+			try {
+				certChain = waproto.CertChain.decode(certDecoded)
+			} catch {
+				throw new Error(
+					'AunuBaileys: the server handshake is malformed — the decrypted certificate chain is not valid protobuf (the connection may have been intercepted); reconnecting will retry'
+				)
+			}
+
+			const { intermediate: certIntermediate, leaf } = certChain
 			// leaf
 			if (!leaf?.details || !leaf?.signature) {
 				throw new Boom('invalid noise leaf certificate', { statusCode: 400 })
@@ -293,7 +330,17 @@ export const makeNoiseHandler = ({
 				throw new Boom('invalid noise intermediate certificate', { statusCode: 400 })
 			}
 
-			const details = waproto.CertChain.NoiseCertificate.Details.decode(certIntermediate.details)
+			// AunuBaileys (2.7.0, HB-238 addendum 2): a well-formed
+			// chain can still carry garbage intermediate details —
+			// decode failure here was a raw RangeError.
+			let details: waproto.CertChain.NoiseCertificate.IDetails
+			try {
+				details = waproto.CertChain.NoiseCertificate.Details.decode(certIntermediate.details)
+			} catch {
+				throw new Error(
+					'AunuBaileys: the server handshake is malformed — the intermediate certificate details are not valid protobuf (the connection may have been intercepted); reconnecting will retry'
+				)
+			}
 
 			const { issuerSerial } = details
 

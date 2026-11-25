@@ -1,6 +1,6 @@
 import { Boom } from '@hapi/boom';
 import { waproto } from '../../WAProto/index.js';
-import type { AnyMessageContent, MediaConnInfo, MessageReceiptType, MessageRelayOptions, MiscMessageGenerationOptions, PollVoteOptions, SocketConfig, WAMessage, WAMessageKey } from '../Types/index.js';
+import type { AnyMessageContent, MediaConnInfo, MessageReceiptType, MessageRelayOptions, MiscMessageGenerationOptions, PollVoteOptions, SoundStickerOptions, SyncSignalSessionOptions, SocketConfig, WAMessage, WAMessageKey } from '../Types/index.js';
 import { MessageRetryManager } from '../Utils/index.js';
 import { type BinaryNode, type JidWithDevice } from '../WABinary/index.js';
 import { USyncQuery } from '../WAUSync/index.js';
@@ -34,6 +34,8 @@ export declare const makeMessagesSocket: (config: SocketConfig) => {
     updateMediaMessage: (message: WAMessage) => Promise<WAMessage>;
     sendMessage: (jid: string, content: AnyMessageContent, options?: MiscMessageGenerationOptions) => Promise<WAMessage | undefined>;
     sendPollVote: (jid: string, vote: PollVoteOptions) => Promise<WAMessage>;
+    sendSoundSticker: (jid: string, content: SoundStickerOptions, options?: MiscMessageGenerationOptions) => Promise<WAMessage>;
+    syncSignalSession: (jid: string, options?: SyncSignalSessionOptions) => Promise<boolean>;
     newsletterCreate: (name: string, description?: string) => Promise<import("../Types/index.js").NewsletterMetadata>;
     newsletterUpdate: (jid: string, updates: import("../Types/index.js").NewsletterUpdate) => Promise<unknown>;
     newsletterSubscribers: (jid: string) => Promise<{
@@ -78,6 +80,10 @@ export declare const makeMessagesSocket: (config: SocketConfig) => {
     groupInviteCode: (jid: string) => Promise<string | undefined>;
     groupRevokeInvite: (jid: string) => Promise<string | undefined>;
     groupAcceptInvite: (code: string) => Promise<string | undefined>;
+    groupAcceptInviteWithStatus: (code: string) => Promise<{
+        status: "joined" | "pending";
+        jid: string | undefined;
+    }>;
     groupRevokeInviteV4: (groupJid: string, invitedJid: string) => Promise<boolean>;
     groupAcceptInviteV4: (key: string | WAMessageKey, inviteMessage: waproto.Message.IGroupInviteMessage) => Promise<any>;
     groupGetInviteInfo: (code: string) => Promise<import("../Types/index.js").GroupMetadata>;

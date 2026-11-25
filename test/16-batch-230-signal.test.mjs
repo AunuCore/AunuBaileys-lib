@@ -49,13 +49,18 @@ const PEER_LID = '111222333444555@lid'
 const PEER_USER = '628987654321'
 const ME_USER = '628123456789'
 
-// A structurally valid account (random bytes are fine — the receipt only
-// encodes them; the peer verifies, the test only checks the shape).
-// AunuBaileys (2.5.0, HB-201 addendum 2): sendRetryRequest validates
-// creds.account before building a retry receipt, so tests that drive
-// the receipt path must set one.
+// A structurally valid account: the signature key/signature are
+// random bytes (the receipt only encodes them; the peer verifies,
+// the test only checks the shape) — but details must be a DECODABLE
+// ADVDeviceIdentity. AunuBaileys (2.7.0, HB-201 addendum 4):
+// sendRetryRequest validates decode-ability of
+// creds.account.details before building a retry receipt, so random
+// bytes here fail the guard and no receipt is sent at all (that
+// rejection is locked by
+// test/hb201-device-identity-decode.test.mjs). Tests that drive the
+// receipt path must set a real account (HB-201 addendum 2, 2.5.0).
 const syntheticAccount = () => ({
-	details: randomBytes(32),
+	details: Buffer.from(proto.ADVDeviceIdentity.encode({ rawId: 1234567890, timestamp: 1700000000, keyIndex: 0 }).finish()),
 	accountSignatureKey: randomBytes(32),
 	accountSignature: randomBytes(64)
 })
@@ -180,8 +185,12 @@ const makeRetryEnv = async patchHook => {
 	state.creds.me = { id: ME, lid: ME_LID }
 	state.creds.registered = true
 	const userDevicesCache = makeCacheStore({ stdTTL: 300, maxEntries: 1000 })
-	userDevicesCache.set(PEER_USER, [{ user: PEER_USER, device: 0, server: 's.whatsapp.net' }])
-	userDevicesCache.set(ME_USER, [
+	// AunuBaileys (2.7.0, HB-489): the device cache is keyed by the
+	// normalised JID (user + server), not the bare user — the old
+	// bare-user keys missed and every send fell through to a USync
+	// query that never answers on this offline socket.
+	userDevicesCache.set(PEER, [{ user: PEER_USER, device: 0, server: 's.whatsapp.net' }])
+	userDevicesCache.set(ME, [
 		{ user: ME_USER, device: 0, server: 's.whatsapp.net' },
 		{ user: ME_USER, device: 1, server: 's.whatsapp.net' }
 	])
@@ -1151,10 +1160,32 @@ test('HB-2026-1112-40 #3: membership-request stubs use the participant fallback 
 		assert.equal(JSON.parse(stubs[0].params[0]).lid, REQ_LID, 'created-request stub must carry the requester lid')
 		assert.equal(stubs[0].params[1], 'created')
 		// B: revoked request, double-malformed (no ids anywhere) —
-		// must be 'rejected', never 'revoked'.
+		// AunuBaileys (2.7.0, HB-2026-1112-40 addendum 5): NO stub at
+		// all. Pre-2.7.0 this emitted a stub with an empty
+		// participant ('rejected', params[0] '{}') — a phantom
+		// group.join-request for nobody. The addendum-5 guard in
+		// handleGroupNotification deliberately skips the stub when
+		// the participant resolves to nothing AND no actor is on
+		// the stanza (locked by
+		// test/hb40-join-request-phantom.test.mjs); the old
+		// 'rejected' expectation asserted the phantom itself, so
+		// it is replaced, not weakened: absence is asserted here,
+		// and the 'rejected' classification is re-locked below in
+		// its surviving form (B2).
 		sock.ws.emit('CB:notification', gp2('HB1112-B', 'revoked_membership_requests', {}, {}, {}))
-		assert.equal(await waitForStub(2), true, 'no stub for the malformed revocation')
-		assert.equal(stubs[1].params[1], 'rejected', 'double-malformed revocation must be rejected, not revoked')
+		await sleep(1200)
+		sock.ev.flush()
+		assert.equal(stubs.length, 1, 'double-malformed revocation must emit no stub (addendum 5 phantom guard)')
+		// B2: revoked request, participant carries ONLY a lid, no
+		// actor — the participant resolves, so the addendum-5 guard
+		// does not fire, and with no actor to match it the
+		// revocation is still 'rejected', never 'revoked' (the
+		// addendum-3 classification, re-locked here after B's
+		// expectation moved to addendum 5).
+		sock.ws.emit('CB:notification', gp2('HB1112-B2', 'revoked_membership_requests', {}, { lid: REQ_LID }, {}))
+		assert.equal(await waitForStub(2), true, 'no stub for the lid-only revocation without an actor')
+		assert.equal(stubs[1].params[1], 'rejected', 'lid-only revocation with no actor must be rejected, not revoked')
+		assert.equal(JSON.parse(stubs[1].params[0]).lid, REQ_LID)
 		// C: revoked request by the requester themselves — 'revoked'.
 		sock.ws.emit(
 			'CB:notification',

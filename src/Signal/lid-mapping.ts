@@ -63,8 +63,66 @@ export class LIDMappingStore {
 	// that would exceed the cap. Eviction is safe — a miss simply
 	// re-fetches the mapping via USync. Default 10_000 pairs,
 	// matching the mapping cache cap above.
+	// AunuBaileys (2.7.0, HB-432 addendum): two holes in that
+	// enforcement are closed below — a single batch larger than
+	// the cap is pruned against the cap itself (its own pairs are
+	// no longer exempt), and the pure read paths now register the
+	// pairs they load from the store, so a restarted instance's
+	// index converges on the store's real contents as pairs are
+	// read. Pairs a given instance has neither stored nor read
+	// remain invisible to it (the store has no enumeration API);
+	// they enter the index on their first read or re-store.
 	private readonly maxPersistentEntries: number
 	private readonly persistedPairs = new Map<string, string>()
+
+	// AunuBaileys (2.7.0, LAT-3 — latency audit 2026-11-25 #1;
+	// partial amendment of the QUEUE section G hold on the
+	// HB-2026-1112-60 family, authorised for THIS facet only):
+	// a PN with no LID mapping used to pay a full USync fetch on
+	// EVERY lookup, forever — the receive path alone resolves a
+	// sender up to 6 times per message, 4 of them while holding
+	// the per-peer transaction mutex. A negative result ("this PN
+	// has no LID") is now cached for a short 60-second TTL:
+	// pnUser -> expiry timestamp (ms, Date.now based — no timers
+	// are held, so there is nothing extra to clean up in close()).
+	// The cache is bounded (oldest entry dropped past the cap)
+	// and a negative entry is invalidated IMMEDIATELY when a
+	// positive mapping for the same PN is written or read back
+	// from the store, on any path — a freshly learned mapping is
+	// never hidden behind a negative entry. Positive lookup
+	// behaviour is unchanged.
+	private readonly negativeCache = new Map<string, number>()
+	private static readonly NEGATIVE_CACHE_TTL_MS = 60_000
+	private static readonly NEGATIVE_CACHE_MAX_ENTRIES = 1000
+
+	private hasFreshNegativeMapping(pnUser: string): boolean {
+		const expiresAt = this.negativeCache.get(pnUser)
+		if (expiresAt === undefined) {
+			return false
+		}
+
+		if (expiresAt <= Date.now()) {
+			this.negativeCache.delete(pnUser)
+			return false
+		}
+
+		return true
+	}
+
+	private recordNegativeMapping(pnUser: string): void {
+		this.negativeCache.delete(pnUser)
+		this.negativeCache.set(pnUser, Date.now() + LIDMappingStore.NEGATIVE_CACHE_TTL_MS)
+		if (this.negativeCache.size > LIDMappingStore.NEGATIVE_CACHE_MAX_ENTRIES) {
+			const oldest = this.negativeCache.keys().next().value
+			if (oldest !== undefined) {
+				this.negativeCache.delete(oldest)
+			}
+		}
+	}
+
+	private clearNegativeMapping(pnUser: string): void {
+		this.negativeCache.delete(pnUser)
+	}
 
 	private pnToLIDFunc?: (jids: string[]) => Promise<LIDMapping[] | undefined>
 
@@ -169,7 +227,25 @@ export class LIDMappingStore {
 			byLid.set(lidUser, pnUser)
 		}
 
-		const dedupedPairs = [...byPn.entries()].map(([pnUser, lidUser]) => ({ pnUser, lidUser }))
+		let dedupedPairs = [...byPn.entries()].map(([pnUser, lidUser]) => ({ pnUser, lidUser }))
+
+		// AunuBaileys (2.7.0, HB-432 addendum): the HB-432 eviction
+		// below only iterates the pairs THIS instance has seen, so
+		// a single batch larger than the cap landed whole — the
+		// batch's own pairs were never eviction candidates. Prune
+		// the batch itself against the cap first: the pairs later
+		// in the batch are the fresher claims (last-wins dedup
+		// above), so drop the earliest excess. Eviction is safe —
+		// a dropped pair is simply re-fetched via USync when it is
+		// next needed.
+		if (dedupedPairs.length > this.maxPersistentEntries) {
+			const excess = dedupedPairs.length - this.maxPersistentEntries
+			this.logger.warn(
+				{ excess, cap: this.maxPersistentEntries },
+				'aunu: LID mapping batch exceeds the persistent cap; dropping the oldest pairs in the batch (HB-432 addendum)'
+			)
+			dedupedPairs = dedupedPairs.slice(excess)
+		}
 
 		const cacheMissSet = new Set<string>()
 		const existingMappings = new Map<string, string>()
@@ -197,6 +273,9 @@ export class LIDMappingStore {
 					this.mappingCache.set(`pn:${pnUser}`, existingLidUser)
 					this.mappingCache.set(`lid:${existingLidUser}`, pnUser)
 					this.registerPersistedPair(pnUser, existingLidUser)
+					// LAT-3: store-proven positive — drop any
+					// negative entry for this PN.
+					this.clearNegativeMapping(pnUser)
 				}
 			}
 		}
@@ -225,6 +304,11 @@ export class LIDMappingStore {
 				const existingPnUser = storedReverse[`${lidUser}_reverse`]
 				if (isValidStoredUser(existingPnUser)) {
 					reverseExisting.set(lidUser, existingPnUser)
+					// HB-432 addendum: a pair this read proves is
+					// persisted joins the cap index (see the class
+					// comment) — a same-call remap retires it again
+					// in the post-write bookkeeping below.
+					this.registerPersistedPair(existingPnUser, lidUser)
 				}
 			}
 		}
@@ -246,6 +330,9 @@ export class LIDMappingStore {
 				if (reverseExisting.get(lidUser) === pnUser) {
 					this.logger.debug({ pnUser, lidUser }, 'LID mapping already exists, skipping')
 					this.registerPersistedPair(pnUser, lidUser)
+					// LAT-3: a confirmed positive mapping kills any
+					// negative entry for this PN at once.
+					this.clearNegativeMapping(pnUser)
 					continue
 				}
 
@@ -343,6 +430,11 @@ export class LIDMappingStore {
 			this.mappingCache.set(`pn:${pnUser}`, lidUser)
 			this.mappingCache.set(`lid:${lidUser}`, pnUser)
 			this.registerPersistedPair(pnUser, lidUser)
+			// LAT-3: the positive write invalidates the negative
+			// entry for this PN immediately (any write path —
+			// USync results and signal-identity writes alike —
+			// funnels through this method).
+			this.clearNegativeMapping(pnUser)
 			// HB-358: evict the remapped-away LID's reverse cache too
 			const existingLidUser = existingMappings.get(pnUser)
 			if (existingLidUser && existingLidUser !== lidUser) {
@@ -433,11 +525,22 @@ export class LIDMappingStore {
 			}
 
 			if (isValidStoredUser(cached)) {
+				// LAT-3: a positive cache hit supersedes any
+				// negative entry for this PN.
+				this.clearNegativeMapping(pnUser)
 				if (!addResolvedPair(pn, decoded, cached)) {
 					this.logger.warn(`Invalid entry for ${pn} (pair not resolved)`)
 					continue
 				}
 
+				continue
+			}
+
+			// LAT-3: a fresh negative entry means a recent USync
+			// fetch already established this PN has no LID — do
+			// not pay another store read + fetch for it until the
+			// TTL lapses or a positive mapping lands.
+			if (this.hasFreshNegativeMapping(pnUser)) {
 				continue
 			}
 
@@ -452,6 +555,12 @@ export class LIDMappingStore {
 				if (isValidStoredUser(lidUser)) {
 					this.mappingCache.set(`pn:${pnUser}`, lidUser)
 					this.mappingCache.set(`lid:${lidUser}`, pnUser)
+					// HB-432 addendum: register store-proven pairs
+					// on the pure read path too (see class comment).
+					this.registerPersistedPair(pnUser, lidUser)
+					// LAT-3: store-proven positive — drop any
+					// negative entry for this PN.
+					this.clearNegativeMapping(pnUser)
 				}
 			}
 
@@ -545,6 +654,35 @@ export class LIDMappingStore {
 			} else {
 				this.logger.warn('USync fetch yielded no results for pending PNs')
 			}
+
+			// LAT-3: the fetch just answered for every PN in
+			// usyncFetch — record a short-lived negative entry for
+			// each one it did NOT resolve, so sequential lookups
+			// within the TTL skip the store read + fetch entirely.
+			// Only when a fetch actually ran: without a
+			// pnToLIDFunc nothing was asked, so nothing is cached.
+			if (this.pnToLIDFunc) {
+				const resolvedUsers = new Set<string>()
+				for (const pair of result ?? []) {
+					const resolvedUser = jidDecode(pair.pn)?.user
+					if (resolvedUser) {
+						resolvedUsers.add(resolvedUser)
+					}
+				}
+
+				for (const normalizedPn of Object.keys(usyncFetch)) {
+					const fetchedUser = jidDecode(normalizedPn)?.user
+					if (!fetchedUser) {
+						continue
+					}
+
+					if (resolvedUsers.has(fetchedUser)) {
+						this.clearNegativeMapping(fetchedUser)
+					} else {
+						this.recordNegativeMapping(fetchedUser)
+					}
+				}
+			}
 		}
 
 		return Object.values(successfulPairs).length > 0 ? Object.values(successfulPairs) : null
@@ -630,6 +768,12 @@ export class LIDMappingStore {
 					if (isValidStoredUser(pnUser)) {
 						this.mappingCache.set(`lid:${lidUser}`, pnUser)
 						this.mappingCache.set(`pn:${pnUser}`, lidUser)
+						// HB-432 addendum: register store-proven
+						// pairs on the pure read path too.
+						this.registerPersistedPair(pnUser, lidUser)
+						// LAT-3: store-proven positive — drop any
+						// negative entry for this PN.
+						this.clearNegativeMapping(pnUser)
 					} else {
 						pnUser = undefined
 					}
@@ -653,5 +797,8 @@ export class LIDMappingStore {
 		// AunuBaileys (2.2.0, HB-346): close(), not clear() —
 		// clear() left the purge timer alive past socket end.
 		this.mappingCache.close()
+		// LAT-3: the negative cache holds only timestamps (no
+		// timers), but drop it with the rest of the state.
+		this.negativeCache.clear()
 	}
 }

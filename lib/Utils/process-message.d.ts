@@ -1,8 +1,10 @@
 import { waproto } from '../../WAProto/index.js';
-import type { AuthenticationCreds, BaileysEventEmitter, CacheStore, Chat, SignalKeyStoreWithTransaction, SignalRepositoryWithLIDStore, SocketConfig, WAMessage, WAMessageKey } from '../Types/index.js';
+import type { AuthenticationCreds, BaileysEventEmitter, CacheStore, Chat, HistorySyncSink, SignalKeyStoreWithTransaction, SignalRepositoryWithLIDStore, SocketConfig, WAMessage, WAMessageKey } from '../Types/index.js';
 import type { ILogger } from './logger.js';
 type ProcessMessageContext = {
     shouldProcessHistoryMsg: boolean;
+    /** AunuBaileys (2.7.0, Zapo D4): SocketConfig.history.sink, when set */
+    historySyncSink?: HistorySyncSink;
     placeholderResendCache?: CacheStore;
     creds: AuthenticationCreds;
     keyStore: SignalKeyStoreWithTransaction;
@@ -56,6 +58,6 @@ export declare function decryptPollVote({ encPayload, encIv }: waproto.Message.I
  * @returns event response message
  */
 export declare function decryptEventResponse({ encPayload, encIv }: waproto.Message.IPollEncValue, { eventCreatorJid, eventMsgId, eventEncKey, responderJid }: EventContext): waproto.Message.EventResponseMessage;
-declare const processMessage: (message: WAMessage, { shouldProcessHistoryMsg, placeholderResendCache, ev, creds, signalRepository, keyStore, logger, options, getMessage }: ProcessMessageContext) => Promise<void>;
+declare const processMessage: (message: WAMessage, { shouldProcessHistoryMsg, historySyncSink, placeholderResendCache, ev, creds, signalRepository, keyStore, logger, options, getMessage }: ProcessMessageContext) => Promise<void>;
 export default processMessage;
 //# sourceMappingURL=process-message.d.ts.map

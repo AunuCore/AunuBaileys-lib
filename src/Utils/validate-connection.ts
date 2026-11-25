@@ -294,7 +294,21 @@ export const configureSuccessfulPairing = (
 	}
 	const lid = deviceNode.attrs.lid
 
-	const { details, hmac, accountType } = waproto.ADVSignedDeviceIdentityHMAC.decode(deviceIdentityNode.content as Buffer)
+	// AunuBaileys (2.7.0, HB-239 addendum, decode-malformed facet):
+	// the guards around this function check presence/shape only —
+	// present-but-malformed protobuf bytes died in the three
+	// decodes below as raw RangeErrors before the HMAC/signature
+	// checks could run. Wrap each decode in a descriptive Boom.
+	let hmacStruct: waproto.IADVSignedDeviceIdentityHMAC
+	try {
+		hmacStruct = waproto.ADVSignedDeviceIdentityHMAC.decode(deviceIdentityNode.content as Buffer)
+	} catch {
+		throw new Boom('Invalid device-identity in pair success stanza: malformed ADVSignedDeviceIdentityHMAC', {
+			data: stanza
+		})
+	}
+
+	const { details, hmac, accountType } = hmacStruct
 
 	let hmacPrefix = Buffer.from([])
 	if (accountType !== undefined && accountType === waproto.ADVEncryptionType.HOSTED) {
@@ -315,7 +329,14 @@ export const configureSuccessfulPairing = (
 		throw new Boom('Invalid account signature')
 	}
 
-	const account = waproto.ADVSignedDeviceIdentity.decode(details)
+	let account: waproto.IADVSignedDeviceIdentity
+	try {
+		account = waproto.ADVSignedDeviceIdentity.decode(details)
+	} catch {
+		throw new Boom('Invalid device-identity in pair success stanza: malformed ADVSignedDeviceIdentity', {
+			data: stanza
+		})
+	}
 	const { accountSignatureKey, accountSignature, details: deviceDetails } = account
 
 	// AunuBaileys (2.5.0, HB-239 addendum 4): same shape hole one
@@ -325,7 +346,12 @@ export const configureSuccessfulPairing = (
 		throw new Boom('Missing details on the signed device identity in pair success stanza', { data: stanza })
 	}
 
-	const deviceIdentity = waproto.ADVDeviceIdentity.decode(deviceDetails)
+	let deviceIdentity: waproto.IADVDeviceIdentity
+	try {
+		deviceIdentity = waproto.ADVDeviceIdentity.decode(deviceDetails)
+	} catch {
+		throw new Boom('Invalid device-identity in pair success stanza: malformed ADVDeviceIdentity', { data: stanza })
+	}
 
 	const accountSignaturePrefix =
 		deviceIdentity.deviceType === waproto.ADVEncryptionType.HOSTED

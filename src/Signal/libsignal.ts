@@ -71,6 +71,29 @@ const isKeyMaterial = (value: unknown): value is Uint8Array | string =>
 // Buffer.from()'s UTF-8, which produced garbage keys.
 const storedKeyToBuffer = (value: Uint8Array | string): Buffer =>
 	typeof value === 'string' ? Buffer.from(value, 'base64') : Buffer.from(value)
+// AunuBaileys (2.7.0, HB-98 key-length facet + HB-2026-1112-26
+// addendum facet 1): the HB-98 guards above check only the TYPE of
+// key material — a 31-byte private key (Buffer or base64 string)
+// passed them and libsignal then threw its raw 'Incorrect private
+// key length' error, whose text matches neither decrypt-failure
+// classifier, so the 3-strike self-heal deleted HEALTHY sessions
+// over a corrupt key in our own creds; a 31-byte identity PUBLIC
+// key was silently padded by generateSignalPubKey into a wrong
+// 32-byte key and every 1:1 pkmsg failed 'Bad MAC' forever.
+// Length is part of validity: a private key is exactly 32 bytes;
+// a public key is 32 bytes bare, or 33 bytes carrying the 0x05
+// version prefix (mirrors the HB-102 noise length check and the
+// HB-367 wire length checks).
+const isPrivateKeyMaterial = (value: unknown): value is Uint8Array | string =>
+	isKeyMaterial(value) && storedKeyToBuffer(value).length === 32
+const isPublicKeyMaterial = (value: unknown): value is Uint8Array | string => {
+	if (!isKeyMaterial(value)) {
+		return false
+	}
+
+	const buf = storedKeyToBuffer(value)
+	return buf.length === 32 || (buf.length === 33 && buf[0] === 0x05)
+}
 
 /** Extract identity key from PreKeyWhisperMessage for identity change detection */
 function extractIdentityFromPkmsg(ciphertext: Uint8Array): Uint8Array | undefined {
@@ -406,7 +429,17 @@ export function makeLibSignalRepository(
 				// Uint8Array; at runtime it is the plain
 				// {_sessions, version} object — narrow it to the
 				// shape this restore actually reads.
-				type SerializedSessions = { [key: string]: { indexInfo?: { used?: number } } }
+				type SerializedSessions = {
+					[key: string]: {
+						indexInfo?: { used?: number }
+						currentRatchet?: {
+							rootKey?: string
+							lastRemoteEphemeralKey?: string
+							previousCounter?: number
+							ephemeralKeyPair?: { pubKey?: string; privKey?: string }
+						}
+					}
+				}
 				type SerializedRecord = { _sessions: SerializedSessions; version: unknown }
 				let snapshot: SerializedRecord | undefined
 				try {
@@ -431,6 +464,56 @@ export function makeLibSignalRepository(
 								if (entry.indexInfo?.used !== snapSessions[key]?.indexInfo?.used) {
 									winnerKey = key
 									break
+								}
+							}
+
+							// AunuBaileys (2.7.0, HB-446 addendum
+							// facet 1): `used` is a millisecond
+							// timestamp — a stale message decrypted
+							// in the SAME millisecond the archived
+							// session was last used leaves it
+							// unchanged, the loop above finds no
+							// winner, and the restore was skipped
+							// wholesale (the open session stayed
+							// corrupted). Fall back to a structural
+							// trace: the winner consumed message
+							// keys on a chain it already had, so its
+							// serialized form changed while its
+							// ratchet did NOT step (root key,
+							// ephemeral pair, last remote ephemeral
+							// and previous counter all identical to
+							// the snapshot); a FAILED attempt is
+							// what steps the ratchet (maybeStepRatchet
+							// runs before the MAC check). Accept
+							// the fallback only when exactly one
+							// session matches — anything ambiguous
+							// keeps the old safe direction (no
+							// restore).
+							if (!winnerKey) {
+								const structuralWinners: string[] = []
+								for (const [key, entry] of Object.entries(afterSessions)) {
+									const snap = snapSessions[key]
+									if (!snap || JSON.stringify(entry) === JSON.stringify(snap)) {
+										continue
+									}
+
+									const ratchet = entry.currentRatchet
+									const snapRatchet = snap.currentRatchet
+									if (
+										ratchet &&
+										snapRatchet &&
+										ratchet.rootKey === snapRatchet.rootKey &&
+										ratchet.lastRemoteEphemeralKey === snapRatchet.lastRemoteEphemeralKey &&
+										ratchet.previousCounter === snapRatchet.previousCounter &&
+										ratchet.ephemeralKeyPair?.pubKey === snapRatchet.ephemeralKeyPair?.pubKey &&
+										ratchet.ephemeralKeyPair?.privKey === snapRatchet.ephemeralKeyPair?.privKey
+									) {
+										structuralWinners.push(key)
+									}
+								}
+
+								if (structuralWinners.length === 1) {
+									winnerKey = structuralWinners[0]
 								}
 							}
 
@@ -606,6 +689,37 @@ export function makeLibSignalRepository(
 				)
 			}
 
+			// AunuBaileys (2.7.0, HB-410 addendum): the guard above
+			// validates identityKey + signedPreKey only — the rest
+			// of the bundle reached initOutgoing unchecked. A
+			// preKey present WITHOUT a usable publicKey still
+			// recorded pendingPreKey.preKeyId, injecting a phantom
+			// session that validates locally yet fails at the peer
+			// with 'Bad MAC' on every pkmsg; a 31-byte or string
+			// publicKey died as a raw libsignal error; and a
+			// non-integer registrationId (undefined / NaN) stored
+			// the HB-367 phantom shape or churned on every retry
+			// receipt. Reject all three here, as Boom 400, before
+			// anything is created. (The bundle form carries the
+			// public key as 32 bytes bare or 33 bytes with the
+			// 0x05 prefix — generateSignalPubKey output.)
+			if (!Number.isInteger(session.registrationId)) {
+				throw new Boom(`Rejecting E2EE session for ${jid}: registrationId is not an integer`, { statusCode: 400 })
+			}
+
+			const preKey = session.preKey
+			if (preKey !== undefined && preKey !== null) {
+				const pkPub = preKey.publicKey
+				const pkPubOk =
+					pkPub instanceof Uint8Array && (pkPub.length === 32 || (pkPub.length === 33 && pkPub[0] === 0x05))
+				if (!pkPubOk || !Number.isInteger(preKey.keyId)) {
+					throw new Boom(
+						`Rejecting E2EE session for ${jid}: preKey is present without a valid 32-byte public key`,
+						{ statusCode: 400 }
+					)
+				}
+			}
+
 			const cipher = new libsignal.SessionBuilder(storage, jidToSignalProtocolAddress(jid))
 			return parsedKeys.transaction(
 				async () => {
@@ -739,9 +853,21 @@ export function makeLibSignalRepository(
 				// was in flight during a multi-JID delete loaded the
 				// pre-delete record and its later commit resurrected
 				// exactly that device's session.
-				await parsedKeys.transaction(async () => {
-					await auth.keys.set({ session: sessionUpdates })
-				}, resolved)
+				// AunuBaileys (2.7.0, HB-440 addendum facet 1):
+				// the COMMIT phase gets the same per-JID isolation
+				// as the resolution loop above — it used to be a
+				// bare await, so a store failure committing one
+				// JID's delete aborted the batch and every later
+				// JID's (stale) session survived. Log and continue:
+				// the failed JID's session simply stays, exactly as
+				// if it had been skipped in resolution.
+				try {
+					await parsedKeys.transaction(async () => {
+						await auth.keys.set({ session: sessionUpdates })
+					}, resolved)
+				} catch (err) {
+					logger.warn({ jid, err }, 'aunu: session delete commit failed for one JID in deleteSession; other sessions continue')
+				}
 			}
 		},
 
@@ -1192,7 +1318,7 @@ function signalStorage(
 				// failing that peer's pkmsg forever with no self-heal
 				// match. Return undefined instead — libsignal raises
 				// the diagnosable `PreKeyError: Invalid PreKey ID`.
-				if (!isKeyMaterial(key.private) || !isKeyMaterial(key.public)) {
+				if (!isPrivateKeyMaterial(key.private) || !isPublicKeyMaterial(key.public)) {
 					return undefined
 				}
 
@@ -1212,7 +1338,7 @@ function signalStorage(
 			// like getOurIdentity does. A partial/corrupt creds
 			// restore otherwise fails every pre-key message with a
 			// cryptic TypeError and never heals — say what is wrong.
-			if (!isKeyMaterial(key?.keyPair?.private) || !isKeyMaterial(key?.keyPair?.public)) {
+			if (!isPrivateKeyMaterial(key?.keyPair?.private) || !isPublicKeyMaterial(key?.keyPair?.public)) {
 				throw new Error(
 					'AunuBaileys: creds.signedPreKey is missing or incomplete — the auth state is incomplete or corrupt; restore a full backup or pair again'
 				)
@@ -1251,7 +1377,7 @@ function signalStorage(
 			// field-level guard as loadSignedPreKey — a partial
 			// creds restore dereferenced bare here and threw a bare
 			// TypeError on every pkmsg.
-			if (!isKeyMaterial(signedIdentityKey?.private) || !isKeyMaterial(signedIdentityKey?.public)) {
+			if (!isPrivateKeyMaterial(signedIdentityKey?.private) || !isPublicKeyMaterial(signedIdentityKey?.public)) {
 				throw new Error(
 					'AunuBaileys: creds.signedIdentityKey is missing or incomplete — the auth state is incomplete or corrupt; restore a full backup or pair again'
 				)

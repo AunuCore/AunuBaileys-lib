@@ -7,6 +7,7 @@ import type {
 	Chat,
 	GroupMetadata,
 	GroupParticipant,
+	HistorySyncSink,
 	LIDMapping,
 	ParticipantAction,
 	RequestJoinAction,
@@ -38,6 +39,8 @@ import { buildMergedTcTokenIndexWrite, resolveTcTokenJid } from './tc-token-util
 
 type ProcessMessageContext = {
 	shouldProcessHistoryMsg: boolean
+	/** AunuBaileys (2.7.0, Zapo D4): SocketConfig.history.sink, when set */
+	historySyncSink?: HistorySyncSink
 	placeholderResendCache?: CacheStore
 	creds: AuthenticationCreds
 	keyStore: SignalKeyStoreWithTransaction
@@ -315,6 +318,7 @@ const processMessage = async (
 	message: WAMessage,
 	{
 		shouldProcessHistoryMsg,
+		historySyncSink,
 		placeholderResendCache,
 		ev,
 		creds,
@@ -415,7 +419,7 @@ const processMessage = async (
 					// AunuBaileys (2.3.0, HB-388): download and process FIRST, mark processed only after success — the old order emitted the processedHistoryMessages mark before downloadAndProcessHistorySyncNotification, so a failed inflate/download lost the chunk silently (receipt already sent, no redelivery) while creds already claimed it processed. A download failure is now logged and swallowed instead of rejecting upsertMessage, leaving the chunk unmarked for a later sync.
 					let data: Awaited<ReturnType<typeof downloadAndProcessHistorySyncNotification>> | undefined
 					try {
-						data = await downloadAndProcessHistorySyncNotification(histNotification, options, logger)
+						data = await downloadAndProcessHistorySyncNotification(histNotification, options, logger, historySyncSink)
 					} catch (err) {
 						logger?.warn(
 							{ err, msgId: message.key.id },
@@ -926,6 +930,17 @@ const processMessage = async (
 					logger?.warn('skipping join-approval-request event with an unparseable participant parameter')
 					break
 				}
+				// AunuBaileys (2.7.0, HB-2026-1112-40 addendum 5,
+				// consumer side): a stub whose participant carries
+				// neither lid nor pn and whose key names no actor is a
+				// phantom (e.g. from a double-malformed notification
+				// replayed via history sync) — never emit a
+				// group.join-request for nobody.
+				if (!participant?.lid && !participant?.pn && !message.key.participant && !message.key.participantAlt) {
+					logger?.warn('skipping join-approval-request event with no participant and no actor')
+					break
+				}
+
 				const action = message.messageStubParameters?.[1] as RequestJoinAction
 				const method = message.messageStubParameters?.[2] as RequestJoinMethod
 				emitGroupRequestJoin(participant, action, method)

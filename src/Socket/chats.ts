@@ -726,6 +726,20 @@ export const makeChatsSocket = (config: SocketConfig) => {
 
 					for (const key in decoded) {
 						const name = key as WAPatchName
+						// AunuBaileys (2.7.0, HB-95 addendum facet 1): a
+						// collection present in the sync response but
+						// never requested has no entry in `states`, so
+						// decodePatches threw on its undefined initial
+						// state and the per-collection catch below threw
+						// AGAIN on states[name].version — aborting the
+						// whole resync round and its key-store
+						// transaction. Skip unrequested collections,
+						// mirroring the absent-collection handling above.
+						if (!collectionsToHandle.has(name)) {
+							logger.warn({ name }, `collection ${name} present in app-state sync response but not requested; skipping it`)
+							continue
+						}
+
 						const { patches, hasMorePatches, snapshot } = decoded[name]
 						try {
 							if (snapshot) {
@@ -775,10 +789,14 @@ export const makeChatsSocket = (config: SocketConfig) => {
 						} catch (error: any) {
 							attemptsMap[name] = (attemptsMap[name] || 0) + 1
 
+							// AunuBaileys (2.7.0, HB-95 addendum facet 1):
+							// states[name] is optional-chained below — a
+							// collection without a state entry must not
+							// make this catch throw a second time.
 							const logData = {
 								name,
 								attempt: attemptsMap[name],
-								version: states[name].version,
+								version: states[name]?.version,
 								statusCode: error.output?.statusCode,
 								errorType: error.name,
 								error: error.stack
@@ -789,7 +807,7 @@ export const makeChatsSocket = (config: SocketConfig) => {
 								// until the key arrives via APP_STATE_SYNC_KEY_SHARE.
 								logger.warn(
 									logData,
-									`${name} blocked on missing key from v${states[name].version}, parking after ${attemptsMap[name]} attempts`
+									`${name} blocked on missing key from v${states[name]?.version}, parking after ${attemptsMap[name]} attempts`
 								)
 								blockedCollections.add(name)
 								collectionsToHandle.delete(name)
@@ -797,14 +815,14 @@ export const makeChatsSocket = (config: SocketConfig) => {
 								// Retry with a snapshot which may use a different key.
 								logger.info(
 									logData,
-									`${name} blocked on missing key from v${states[name].version}, retrying with snapshot`
+									`${name} blocked on missing key from v${states[name]?.version}, retrying with snapshot`
 								)
 								forceSnapshotCollections.add(name)
 							} else if (isAppStateSyncIrrecoverable(error, attemptsMap[name])) {
-								logger.warn(logData, `failed to sync ${name} from v${states[name].version}, giving up`)
+								logger.warn(logData, `failed to sync ${name} from v${states[name]?.version}, giving up`)
 								collectionsToHandle.delete(name)
 							} else {
-								logger.info(logData, `failed to sync ${name} from v${states[name].version}, forcing snapshot retry`)
+								logger.info(logData, `failed to sync ${name} from v${states[name]?.version}, forcing snapshot retry`)
 								// force a full snapshot on retry to recover from
 								// corrupted local state (e.g. LTHash MAC mismatch)
 								forceSnapshotCollections.add(name)
@@ -1404,8 +1422,24 @@ export const makeChatsSocket = (config: SocketConfig) => {
 		}
 
 		const historyMsg = getHistoryMsg(msg.message!)
+		// AunuBaileys (2.7.0, HB-486): shouldSyncHistoryMessage is a
+		// HOST callback and it can throw — this gate had no guard, so
+		// a throw rejected upsertMessage AFTER the receipt was already
+		// sent and the message marked acked upstream: no NACK, no
+		// redelivery, the history-sync payload was lost silently.
+		// Mirror the HB-362 host-callback guard: log and treat a throw
+		// as "do not sync this message".
+		let shouldSyncHistory = false
+		if (historyMsg) {
+			try {
+				shouldSyncHistory = shouldSyncHistoryMessage(historyMsg)
+			} catch (err) {
+				logger.warn({ err }, 'shouldSyncHistoryMessage threw in upsertMessage; treating history message as not syncable')
+			}
+		}
+
 		const shouldProcessHistoryMsg = historyMsg
-			? shouldSyncHistoryMessage(historyMsg) &&
+			? shouldSyncHistory &&
 				PROCESSABLE_HISTORY_TYPES.includes(historyMsg.syncType! as waproto.HistorySync.HistorySyncType)
 			: false
 
@@ -1529,6 +1563,9 @@ export const makeChatsSocket = (config: SocketConfig) => {
 			processMessage(msg, {
 				signalRepository,
 				shouldProcessHistoryMsg,
+				// AunuBaileys (2.7.0, Zapo D4): forward the host's
+				// history-sync streaming sink, when configured.
+				historySyncSink: config.history?.sink,
 				placeholderResendCache,
 				ev,
 				creds: authState.creds,
@@ -1618,11 +1655,25 @@ export const makeChatsSocket = (config: SocketConfig) => {
 		logger.info('Connection is now AwaitingInitialSync, buffering events')
 		ev.buffer()
 
-		const willSyncHistory = shouldSyncHistoryMessage(
-			waproto.Message.HistorySyncNotification.create({
-				syncType: waproto.HistorySync.HistorySyncType.RECENT
-			})
-		)
+		// AunuBaileys (2.7.0, HB-485): shouldSyncHistoryMessage is a
+		// HOST callback and it can throw — syncState was already set
+		// to AwaitingInitialSync and ev.buffer() already called above,
+		// so an unguarded throw here skipped the Online+flush branch,
+		// the reconnect branch AND the 20s awaitingSyncTimeout
+		// installation below, wedging the state machine in
+		// AwaitingInitialSync for the rest of the session. Mirror the
+		// HB-362 host-callback guard: log and treat a throw as
+		// willSyncHistory = false, which takes the Online+flush path.
+		let willSyncHistory = false
+		try {
+			willSyncHistory = shouldSyncHistoryMessage(
+				waproto.Message.HistorySyncNotification.create({
+					syncType: waproto.HistorySync.HistorySyncType.RECENT
+				})
+			)
+		} catch (err) {
+			logger.warn({ err }, 'shouldSyncHistoryMessage threw in connection.update; treating history sync as disabled')
+		}
 
 		if (!willSyncHistory) {
 			logger.info('History sync is disabled by config, not waiting for notification. Transitioning to Online.')

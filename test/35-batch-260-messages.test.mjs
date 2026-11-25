@@ -890,10 +890,15 @@ test('HB-380 addendum: a first Bad MAC failure recreates the session immediately
 			// sendRetryRequest validates creds.account before it
 			// reaches the recreate block — a fresh unpaired socket
 			// has none, so the receipt round throws first and the
-			// recreate is never observed (test/30 recipe: random
-			// bytes are fine, the receipt only encodes them).
+			// recreate is never observed. The details blob must be a
+			// DECODABLE ADVDeviceIdentity: since 2.7.0 (HB-201
+			// addendum 4) sendRetryRequest also requires
+			// decode-ability, so the random bytes the 2.6.0 recipe
+			// used here now fail the guard the same way a missing
+			// account does (that rejection is locked by
+			// test/hb201-device-identity-decode.test.mjs).
 			sockA.authState.creds.account = {
-				details: randomBytes(32),
+				details: Buffer.from(waproto.ADVDeviceIdentity.encode({ rawId: 1234567890, timestamp: 1700000000, keyIndex: 0 }).finish()),
 				accountSignatureKey: randomBytes(32),
 				accountSignature: randomBytes(64)
 			}

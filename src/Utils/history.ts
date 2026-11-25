@@ -2,7 +2,7 @@ import { pipeline } from 'stream/promises'
 import { promisify } from 'util'
 import { createInflate, inflate } from 'zlib'
 import { waproto } from '../../WAProto/index.js'
-import type { Chat, Contact, LIDMapping, WAMessage } from '../Types'
+import type { Chat, Contact, HistorySyncSink, LIDMapping, WAMessage } from '../Types'
 import { WAMessageStubType } from '../Types'
 import { isHostedLidUser, isHostedPnUser, isLidUser, isPnUser } from '../WABinary'
 import { toNumber } from './generics'
@@ -157,16 +157,60 @@ export const processHistoryMessage = (item: waproto.IHistorySync, logger?: ILogg
 	}
 }
 
+/**
+ * AunuBaileys (2.7.0, Zapo D4): deliver every element of a decoded
+ * HistorySync to the host's streaming sink — one item per element,
+ * in field order, each call awaited before the next is delivered
+ * (backpressure: a slow sink slows the chunk, it never reorders or
+ * drops items). A throwing sink is a host bug: log it and continue
+ * with the next element, mirroring the tree's host-callback guards —
+ * the chunk itself must not be lost over a sink failure.
+ */
+export const streamHistorySyncToSink = async (item: waproto.IHistorySync, sink: HistorySyncSink, logger?: ILogger) => {
+	const fields = [
+		'conversations',
+		'statusV3Messages',
+		'pushnames',
+		'recentStickers',
+		'pastParticipants',
+		'callLogRecords',
+		'phoneNumberToLidMappings',
+		'accounts',
+		'inlineContacts',
+		'favoriteStickers'
+	] as const
+
+	for (const field of fields) {
+		const elements = item[field]
+		if (!elements?.length) {
+			continue
+		}
+
+		for (const value of elements) {
+			try {
+				await sink({ field, value, syncType: item.syncType })
+			} catch (err) {
+				logger?.warn({ err, field }, 'history sync sink threw; continuing with the next element')
+			}
+		}
+	}
+}
+
 export const downloadAndProcessHistorySyncNotification = async (
 	msg: waproto.Message.IHistorySyncNotification,
 	options: RequestInit,
-	logger?: ILogger
+	logger?: ILogger,
+	sink?: HistorySyncSink
 ) => {
 	let historyMsg: waproto.HistorySync
 	if (msg.initialHistBootstrapInlinePayload) {
 		historyMsg = waproto.HistorySync.decode(await inflatePromise(msg.initialHistBootstrapInlinePayload))
 	} else {
 		historyMsg = await downloadHistory(msg, options)
+	}
+
+	if (sink) {
+		await streamHistorySyncToSink(historyMsg, sink, logger)
 	}
 
 	return processHistoryMessage(historyMsg, logger)

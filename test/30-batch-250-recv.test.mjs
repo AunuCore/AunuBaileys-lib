@@ -60,10 +60,18 @@ const makeSocket = async (extra = {}) => {
 	return { sock, ...cap }
 }
 
-// A structurally valid account (random bytes are fine — the receipt only
-// encodes them; the peer verifies, the test only checks the shape).
+// A structurally valid account: the signature key/signature are
+// random bytes (the receipt only encodes them; the peer verifies,
+// the test only checks the shape) — but details must be a DECODABLE
+// ADVDeviceIdentity. AunuBaileys (2.7.0, HB-201 addendum 4):
+// sendRetryRequest validates decode-ability of
+// creds.account.details before building a retry receipt, so random
+// bytes here fail the guard and no receipt is sent at all (that
+// rejection is locked by
+// test/hb201-device-identity-decode.test.mjs). Tests that drive the
+// receipt path must set a real account (HB-201 addendum 2, 2.5.0).
 const syntheticAccount = () => ({
-	details: randomBytes(32),
+	details: Buffer.from(lib.proto.ADVDeviceIdentity.encode({ rawId: 1234567890, timestamp: 1700000000, keyIndex: 0 }).finish()),
 	accountSignatureKey: randomBytes(32),
 	accountSignature: randomBytes(64)
 })
@@ -632,6 +640,18 @@ test('HB-418: a PDO send that throws must not poison the dedupe entry — the ne
 	try {
 		sock.authState.creds.account = syntheticAccount()
 		await injectSession(sock)
+		// AunuBaileys (2.7.0, HB-299 addendum + facet 2): a PDO
+		// self-send from a phone session (device 0) has no recipient
+		// left once the sender device is partitioned out, and now
+		// rejects with Boom 400 instead of resolving with an empty
+		// stanza (locked by
+		// test/hb299-phone-self-send-no-recipients.test.mjs). The PDO
+		// below must reach the transport, so this socket is a
+		// companion (device 42) asking the phone (device 0), with a
+		// session for the phone injected so the PDO can be encrypted
+		// (test/23 recipe).
+		sock.authState.creds.me = { id: '628123456789:42@s.whatsapp.net', lid: ME_LID, name: 'T' }
+		await injectSession(sock, ME)
 		await sock.signalRepository.lidMapping.storeLIDPNMappings([{ lid: '100000098765432@lid', pn: PEER }])
 		// Fail exactly the first PDO frame (a transient transport
 		// failure, 'Connection Closed'); every other stanza goes
@@ -859,13 +879,15 @@ test('HB-439 (already in tree): a USync timeout with a warm cache throws Boom 40
 	try {
 		// Warm cache for PEER only; PEER2 is cold, so the USync
 		// query must run for it — and never answers offline.
-		await sock.userDevicesCache.set('628987654321', [{ user: '628987654321', server: 's.whatsapp.net', device: 0 }])
+		// AunuBaileys (2.7.0, HB-489): the device cache is keyed by
+		// the normalised JID (user + server), not the bare user.
+		await sock.userDevicesCache.set('628987654321@s.whatsapp.net', [{ user: '628987654321', server: 's.whatsapp.net', device: 0 }])
 		await assert.rejects(
 			() => sock.getUSyncDevices([PEER, '628111111111@s.whatsapp.net'], true, false),
 			err => err?.output?.statusCode === 408
 		)
 		// Control: both cached -> no fetch, no throw, both returned.
-		await sock.userDevicesCache.set('628111111111', [{ user: '628111111111', server: 's.whatsapp.net', device: 0 }])
+		await sock.userDevicesCache.set('628111111111@s.whatsapp.net', [{ user: '628111111111', server: 's.whatsapp.net', device: 0 }])
 		const devices = await sock.getUSyncDevices([PEER, '628111111111@s.whatsapp.net'], true, false)
 		assert.equal(devices.length, 2, 'both cached devices returned')
 	} finally {

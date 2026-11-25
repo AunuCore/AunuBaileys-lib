@@ -45,6 +45,10 @@ export declare const makeNewsletterSocket: (config: SocketConfig) => {
     groupInviteCode: (jid: string) => Promise<string | undefined>;
     groupRevokeInvite: (jid: string) => Promise<string | undefined>;
     groupAcceptInvite: (code: string) => Promise<string | undefined>;
+    groupAcceptInviteWithStatus: (code: string) => Promise<{
+        status: "joined" | "pending";
+        jid: string | undefined;
+    }>;
     groupRevokeInviteV4: (groupJid: string, invitedJid: string) => Promise<boolean>;
     groupAcceptInviteV4: (key: string | import("../index.js").WAMessageKey, inviteMessage: import("../index.js").proto.Message.IGroupInviteMessage) => Promise<any>;
     groupGetInviteInfo: (code: string) => Promise<import("../index.js").GroupMetadata>;

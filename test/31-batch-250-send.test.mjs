@@ -51,7 +51,11 @@ const injectSessions = async (sock, jids) => {
 }
 
 const seedDevices = async (sock, users) => {
-	await sock.userDevicesCache.mset(users.map(user => ({ key: user, value: [{ user, device: 0, server: 's.whatsapp.net' }] })))
+	// AunuBaileys (2.7.0, HB-489): the device cache is keyed by the
+	// normalised JID (user + server), not the bare user.
+	await sock.userDevicesCache.mset(
+		users.map(user => ({ key: `${user}@s.whatsapp.net`, value: [{ user, device: 0, server: 's.whatsapp.net' }] }))
+	)
 }
 
 // Seed a tctoken entry with a CURRENT senderTimestamp so the fire-and-
@@ -221,8 +225,8 @@ test('HB-416 addendum 3 (lock-in): DM send degrades when getLIDsForPNs throws', 
 		// throwing mapping. (The sender's own device 0 is skipped from
 		// the recipient list, so it can never trigger the fetch.)
 		await sock.userDevicesCache.mset([
-			{ key: ME_USER, value: [{ user: ME_USER, device: 0, server: 's.whatsapp.net' }] },
-			{ key: PEER_USER, value: [{ user: PEER_USER, device: 0, server: 's.whatsapp.net' }, { user: PEER_USER, device: 1, server: 's.whatsapp.net' }] }
+			{ key: ME, value: [{ user: ME_USER, device: 0, server: 's.whatsapp.net' }] },
+			{ key: PEER, value: [{ user: PEER_USER, device: 0, server: 's.whatsapp.net' }, { user: PEER_USER, device: 1, server: 's.whatsapp.net' }] }
 		])
 		await injectSessions(sock, [PEER])
 		answerAllIQs(sock)
@@ -457,7 +461,11 @@ test('HB-201 addendum 3: relayMessage skips <device-identity> when creds.account
 		assert.equal(getBinaryNodeChild(stanzas[0], 'device-identity'), undefined, 'no 0-byte device-identity node')
 		// Control: with an account present the node IS attached and non-empty.
 		sock.authState.creds.account = {
-			details: Buffer.from([1, 2, 3, 4]),
+			// AunuBaileys (2.7.0, HB-201 addendum 4): details must be a
+			// DECODABLE ADVDeviceIdentity — present-but-garbage details
+			// are now treated like a missing account and the node is
+			// skipped, so the control encodes a real one.
+			details: Buffer.from(waproto.ADVDeviceIdentity.encode({ rawId: 1234567890, timestamp: 1700000000, keyIndex: 0 }).finish()),
 			accountSignatureKey: Buffer.from([5, 6, 7, 8]),
 			accountSignature: Buffer.from([9, 10, 11, 12])
 		}

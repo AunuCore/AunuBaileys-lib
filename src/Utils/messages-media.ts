@@ -72,7 +72,7 @@ export const destroyQuietly = (stream: unknown): void => {
 // at this one choke point: strings become UTF-8 Buffers (the same
 // encoding hasher.update(string) already used), Uint8Arrays become
 // Buffers, anything else is a Boom 400 instead of a raw TypeError.
-const asMediaBufferChunk = (chunk: unknown): Buffer => {
+export const asMediaBufferChunk = (chunk: unknown): Buffer => {
 	if (Buffer.isBuffer(chunk)) {
 		return chunk
 	}
@@ -257,7 +257,11 @@ export async function getMediaKeys(
 	}
 
 	if (typeof buffer === 'string') {
-		buffer = Buffer.from(buffer.replace('data:;base64,', ''), 'base64')
+		// AunuBaileys (2.7.0, HB-482): only the literal 'data:;base64,'
+		// used to be stripped — a standard data:<mediatype>;base64,
+		// URL was decoded whole, prefix included, deriving garbage
+		// keys. Strip any data:*;base64, prefix.
+		buffer = Buffer.from(buffer.replace(/^data:[^,]*;base64,/, ''), 'base64')
 	}
 
 	// expand using HKDF to 112 bytes, also pass in the relevant app info
@@ -328,7 +332,22 @@ const extractVideoThumb = async (
 		})
 	})
 
+// AunuBaileys (2.7.0, HB-487 + addendum): host-supplied image
+// dimensions used to flow straight into sharp / @napi-rs/image /
+// jimp — 0, negative, NaN, fractional or absurd values threw raw
+// library errors, and a huge-but-valid thumb width upscaled
+// without bound. Validate at the boundary: positive integers
+// within a sane cap, otherwise Boom 400.
+const MAX_PROFILE_PICTURE_DIMENSION = 4096
+const MAX_THUMBNAIL_WIDTH = 1024
+const assertValidImageDimension = (value: number, name: string, max: number) => {
+	if (typeof value !== 'number' || !Number.isInteger(value) || value <= 0 || value > max) {
+		throw new Boom(`Invalid image ${name}: expected an integer between 1 and ${max}`, { statusCode: 400 })
+	}
+}
+
 export const extractImageThumb = async (bufferOrFilePath: Readable | Buffer | string, width = 32) => {
+	assertValidImageDimension(width, 'thumbnail width', MAX_THUMBNAIL_WIDTH)
 	// TODO: Move entirely to sharp, removing jimp as it supports readable streams
 	// This will have positive speed and performance impacts as well as minimizing RAM usage.
 	if (bufferOrFilePath instanceof Readable) {
@@ -409,6 +428,8 @@ export const generateProfilePicture = async (
 	let buffer: Buffer
 
 	const { width: w = 640, height: h = 640 } = dimensions || {}
+	assertValidImageDimension(w, 'width', MAX_PROFILE_PICTURE_DIMENSION)
+	assertValidImageDimension(h, 'height', MAX_PROFILE_PICTURE_DIMENSION)
 
 	if (Buffer.isBuffer(mediaUpload)) {
 		buffer = mediaUpload
@@ -1280,6 +1301,26 @@ export const downloadEncryptedContent = async (
 	{ cipherKey, iv, macKey }: MediaDecryptionKeyInfo,
 	{ startByte, endByte, options }: MediaDownloadOptions = {}
 ) => {
+	// AunuBaileys (2.7.0, HB-2026-1112-96 facet 2 + facet 3): a
+	// negative or NaN endByte used to be accepted silently — no
+	// Range header was sent, the 206 check was skipped and the
+	// download resolved as a silent 0-byte success (NaN < 0 is
+	// false, so a lone `< 0` guard cannot close this; a string
+	// 'abc' slipped through the same way). A negative startByte,
+	// by contrast, already failed hard. Validate both bounds
+	// symmetrically before any fetch.
+	if (startByte != null && (typeof startByte !== 'number' || !Number.isFinite(startByte) || startByte < 0)) {
+		throw new Boom('Invalid media download range: startByte must be a finite number >= 0', { statusCode: 400 })
+	}
+
+	if (endByte != null && (typeof endByte !== 'number' || !Number.isFinite(endByte) || endByte < 0)) {
+		throw new Boom('Invalid media download range: endByte must be a finite number >= 0', { statusCode: 400 })
+	}
+
+	if (startByte != null && endByte != null && endByte < startByte) {
+		throw new Boom('Invalid media download range: endByte must be >= startByte', { statusCode: 400 })
+	}
+
 	let bytesFetched = 0
 	let startChunk = 0
 	let firstBlockIsIV = false
@@ -2215,9 +2256,32 @@ export const decryptMediaRetryData = (
 	mediaKey: Uint8Array,
 	msgId: string
 ) => {
-	const retryKey = getMediaRetryKey(mediaKey)
-	const plaintext = aesDecryptGCM(ciphertext, retryKey, iv, Buffer.from(msgId))
-	return waproto.MediaRetryNotification.decode(plaintext)
+	// AunuBaileys (2.7.0, HB-427 facet 3): malformed enc_p / enc_iv
+	// from a peer's retry notification used to surface as raw Node
+	// crypto errors (invalid IV, invalid tag length, auth failure),
+	// which updateMediaMessage rethrew verbatim. Its neighbouring
+	// guards answer Boom 502 — validate the shape here and wrap
+	// the decrypt/decode in the same Boom 502.
+	if (
+		!(ciphertext instanceof Uint8Array) ||
+		ciphertext.length <= 16 ||
+		!(iv instanceof Uint8Array) ||
+		iv.length === 0
+	) {
+		throw new Boom('Media retry data failed to decrypt', { statusCode: 502 })
+	}
+
+	try {
+		const retryKey = getMediaRetryKey(mediaKey)
+		const plaintext = aesDecryptGCM(ciphertext, retryKey, iv, Buffer.from(msgId))
+		return waproto.MediaRetryNotification.decode(plaintext)
+	} catch (error) {
+		if (error instanceof Boom) {
+			throw error
+		}
+
+		throw new Boom('Media retry data failed to decrypt', { statusCode: 502 })
+	}
 }
 
 export const getStatusCodeForMediaRetry = (code: number) =>

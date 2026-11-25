@@ -304,7 +304,17 @@ const makeInMemoryStore = ({ logger: _logger, chatKey, labelAssociationKey }: Ba
 					// be normalised the same way the chats.update
 					// handler below already does (2.4.0 HB-411) —
 					// undefined means "not carried".
-					chats.upsert(trimUndefined({ ...chat }) as Chat)
+					// AunuBaileys (2.7.0, HB-411 addendum 8): trimming
+					// alone cannot save fields the incoming row does
+					// not carry at all — KeyedDB.upsert replaces the
+					// row whole (deleteById + insert), so a partial
+					// upsert (e.g. a group-create upsert without a
+					// subject) erased the stored chat name. Merge
+					// over the existing row first, like the
+					// chats.update handler does: stored fields
+					// survive, carried fields win.
+					const incoming = trimUndefined({ ...chat }) as Chat
+					chats.upsert(snapshotCopy ? ({ ...snapshotCopy, ...incoming } as Chat) : incoming)
 				} catch (err) {
 					logger.warn({ chatId: chat.id, err }, 'aunu: skipped a chat upsert whose sort key collided')
 					if (snapshotCopy && !chats.get(chat.id)) {

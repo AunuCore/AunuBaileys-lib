@@ -141,9 +141,19 @@ export const makeSocket = (config: SocketConfig) => {
 		)
 	}
 
+	// AunuBaileys (2.7.0, HB-485 addendum facet 1): the host
+	// callback runs synchronously here, at construction — a throw
+	// used to break makeWASocket before any socket existed. Treat
+	// a throw as false for that sync type, like the other
+	// shouldSyncHistoryMessage gates (HB-485/HB-486).
 	const syncDisabled =
-		PROCESSABLE_HISTORY_TYPES.map(syncType => config.shouldSyncHistoryMessage({ syncType })).filter(x => x === false)
-			.length === PROCESSABLE_HISTORY_TYPES.length
+		PROCESSABLE_HISTORY_TYPES.map(syncType => {
+			try {
+				return config.shouldSyncHistoryMessage({ syncType })
+			} catch {
+				return false
+			}
+		}).filter(x => x === false).length === PROCESSABLE_HISTORY_TYPES.length
 	if (syncDisabled) {
 		logger.warn(
 			'⚠️ DANGER: DISABLING ALL SYNC BY shouldSyncHistoryMsg PREVENTS BAILEYS FROM ACCESSING INITIAL LID MAPPINGS, LEADING TO INSTABILIY AND SESSION ERRORS'
@@ -673,7 +683,19 @@ export const makeSocket = (config: SocketConfig) => {
 		const init = waproto.HandshakeMessage.encode(helloMsg).finish()
 
 		const result = await awaitNextMessage<Uint8Array>(init)
-		const handshake = waproto.HandshakeMessage.decode(result)
+		// AunuBaileys (2.7.0, HB-238 addendum 2): the first frame is
+		// plaintext (pre-handshake), so any middlebox that passes
+		// the WS upgrade can send garbage bytes here — the decode
+		// used to throw a raw protobuf RangeError.
+		let handshake: waproto.HandshakeMessage
+		try {
+			handshake = waproto.HandshakeMessage.decode(result)
+		} catch {
+			throw new Boom(
+				'AunuBaileys: the server handshake is malformed — the first frame is not a valid handshake message (the connection may have been intercepted); reconnecting will retry',
+				{ statusCode: 400 }
+			)
+		}
 
 		logger.trace({ handshake }, 'handshake recv from WA')
 

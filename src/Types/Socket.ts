@@ -31,6 +31,39 @@ export type PossiblyExtendedCacheStore = CacheStore & {
 
 export type PatchedMessageWithRecipientJID = waproto.IMessage & { recipientJid?: string }
 
+/**
+ * AunuBaileys (2.7.0, Zapo D4): one element of a HistorySync chunk,
+ * delivered to SocketConfig.history.sink. `field` names the repeated
+ * HistorySync field the element came from; `value` is the decoded
+ * element itself; `syncType` is the chunk's sync type.
+ */
+export type HistorySyncSinkItem = {
+	field:
+		| 'conversations'
+		| 'statusV3Messages'
+		| 'pushnames'
+		| 'recentStickers'
+		| 'pastParticipants'
+		| 'callLogRecords'
+		| 'phoneNumberToLidMappings'
+		| 'accounts'
+		| 'inlineContacts'
+		| 'favoriteStickers'
+	value:
+		| waproto.IConversation
+		| waproto.IWebMessageInfo
+		| waproto.IPushname
+		| waproto.IStickerMetadata
+		| waproto.IPastParticipants
+		| waproto.ICallLogRecord
+		| waproto.IPhoneNumberToLIDMapping
+		| waproto.IAccount
+		| waproto.IInlineContact
+	syncType?: waproto.HistorySync.HistorySyncType | null
+}
+
+export type HistorySyncSink = (item: HistorySyncSinkItem) => Promise<void> | void
+
 export type SocketConfig = {
 	/** the WS url to connect to WA */
 	waWebSocketUrl: string | URL
@@ -74,6 +107,16 @@ export type SocketConfig = {
 	auth: AuthenticationState
 	/** manage history processing with this control; by default will sync up everything */
 	shouldSyncHistoryMessage: (msg: waproto.Message.IHistorySyncNotification) => boolean
+	/**
+	 * AunuBaileys (2.7.0, Zapo D4): optional history-sync streaming
+	 * sink. When `history.sink` is set, every element of every
+	 * repeated HistorySync field is delivered to it — one item per
+	 * element, in field order, each call awaited before the next —
+	 * while a history-sync chunk is processed, in addition to (not
+	 * instead of) the normal messaging-history.set flow. A throwing
+	 * sink is logged and skipped per item; it cannot abort the chunk.
+	 */
+	history?: { sink?: HistorySyncSink }
 	/** transaction capability options for SignalKeyStore */
 	transactionOpts: TransactionCapabilityOptions
 	/** marks the client as online whenever the socket successfully connects */

@@ -22,7 +22,7 @@ import { WebSocketClient } from '../lib/Socket/Client/websocket.js'
 import { makeLibSignalRepository } from '../lib/Signal/libsignal.js'
 import { addTransactionCapability, makeCacheableSignalKeyStore } from '../lib/Utils/auth-utils.js'
 import { makeBoundedTTLCache } from '../lib/Utils/bounded-cache.js'
-import { Curve, generateSignalPubKey } from '../lib/Utils/crypto.js'
+import { Curve, generateSignalPubKey, signedKeyPair } from '../lib/Utils/crypto.js'
 import { extractGroupMetadata } from '../lib/Socket/groups.js'
 import { extractImageThumb, generateProfilePicture } from '../lib/Utils/messages-media.js'
 import processMessage from '../lib/Utils/process-message.js'
@@ -73,6 +73,27 @@ const PDO_MSG_ID = 'HB349-8S-1'
 const PDO_REMOTE = '120363012345678@g.us'
 const PDO_AUTHOR = '628111222333@s.whatsapp.net'
 const PDO_AUTHOR_LID = '123456789012345@lid'
+const ME_COMPANION = '628123456789:42@s.whatsapp.net'
+
+// AunuBaileys (2.7.0, HB-299 addendum + facet 2): a PDO self-send
+// from a phone session (device 0) has no recipient left once the
+// sender device is partitioned out, and now rejects with Boom 400
+// instead of resolving with an empty stanza (locked by
+// test/hb299-phone-self-send-no-recipients.test.mjs). The watchdog
+// behaviour under test here needs the PDO to actually go out, so
+// the socket is a companion (device 42) asking the phone
+// (device 0) — with a session for the phone injected into the
+// companion's repository so the PDO can be encrypted (test/23
+// recipe).
+const injectOwnPhoneSession = async sock => {
+	const identity = Curve.generateKeyPair()
+	const signed = signedKeyPair(identity, 1)
+	const pre = Curve.generateKeyPair()
+	await sock.signalRepository.injectE2ESession({ jid: ME, session: {
+		registrationId: 1234, identityKey: generateSignalPubKey(identity.public),
+		signedPreKey: { keyId: 1, publicKey: generateSignalPubKey(signed.keyPair.public), signature: signed.signature },
+		preKey: { keyId: 11, publicKey: generateSignalPubKey(pre.public) } } })
+}
 
 const pdoMsgData = () => ({
 	key: { remoteJid: PDO_REMOTE, fromMe: false, id: PDO_MSG_ID, participant: PDO_AUTHOR, participantAlt: PDO_AUTHOR_LID },
@@ -124,7 +145,8 @@ const runPdoWithCache = async cache => {
 test('HB-349 faset 2: cache entry survives the 8 s watchdog, late PDO keeps metadata', async () => {
 	const cache = makeBoundedTTLCache({ ttlSeconds: 3600, maxEntries: 1000 })
 	const sock = await makeOfflineSocket({ placeholderResendCache: cache })
-	sock.authState.creds.me = { id: ME, lid: ME_LID }
+	sock.authState.creds.me = { id: ME_COMPANION, lid: ME_LID }
+	await injectOwnPhoneSession(sock)
 	fakeOpenTransport(sock, [])
 	const reqId = await sock.requestPlaceholderResend(pdoMsgData().key, pdoMsgData())
 	assert.equal(typeof reqId, 'string')
@@ -143,7 +165,8 @@ test('HB-349 faset 2: cache entry survives the 8 s watchdog, late PDO keeps meta
 test('HB-349 faset 2 (control): PDO response before 8 s keeps metadata', async () => {
 	const cache = makeBoundedTTLCache({ ttlSeconds: 3600, maxEntries: 1000 })
 	const sock = await makeOfflineSocket({ placeholderResendCache: cache })
-	sock.authState.creds.me = { id: ME, lid: ME_LID }
+	sock.authState.creds.me = { id: ME_COMPANION, lid: ME_LID }
+	await injectOwnPhoneSession(sock)
 	fakeOpenTransport(sock, [])
 	await sock.requestPlaceholderResend(pdoMsgData().key, pdoMsgData())
 	const m = await runPdoWithCache(cache)
@@ -386,11 +409,14 @@ const stanza = (id, enc) => ({
 
 // Decode every recorded frame; return the set of ids the socket
 // receipted (plain delivery receipts), retry-receipted and acked
-// (plain 'ack' stanzas).
+// ('ack' stanzas), plus every ack frame with its error attribute
+// (undefined for a plain ack, the NACK code for an error ack) so a
+// test can tell a plain ack-as-delivered from an HB-481 NACK.
 const parseFrames = async sent => {
 	const receipts = new Set()
 	const retryReceipts = new Set()
 	const acks = new Set()
+	const ackFrames = []
 	for (const buf of sent) {
 		let off = 0
 		if (buf[0] === 0x57 && buf[1] === 0x41) off = 4
@@ -400,12 +426,15 @@ const parseFrames = async sent => {
 			const kids = Array.isArray(node.content) ? node.content : []
 			if (node.tag === 'receipt' && kids.some(c => c.tag === 'retry')) retryReceipts.add(node.attrs.id)
 			else if (node.tag === 'receipt') receipts.add(node.attrs.id)
-			if (node.tag === 'ack') acks.add(node.attrs.id)
+			if (node.tag === 'ack') {
+				acks.add(node.attrs.id)
+				ackFrames.push({ id: node.attrs.id, error: node.attrs.error })
+			}
 		} catch {
 			// a partial/non-node frame in the record — not a receipt/ack
 		}
 	}
-	return { receipts, retryReceipts, acks }
+	return { receipts, retryReceipts, acks, ackFrames }
 }
 
 // Build one full case: a ME socket + a PEER repo with a live session.
@@ -486,11 +515,22 @@ test('HB-223 ke-8: receipt failure on delivery, redelivery surfaces a CIPHERTEXT
 	await sleep(800)
 	const frames1 = await parseFrames(f.sent)
 	assert.equal(frames1.receipts.has('FAULT-1'), false, 'failed delivery must send NO receipt frame')
-	assert.equal(frames1.acks.has('FAULT-1'), false, 'failed delivery must send NO ack frame')
+	// AunuBaileys (2.7.0, HB-481): a failed send no longer leaves
+	// the stanza silently un-acked. acked is set only after the
+	// send it records resolves, so the receipt throw leaves acked
+	// false and the outer catch answers with an UnhandledError
+	// NACK (an <ack> carrying error=500) — that NACK is what makes
+	// the server redeliver. Pre-2.7.0 the stanza went out with NO
+	// ack frame at all; what must still never appear is a PLAIN
+	// ack (no error), which would report the message delivered.
+	const faultAcks = frames1.ackFrames.filter(a => a.id === 'FAULT-1')
+	assert.equal(faultAcks.length, 1, 'exactly one ack frame went out for the failed delivery')
+	assert.equal(faultAcks[0].error, '500', 'the only ack is the HB-481 UnhandledError NACK, not a plain ack')
 	assert.equal(f.failures.length, 0, 'no decrypt failure on the first delivery (decrypt SUCCEEDED)')
 	assert.equal(upsertOf(f.upserts, 'FAULT-1').length, 0, 'failed delivery upserts NOTHING')
-	// The server redelivers (no ack ever went out); the transport is
-	// healthy again now — the dedup alone decides what happens.
+	// The server redelivers (the NACK above reported the delivery
+	// failed); the transport is healthy again now — the dedup alone
+	// decides what happens.
 	f.sock.ws.emit('CB:message', stanza('FAULT-1', m1))
 	assert.equal(await waitFor(async () => (await parseFrames(f.sent)).acks.has('FAULT-1'), 8000), true, 'redelivery must be acked')
 	await sleep(400)

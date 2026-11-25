@@ -258,10 +258,37 @@ export const importSessionBackup = async (folder: string, backup: Buffer, opts?:
 			throw new Error('aunu: nyx backup is password-encrypted; a password is required')
 		}
 
+		// AunuBaileys (2.7.0, HB-478 facet 3): validate the envelope
+		// BEFORE any crypto — a missing/non-string field used to hit
+		// Buffer.from as a raw TypeError, and a short iv/authTag/salt
+		// produced a GCM error byte-identical to a wrong password, so
+		// a corrupt/truncated envelope was indistinguishable from a
+		// bad password. All four fields must be strict base64 with
+		// the exact sizes exportSessionBackup writes (salt >= 16
+		// bytes, iv 12 bytes, authTag 16 bytes, data non-empty);
+		// anything else is a malformed envelope, reported as such.
+		const envelopeFields: Record<string, unknown> = {
+			salt: parsed.salt,
+			iv: parsed.iv,
+			authTag: parsed.authTag,
+			data: parsed.data
+		}
+		for (const field of Object.keys(envelopeFields)) {
+			const value = envelopeFields[field]
+			if (typeof value !== 'string' || !isStrictBase64(value)) {
+				throw new Error(`aunu: nyx backup envelope is malformed: field ${field} is missing or not valid base64`)
+			}
+		}
+
 		const salt = Buffer.from(parsed.salt as string, 'base64')
 		const iv = Buffer.from(parsed.iv as string, 'base64')
 		const authTag = Buffer.from(parsed.authTag as string, 'base64')
 		const data = Buffer.from(parsed.data as string, 'base64')
+		if (salt.length < 16 || iv.length !== 12 || authTag.length !== 16 || data.length === 0) {
+			throw new Error(
+				'aunu: nyx backup envelope is malformed: salt must be at least 16 bytes, iv exactly 12 bytes, authTag exactly 16 bytes and data non-empty'
+			)
+		}
 		const key = scryptSync(opts.password, salt, 32)
 		const decipher = createDecipheriv('aes-256-gcm', key, iv)
 		decipher.setAuthTag(authTag)
@@ -293,6 +320,32 @@ export const importSessionBackup = async (folder: string, backup: Buffer, opts?:
 		// not overwrite a good file with decoded junk.
 		if (!isStrictBase64(payload)) {
 			throw new Error(`aunu: nyx backup carries an invalid base64 payload: ${name}`)
+		}
+
+		// AunuBaileys (2.7.0, HB-478 facet 4): strict base64 alone is
+		// not a content gate — '' is strict base64 (0 bytes), 'AAAA'
+		// decodes to NUL bytes and 'bnVsbA==' to JSON null, and only
+		// creds.json had a content gate, so such payloads for a key
+		// file imported silently and overwrote a good session file
+		// with empty/garbage bytes the loader then read as missing.
+		// Every file the store writes is JSON, so reject a payload
+		// whose decoded bytes are empty or do not parse as JSON
+		// (a JSON null is not a usable store file either) for EVERY
+		// entry, not just creds.json.
+		const decodedPayload = Buffer.from(payload, 'base64')
+		if (decodedPayload.length === 0) {
+			throw new Error(`aunu: nyx backup carries an empty payload: ${name}`)
+		}
+
+		let parsedPayload: unknown
+		try {
+			parsedPayload = JSON.parse(decodedPayload.toString('utf-8'))
+		} catch {
+			throw new Error(`aunu: nyx backup carries a non-JSON payload: ${name}`)
+		}
+
+		if (parsedPayload === null || typeof parsedPayload !== 'object') {
+			throw new Error(`aunu: nyx backup carries a non-JSON payload: ${name}`)
 		}
 	}
 

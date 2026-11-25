@@ -53,6 +53,8 @@ export declare const makeBusinessSocket: (config: SocketConfig) => {
     updateMediaMessage: (message: import("../index.js").WAMessage) => Promise<import("../index.js").WAMessage>;
     sendMessage: (jid: string, content: import("../index.js").AnyMessageContent, options?: import("../index.js").MiscMessageGenerationOptions) => Promise<import("../index.js").WAMessage | undefined>;
     sendPollVote: (jid: string, vote: import("../index.js").PollVoteOptions) => Promise<import("../index.js").WAMessage>;
+    sendSoundSticker: (jid: string, content: import("../index.js").SoundStickerOptions, options?: import("../index.js").MiscMessageGenerationOptions) => Promise<import("../index.js").WAMessage>;
+    syncSignalSession: (jid: string, options?: import("../index.js").SyncSignalSessionOptions) => Promise<boolean>;
     newsletterCreate: (name: string, description?: string) => Promise<import("../index.js").NewsletterMetadata>;
     newsletterUpdate: (jid: string, updates: import("../index.js").NewsletterUpdate) => Promise<unknown>;
     newsletterSubscribers: (jid: string) => Promise<{
@@ -97,6 +99,10 @@ export declare const makeBusinessSocket: (config: SocketConfig) => {
     groupInviteCode: (jid: string) => Promise<string | undefined>;
     groupRevokeInvite: (jid: string) => Promise<string | undefined>;
     groupAcceptInvite: (code: string) => Promise<string | undefined>;
+    groupAcceptInviteWithStatus: (code: string) => Promise<{
+        status: "joined" | "pending";
+        jid: string | undefined;
+    }>;
     groupRevokeInviteV4: (groupJid: string, invitedJid: string) => Promise<boolean>;
     groupAcceptInviteV4: (key: string | import("../index.js").WAMessageKey, inviteMessage: import("../index.js").proto.Message.IGroupInviteMessage) => Promise<any>;
     groupGetInviteInfo: (code: string) => Promise<import("../index.js").GroupMetadata>;

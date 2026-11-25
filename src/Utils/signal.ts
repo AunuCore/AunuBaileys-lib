@@ -79,6 +79,23 @@ export const generateOrGetPreKeys = (creds: AuthenticationCreds, range: number) 
 			'AunuBaileys: creds pre-key counters are inverted (firstUnuploadedPreKeyId > nextPreKeyId) — the auth state is corrupt; restore a full backup or pair again'
 		)
 	}
+
+	// AunuBaileys (2.7.0, HB-140 addendum facet 2): the POSITIVE
+	// direction was unguarded — counters claiming an unuploaded
+	// backlog larger than the whole request (nextPreKeyId >>
+	// firstUnuploadedPreKeyId, e.g. next = 2^31-1 with first = 1)
+	// made `remaining` negative, so the loop generated ZERO keys,
+	// getNextPreKeys returned an empty map, and the update marched
+	// firstUnuploadedPreKeyId past ids that were never uploaded —
+	// an empty pre-key upload on every trigger, forever, with the
+	// counters never converging. Fail descriptively, like the
+	// inverted guard above. (avaliable === range stays legal: the
+	// transient wiped-store form, which the next call heals.)
+	if (avaliable > range) {
+		throw new Error(
+			'AunuBaileys: creds pre-key counters claim an unuploaded backlog larger than the requested range (nextPreKeyId - firstUnuploadedPreKeyId > range) — the auth state is corrupt; restore a full backup or pair again'
+		)
+	}
 	const remaining = range - avaliable
 	const lastPreKeyId = creds.nextPreKeyId + remaining - 1
 	const newPreKeys: { [id: number]: KeyPair } = {}

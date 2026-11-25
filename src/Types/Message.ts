@@ -381,6 +381,42 @@ export type StickerPackInfo = {
  * here (not Utils) so the AnyMessageContent union below can carry
  * the pollVote member; re-exported from Utils for barrel compat.
  */
+/**
+ * Options for sending a poll RESULT snapshot (the `pollResult`
+ * content branch, restored in 2.7.0 — HB-491). Builds a
+ * PollResultSnapshotMessage: field 88 for a plain poll,
+ * pollResultSnapshotMessageV3 (field 115) when `pollType` is 1
+ * (quiz). `optionVoteCount` is the proto int64, passed as a number.
+ */
+export type PollResultOptions = {
+	/** Name of the poll the snapshot reports on. */
+	name: string
+	/** Per-option tallies, in poll order. */
+	pollVotes: { optionName: string; optionVoteCount: number }[]
+	/** 1 = quiz (routes to pollResultSnapshotMessageV3); anything else is a plain poll */
+	pollType?: number
+}
+
+/**
+ * Options for sending a sound sticker (the `stickerAudio` content
+ * branch / sendSoundSticker socket method, 2.7.0 — D-1081-A). The
+ * sticker must be a WebP: the branch writes the SHA-256 of the audio
+ * into the WebP EXIF as "sound-sha256" (the link the receiving client
+ * uses to pair sticker and sound) before uploading. The audio is
+ * uploaded as OGG/Opus and attached to the sticker message as its
+ * nested audioMessage (StickerMessage field 26).
+ */
+export type SoundStickerOptions = {
+	/** The sticker image — must resolve to WebP bytes. */
+	sticker: WAMediaUpload
+	/** The sound — uploaded with mimetype 'audio/ogg; codecs=opus'. */
+	audio: WAMediaUpload
+	/** Optionally tell the duration of the audio, in seconds. */
+	seconds?: number
+	/** JIDs to mention via the sticker's contextInfo. */
+	mentions?: string[]
+}
+
 export type PollVoteOptions = {
 	/** Key of the poll creation message being voted on. */
 	pollCreationMessageKey: WAMessageKey
@@ -413,6 +449,14 @@ export type AnyMessageContent = (
 	| {
 			/** AunuBaileys: vote on a poll — encrypted via encryptPollVote (2.5.0 delta, run-0962) */
 			pollVote: PollVoteOptions
+	  }
+	| {
+			/** AunuBaileys: send a poll result snapshot (2.7.0, HB-491) */
+			pollResult: PollResultOptions
+	  }
+	| {
+			/** AunuBaileys: send a sound sticker — sticker with a nested audio message (2.7.0, D-1081-A) */
+			stickerAudio: SoundStickerOptions
 	  }
 	| {
 			/** AunuBaileys: send a sticker pack (cover + stickers) */

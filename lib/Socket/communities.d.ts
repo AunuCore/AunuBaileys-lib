@@ -109,6 +109,8 @@ export declare const makeCommunitiesSocket: (config: SocketConfig) => {
     updateMediaMessage: (message: import("../Types/index.js").WAMessage) => Promise<import("../Types/index.js").WAMessage>;
     sendMessage: (jid: string, content: import("../Types/index.js").AnyMessageContent, options?: import("../Types/index.js").MiscMessageGenerationOptions) => Promise<import("../Types/index.js").WAMessage | undefined>;
     sendPollVote: (jid: string, vote: import("../Types/index.js").PollVoteOptions) => Promise<import("../Types/index.js").WAMessage>;
+    sendSoundSticker: (jid: string, content: import("../Types/index.js").SoundStickerOptions, options?: import("../Types/index.js").MiscMessageGenerationOptions) => Promise<import("../Types/index.js").WAMessage>;
+    syncSignalSession: (jid: string, options?: import("../Types/index.js").SyncSignalSessionOptions) => Promise<boolean>;
     newsletterCreate: (name: string, description?: string) => Promise<import("../Types/index.js").NewsletterMetadata>;
     newsletterUpdate: (jid: string, updates: import("../Types/index.js").NewsletterUpdate) => Promise<unknown>;
     newsletterSubscribers: (jid: string) => Promise<{
@@ -153,6 +155,10 @@ export declare const makeCommunitiesSocket: (config: SocketConfig) => {
     groupInviteCode: (jid: string) => Promise<string | undefined>;
     groupRevokeInvite: (jid: string) => Promise<string | undefined>;
     groupAcceptInvite: (code: string) => Promise<string | undefined>;
+    groupAcceptInviteWithStatus: (code: string) => Promise<{
+        status: "joined" | "pending";
+        jid: string | undefined;
+    }>;
     groupRevokeInviteV4: (groupJid: string, invitedJid: string) => Promise<boolean>;
     groupAcceptInviteV4: (key: string | WAMessageKey, inviteMessage: waproto.Message.IGroupInviteMessage) => Promise<any>;
     groupGetInviteInfo: (code: string) => Promise<GroupMetadata>;

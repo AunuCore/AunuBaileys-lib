@@ -290,8 +290,10 @@ test('HB-461: getUSyncDevices([ME, ME]) on the warm cache returns each device on
 		// Two own devices in the cache (the self-DM shape: relayMessage
 		// calls getUSyncDevices([senderIdentity, jid]) with identical
 		// entries). Pre-fix the warm path returned 4 entries.
+		// AunuBaileys (2.7.0, HB-489): the device cache is keyed by
+		// the normalised JID (user + server), not the bare user.
 		await sock.userDevicesCache.mset([{
-			key: ME_USER,
+			key: ME,
 			value: [
 				{ user: ME_USER, device: 0, server: 's.whatsapp.net' },
 				{ user: ME_USER, device: 1, server: 's.whatsapp.net' }

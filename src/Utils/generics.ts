@@ -386,10 +386,16 @@ export const fetchLatestWaWebVersion = async (options: RequestInit = {}) => {
 
 		const headers = { ...defaultHeaders, ...options.headers }
 
+		// AunuBaileys (2.7.0, HB-450 addendum): mirror the
+		// fetchLatestBaileysVersion fix — the only in-tree caller
+		// wraps this in a 10s promiseTimeout race, so without a
+		// signal the losing fetch was never aborted and dangled
+		// on every 405 -> reconnect cycle.
 		const response = await fetch('https://web.whatsapp.com/sw.js', {
 			...options,
 			method: 'GET',
-			headers
+			headers,
+			signal: options.signal ?? AbortSignal.timeout(10_000)
 		})
 
 		if (!response.ok) {
