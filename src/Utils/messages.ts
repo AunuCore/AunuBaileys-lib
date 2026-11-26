@@ -15,6 +15,7 @@ import type {
 	AnyMediaMessageContent,
 	AnyMessageContent,
 	DownloadableMessage,
+	InteractiveMessageButton,
 	MessageContentGenerationOptions,
 	MessageGenerationOptions,
 	MessageGenerationOptionsFromContent,
@@ -53,6 +54,7 @@ import {
 import { SimpleQueue } from './simple-queue'
 import { shouldIncludeReportingToken } from './reporting-utils'
 import { prepareRichResponseMessage } from './rich-message-utils'
+import { buildAunuA2UIWidget } from './aunu-a2ui'
 import { isAunuViewOnceContent, wrapAunuViewOnce } from './aunu-view-once'
 
 type ExtractByKey<T, K extends PropertyKey> = T extends Record<K, any> ? T : never
@@ -1110,6 +1112,31 @@ export const getQuotedParticipant = (
 	return quoted.participant || quoted.key.participant || quoted.key.remoteJid || undefined
 }
 
+// AunuBaileys (1.0.71, restored 2.7.1 — HB-500): native-flow button
+// icon — a caller-supplied `icon` on a button object is upper-cased
+// into its buttonParamsJson (donor: @violetix/baileys). Buttons
+// without `icon`, or with unparseable params, come out byte-identical
+// to before. The helper was lost with the interactive branch in the
+// v7 port.
+const withAunuButtonIcon = (button: InteractiveMessageButton) => {
+	let params = button.buttonParamsJson
+	if (typeof button.icon === 'string' && button.icon) {
+		try {
+			const parsed: unknown = typeof params === 'string' ? JSON.parse(params) : { ...(params ?? {}) }
+			if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+				params = JSON.stringify({ ...(parsed as { [key: string]: unknown }), icon: button.icon.toUpperCase() })
+			}
+		} catch {
+			// unparseable params stay untouched
+		}
+	}
+
+	return {
+		name: button.name,
+		buttonParamsJson: typeof params === 'string' ? params : JSON.stringify(params ?? {})
+	}
+}
+
 export const generateWAMessageContent = async (
 	message: AnyMessageContent,
 	options: MessageContentGenerationOptions
@@ -1938,6 +1965,59 @@ export const generateWAMessageContent = async (
 		}
 	} else if (hasNonNullishProperty(message, 'requestPhoneNumber')) {
 		m.requestPhoneNumberMessage = {}
+	} else if ('interactive' in message) {
+		// AunuBaileys (2.7.1, HB-500): interactive / native-flow branch
+		// (pattern @itsliaaa/baileys, simplified) — lost in the v7
+		// port: { interactive } fell through to prepareWAMessageMedia
+		// and threw Boom 400 'Invalid media type', so sock.aunuCard
+		// threw on every call at runtime. Restored from the v6
+		// construction.
+		if (!message.interactive || typeof message.interactive !== 'object') {
+			throw new Boom('interactive content requires an object', { statusCode: 400 })
+		}
+
+		const iMsg = message.interactive
+		const interactiveMessage: waproto.Message.IInteractiveMessage = {
+			body: iMsg.body ?? (iMsg.text ? { text: iMsg.text } : undefined),
+			footer: iMsg.footer ?? (iMsg.footerText ? { text: iMsg.footerText } : undefined),
+			header: iMsg.header,
+			contextInfo: iMsg.contextInfo
+		}
+		if (iMsg.carousel) {
+			interactiveMessage.carouselMessage = {
+				cards: iMsg.carousel.map(card => ({
+					header:
+						card.header ??
+						(card.title
+							? { title: card.title, hasMediaAttachment: !!card.imageMessage, imageMessage: card.imageMessage }
+							: undefined),
+					body: { text: card.body || '' },
+					footer: card.footer ? { text: card.footer } : undefined,
+					nativeFlowMessage: { buttons: (card.buttons || []).map(withAunuButtonIcon) }
+				})),
+				messageVersion: 1
+			}
+		} else {
+			interactiveMessage.nativeFlowMessage = {
+				buttons: (iMsg.buttons || []).map(withAunuButtonIcon),
+				messageParamsJson: iMsg.messageParamsJson || ''
+			}
+		}
+
+		m = {
+			interactiveMessage,
+			messageContextInfo: { deviceListMetadata: {}, deviceListMetadataVersion: 2 }
+		}
+	} else if ('a2ui' in message) {
+		// AunuBaileys (2.7.1, HB-500): an A2UI widget has no base
+		// content of its own — the post-processing block below
+		// replaces `m` wholesale. Without this branch it fell through
+		// to the media branch and was rejected as a media message.
+		if (message.a2ui == null) {
+			throw new Boom('a2ui content requires a widget object', { statusCode: 400 })
+		}
+
+		m = {}
 	} else if (hasNonNullishProperty(message, 'limitSharing')) {
 		m.protocolMessage = {
 			type: waproto.Message.ProtocolMessage.Type.LIMIT_SHARING,
@@ -1950,6 +2030,31 @@ export const generateWAMessageContent = async (
 		}
 	} else {
 		m = await prepareWAMessageMedia(message, options)
+	}
+
+	// AunuBaileys (2.7.1, HB-500): A2UI widget — `nativeFlowMessage` is
+	// always set, even empty: it is what the client keys the
+	// interactive render off. `singleScreen` drops the surrounding
+	// bubble so the widget is the whole message. (Restored from v6;
+	// the post-processing was lost with the branch in the v7 port.)
+	if ('a2ui' in message && message.a2ui != null) {
+		const a2uiMessage: waproto.Message.IInteractiveMessage = {
+			bloksWidget: buildAunuA2UIWidget(message.a2ui, {
+				type: message.a2uiType,
+				wrapped: message.a2uiWrapped !== false
+			}),
+			nativeFlowMessage: { messageParamsJson: '' }
+		}
+		if (!message.singleScreen) {
+			a2uiMessage.header = { hasMediaAttachment: false }
+			a2uiMessage.body = { text: message.text || '' }
+			a2uiMessage.footer = { text: message.footer || '' }
+		}
+
+		m = {
+			interactiveMessage: a2uiMessage,
+			messageContextInfo: { deviceListMetadata: {}, deviceListMetadataVersion: 2 }
+		}
 	}
 
 	// AunuBaileys (2.5.0, HB-441): pre-wrapped view-once content is
@@ -1993,6 +2098,24 @@ export const generateWAMessageContent = async (
 				mentionedJid: message.mentions,
 				nonJidMentions: message.mentionAll ? 1 : 0
 			}
+		}
+	}
+
+	// AunuBaileys (2.7.1, HB-500): interactiveAsTemplate (from
+	// @itsliaaa/baileys) — wrap an interactiveMessage into a
+	// templateMessage, keeping its messageContextInfo alongside it.
+	// Restored from v6; lost in the v7 port with the branch.
+	if (hasOptionalProperty(message, 'interactiveAsTemplate') && !!message.interactiveAsTemplate) {
+		if (!m.interactiveMessage) {
+			throw new Boom('interactiveAsTemplate requires an interactive message', { statusCode: 400 })
+		}
+
+		m = {
+			templateMessage: {
+				interactiveMessageTemplate: m.interactiveMessage,
+				templateId: message.templateId || 'template-' + Date.now()
+			},
+			...(m.messageContextInfo ? { messageContextInfo: m.messageContextInfo } : {})
 		}
 	}
 
@@ -2608,3 +2731,15 @@ export const assertMediaContent = (content: waproto.IMessage | null | undefined)
 
 	return mediaContent
 }
+
+// AunuBaileys (2.7.1, HB-500): biz binary node determinant (from
+// @itsliaaa/baileys) — restored from v6; the v7 port dropped it
+// together with the relay's biz node, so buttons / list / template /
+// native-flow stanzas went out without their <biz> companion node.
+export const shouldIncludeBizBinaryNode = (message: waproto.IMessage) =>
+	!!(
+		message.buttonsMessage ||
+		message.listMessage ||
+		message.templateMessage ||
+		(message.interactiveMessage && message.interactiveMessage.nativeFlowMessage)
+	)

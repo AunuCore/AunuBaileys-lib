@@ -127,5 +127,6 @@ type DownloadMediaMessageContext = {
  */
 export declare const downloadMediaMessage: <Type extends "buffer" | "stream">(message: WAMessage, type: Type, options: MediaDownloadOptions, ctx?: DownloadMediaMessageContext) => Promise<Type extends "buffer" ? Buffer<ArrayBufferLike> : Transform>;
 /** Checks whether the given message is a media message; if it is returns the inner content */
-export declare const assertMediaContent: (content: waproto.IMessage | null | undefined) => waproto.Message.IVideoMessage | waproto.Message.IImageMessage | waproto.Message.IAudioMessage | waproto.Message.IDocumentMessage | waproto.Message.IStickerMessage;
+export declare const assertMediaContent: (content: waproto.IMessage | null | undefined) => waproto.Message.IDocumentMessage | waproto.Message.IImageMessage | waproto.Message.IVideoMessage | waproto.Message.IAudioMessage | waproto.Message.IStickerMessage;
+export declare const shouldIncludeBizBinaryNode: (message: waproto.IMessage) => boolean;
 //# sourceMappingURL=messages.d.ts.map

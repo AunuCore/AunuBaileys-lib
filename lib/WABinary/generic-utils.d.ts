@@ -12,4 +12,5 @@ export declare const reduceBinaryNodeToDictionary: (node: BinaryNode, tag: strin
 };
 export declare const getBinaryNodeMessages: ({ content }: BinaryNode) => waproto.WebMessageInfo[];
 export declare function binaryNodeToString(node: BinaryNode | BinaryNode['content'], i?: number): string;
+export declare const getBizBinaryNode: (message: waproto.IMessage) => BinaryNode;
 //# sourceMappingURL=generic-utils.d.ts.map

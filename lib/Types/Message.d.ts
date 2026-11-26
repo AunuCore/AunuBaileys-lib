@@ -93,6 +93,10 @@ export type AunuViewOnceFlag = boolean | 'v1' | 'v2' | 'force' | 'v2-force' | 1 
 };
 type ViewOnce = {
     viewOnce?: AunuViewOnceFlag;
+    /** wrap an interactive message into a templateMessage (requires `interactive` content) */
+    interactiveAsTemplate?: boolean;
+    /** optional template id used when interactiveAsTemplate is set */
+    templateId?: string;
 };
 type Editable = {
     edit?: WAMessageKey;
@@ -339,6 +343,48 @@ export type PollVoteOptions = {
     /** Normalised JID of the voter — deviceless, same addressing mode as the creator. */
     voterJid: string;
 };
+/**
+ * One native-flow button of an `interactive` content (the
+ * `aunuCard` / InteractiveBuilder shape). `icon`, when present, is
+ * upper-cased into the buttonParamsJson at build time.
+ */
+export type InteractiveMessageButton = {
+    name?: string;
+    buttonParamsJson?: string;
+    icon?: string;
+};
+/**
+ * Content of the `interactive` branch (native-flow / card messages,
+ * restored in 2.7.1 — HB-500). Mirrors the v6 construction: `body` /
+ * `footer` objects win over the `text` / `footerText` shorthands;
+ * `carousel` switches the payload from a single nativeFlowMessage
+ * to a carouselMessage.
+ */
+export type InteractiveMessageContent = {
+    body?: {
+        text?: string;
+    };
+    /** shorthand for body: { text } */
+    text?: string;
+    footer?: {
+        text?: string;
+    };
+    /** shorthand for footer: { text } */
+    footerText?: string;
+    header?: waproto.Message.InteractiveMessage.IHeader;
+    contextInfo?: waproto.IContextInfo;
+    buttons?: InteractiveMessageButton[];
+    carousel?: {
+        header?: waproto.Message.InteractiveMessage.IHeader;
+        /** shorthand header: { title, hasMediaAttachment, imageMessage } */
+        title?: string;
+        imageMessage?: waproto.Message.IImageMessage;
+        body?: string;
+        footer?: string;
+        buttons?: InteractiveMessageButton[];
+    }[];
+    messageParamsJson?: string;
+};
 export type AnyMessageContent = (AnyRegularMessageContent | {
     forward: WAMessage;
     force?: boolean;
@@ -368,9 +414,25 @@ export type AnyMessageContent = (AnyRegularMessageContent | {
     name?: string;
     publisher?: string;
     description?: string;
+} | {
+    /** AunuBaileys: interactive / native-flow message (restored 2.7.1, HB-500) */
+    interactive: InteractiveMessageContent;
+} | {
+    /** AunuBaileys: A2UI widget message (restored 2.7.1, HB-500) — an AunuA2UI instance or a built widget payload */
+    a2ui: unknown;
+    /** A2UI payload type (default 'im_a2ui') */
+    a2uiType?: string;
+    /** wrap the payload in a createSurface envelope (default true) */
+    a2uiWrapped?: boolean;
+    /** drop the surrounding bubble so the widget is the whole message */
+    singleScreen?: boolean;
+    text?: string;
+    footer?: string;
 }) & {
     /** AunuBaileys: mark the message with the AI label (private chats only) */
     ai?: boolean;
+    /** AunuBaileys: force the <biz> binary node onto the relayed stanza */
+    secureMetaServiceLabel?: boolean;
 };
 export type GroupMetadataParticipants = Pick<GroupMetadata, 'participants'>;
 type MinimalRelayOptions = {
@@ -385,6 +447,8 @@ export type MessageRelayOptions = MinimalRelayOptions & {
         jid: string;
         count: number;
     };
+    /** force the <biz> binary node onto the stanza (secureMetaServiceLabel content flag) */
+    addBizAttributes?: boolean;
     /** additional attributes to add to the WA binary node */
     additionalAttributes?: {
         [_: string]: string;

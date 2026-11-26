@@ -1,4 +1,5 @@
 import { Boom } from '@hapi/boom'
+import { randomBytes } from 'crypto'
 import { waproto } from '../../WAProto/index.js'
 import { BIZ_BOT_SUPPORT_PAYLOAD, DEFAULT_CACHE_TTLS, WA_DEFAULT_EPHEMERAL } from '../Defaults'
 import type {
@@ -38,6 +39,7 @@ import {
 	normalizeMessageContent,
 	parseAndInjectE2ESessions,
 	setBotMessageSecret,
+	shouldIncludeBizBinaryNode,
 	unixTimestampSeconds
 } from '../Utils'
 import { sentMessageCacheFor } from '../Utils/sent-message-cache'
@@ -60,6 +62,7 @@ import {
 	type FullJid,
 	getBinaryNodeChild,
 	getBinaryNodeChildren,
+	getBizBinaryNode,
 	isHostedLidUser,
 	isHostedPnUser,
 	isJidBot,
@@ -1044,6 +1047,7 @@ export const makeMessagesSocket = (config: SocketConfig) => {
 			participant,
 			additionalAttributes,
 			additionalNodes,
+			addBizAttributes,
 			useUserDevicesCache,
 			useCachedGroupMetadata,
 			statusJidList
@@ -1062,6 +1066,21 @@ export const makeMessagesSocket = (config: SocketConfig) => {
 		const meId = assertMeId(authState.creds)
 		const meLid = authState.creds.me?.lid
 		const isRetryResend = Boolean(participant?.jid)
+
+		// AunuBaileys (2.7.1, HB-502): relay parity with the generate
+		// path — generateWAMessageContent stamps a messageSecret on
+		// reporting-token message types, but a hand-built proto
+		// relayed directly never got one, so the reporting-token
+		// derivation below could only ever read a secret that was not
+		// there. Stamp one when the type calls for it and none is
+		// present. Retry resends are excluded: their secret is the
+		// original message's, already stamped at generate time.
+		if (!isRetryResend && shouldIncludeReportingToken(message) && !message.messageContextInfo?.messageSecret) {
+			message.messageContextInfo = {
+				...message.messageContextInfo,
+				messageSecret: randomBytes(32)
+			}
+		}
 		let shouldIncludeDeviceIdentity = isRetryResend
 		const statusJid = 'status@broadcast'
 
@@ -1916,6 +1935,17 @@ export const makeMessagesSocket = (config: SocketConfig) => {
 				;(stanza.content as BinaryNode[]).push(...additionalNodes)
 			}
 
+			// AunuBaileys (2.7.1, HB-500): biz binary node (from
+			// @itsliaaa/baileys) — automatic for buttons/list/
+			// template/native-flow messages, or forced by the
+			// secureMetaServiceLabel content flag (addBizAttributes).
+			// Restored from v6; the v7 port dropped it, so interactive
+			// stanzas went out without their <biz> companion node.
+			const alreadyHasBizNode = !addBizAttributes && !!additionalNodes?.some(node => node.tag === 'biz')
+			if ((!alreadyHasBizNode && shouldIncludeBizBinaryNode(message)) || addBizAttributes) {
+				;(stanza.content as BinaryNode[]).push(getBizBinaryNode(message))
+			}
+
 			logger.debug({ msgId }, `sending message to ${participants.length} devices`)
 
 			// AunuBaileys (1.0.83, HB-178, re-applied P3b): captured, not sent —
@@ -2302,6 +2332,7 @@ export const makeMessagesSocket = (config: SocketConfig) => {
 				const isPinMsg = 'pin' in content && !!content.pin
 				const isPollMessage = 'poll' in content && !!content.poll
 				const isAiMsg = 'ai' in content && !!content.ai
+				const isNeedBizAttrs = 'secureMetaServiceLabel' in content && !!content.secureMetaServiceLabel
 				const additionalAttributes: BinaryNodeAttributes = {}
 				const additionalNodes: BinaryNode[] = []
 				// required for delete
@@ -2360,7 +2391,8 @@ export const makeMessagesSocket = (config: SocketConfig) => {
 					useCachedGroupMetadata: options.useCachedGroupMetadata,
 					additionalAttributes,
 					statusJidList: options.statusJidList,
-					additionalNodes
+					additionalNodes,
+					addBizAttributes: isNeedBizAttrs
 				})
 				if (config.emitOwnEvents) {
 					process.nextTick(async () => {

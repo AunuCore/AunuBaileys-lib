@@ -8,11 +8,11 @@ import { test } from 'node:test'
 import assert from 'node:assert'
 import { makeOfflineSocket, fakeOpenTransport, silentLogger, sleep, endQuietly } from './helpers.mjs'
 import { WebSocketClient } from '../lib/Socket/Client/websocket.js'
-import { decodeBinaryNode, getBinaryNodeChild, jidEncode } from '../lib/WABinary/index.js'
+import { decodeBinaryNode, getBinaryNodeChild, getBizBinaryNode, jidEncode } from '../lib/WABinary/index.js'
 // No real connection attempts anywhere in this file.
 WebSocketClient.prototype.connect = () => {}
 import { makeLibSignalRepository } from '../lib/Signal/libsignal.js'
-import { generateWAMessageContent, encryptPollVote, getMeParticipant, getQuotedParticipant } from '../lib/Utils/messages.js'
+import { generateWAMessageContent, encryptPollVote, getMeParticipant, getQuotedParticipant, shouldIncludeBizBinaryNode } from '../lib/Utils/messages.js'
 import { decryptPollVote } from '../lib/Utils/process-message.js'
 import { sha256, Curve, generateSignalPubKey, signedKeyPair } from '../lib/Utils/crypto.js'
 import { waproto } from '../WAProto/index.js'
@@ -751,6 +751,218 @@ test('HB-475: throwing userDevicesCache.mget falls back to the USync fetch', asy
 		const devices = await sock.getUSyncDevices([PEER], true, false)
 		assert.equal(devices.length, 1)
 		assert.equal(devices[0].jid, jidEncode(PEER_USER, 's.whatsapp.net', 0))
+	} finally {
+		endQuietly(sock)
+	}
+})
+
+// --- HB-500: interactive / a2ui branches restored (2.7.1) ---
+// The v7 port lost the whole interactive send surface: the
+// generateWAMessageContent branches, the a2ui post-processing, the
+// interactiveAsTemplate wrap, the button-icon helper, and the
+// relay's <biz> companion node. These tests call the REAL
+// generateWAMessageContent / sendMessage / relayMessage — the
+// 2.7.0 offline tarball probe missed the regression precisely
+// because it stubbed sendMessage.
+
+test('HB-500: { interactive } builds an interactiveMessage with nativeFlowMessage', async () => {
+	const m = await generateWAMessageContent(
+		{
+			interactive: {
+				header: { title: 'Judul', hasMediaAttachment: false },
+				body: { text: 'Isi kartu' },
+				footer: { text: 'Kaki' },
+				buttons: [{ name: 'quick_reply', buttonParamsJson: JSON.stringify({ display_text: 'Ya', id: 'ya' }) }]
+			}
+		},
+		{}
+	)
+	assert.ok(m.interactiveMessage, 'expected interactiveMessage')
+	assert.equal(m.interactiveMessage.body.text, 'Isi kartu')
+	assert.equal(m.interactiveMessage.footer.text, 'Kaki')
+	assert.equal(m.interactiveMessage.nativeFlowMessage.buttons.length, 1)
+	assert.equal(m.interactiveMessage.nativeFlowMessage.messageParamsJson, '')
+	assert.equal(m.messageContextInfo.deviceListMetadataVersion, 2)
+})
+
+test('HB-500: interactive text/footerText shorthands fill body/footer', async () => {
+	const m = await generateWAMessageContent({ interactive: { text: 'Isi', footerText: 'Kaki' } }, {})
+	assert.equal(m.interactiveMessage.body.text, 'Isi')
+	assert.equal(m.interactiveMessage.footer.text, 'Kaki')
+})
+
+test('HB-500: interactive carousel builds a carouselMessage', async () => {
+	const m = await generateWAMessageContent(
+		{
+			interactive: {
+				carousel: [
+					{
+						title: 'Kartu 1',
+						body: 'Isi kartu',
+						buttons: [{ name: 'quick_reply', buttonParamsJson: '{"display_text":"Pilih","id":"p1"}' }]
+					}
+				]
+			}
+		},
+		{}
+	)
+	assert.ok(m.interactiveMessage.carouselMessage, 'expected carouselMessage')
+	assert.equal(m.interactiveMessage.carouselMessage.messageVersion, 1)
+	assert.equal(m.interactiveMessage.carouselMessage.cards[0].header.title, 'Kartu 1')
+	assert.ok(!m.interactiveMessage.nativeFlowMessage, 'carousel form must not also set nativeFlowMessage')
+})
+
+test('HB-500: button icon is upper-cased into buttonParamsJson', async () => {
+	const m = await generateWAMessageContent(
+		{
+			interactive: {
+				body: { text: 'x' },
+				buttons: [
+					{ name: 'cta_url', buttonParamsJson: '{"display_text":"Buka","url":"https://example.com"}', icon: 'web' }
+				]
+			}
+		},
+		{}
+	)
+	const params = JSON.parse(m.interactiveMessage.nativeFlowMessage.buttons[0].buttonParamsJson)
+	assert.equal(params.icon, 'WEB')
+	assert.equal(params.display_text, 'Buka')
+})
+
+test('HB-500: { interactive: null } is rejected with Boom 400', async () => {
+	await assert.rejects(generateWAMessageContent({ interactive: null }, {}), err => err?.output?.statusCode === 400)
+})
+
+test('HB-500: { a2ui } builds an interactiveMessage with a bloksWidget', async () => {
+	const payload = { uuid: 'u-1', data: '{"version":"v1"}', type: 'im_a2ui' }
+	const m = await generateWAMessageContent({ a2ui: payload, text: 'Halo' }, {})
+	assert.ok(m.interactiveMessage, 'expected interactiveMessage')
+	assert.equal(m.interactiveMessage.bloksWidget.data, payload.data)
+	assert.equal(m.interactiveMessage.nativeFlowMessage.messageParamsJson, '')
+	assert.equal(m.interactiveMessage.body.text, 'Halo')
+	assert.equal(m.interactiveMessage.header.hasMediaAttachment, false)
+	assert.equal(m.messageContextInfo.deviceListMetadataVersion, 2)
+})
+
+test('HB-500: { a2ui, singleScreen } drops the surrounding bubble', async () => {
+	const payload = { uuid: 'u-2', data: '{"version":"v1"}', type: 'im_a2ui' }
+	const m = await generateWAMessageContent({ a2ui: payload, singleScreen: true }, {})
+	assert.ok(m.interactiveMessage.bloksWidget)
+	assert.equal(m.interactiveMessage.header, undefined)
+	assert.equal(m.interactiveMessage.body, undefined)
+	assert.equal(m.interactiveMessage.footer, undefined)
+})
+
+test('HB-500: { a2ui: null } is rejected with Boom 400', async () => {
+	await assert.rejects(generateWAMessageContent({ a2ui: null }, {}), err => err?.output?.statusCode === 400)
+})
+
+test('HB-500: interactiveAsTemplate wraps the interactiveMessage', async () => {
+	const m = await generateWAMessageContent(
+		{ interactive: { body: { text: 'Isi' } }, interactiveAsTemplate: true, templateId: 'tpl-1' },
+		{}
+	)
+	assert.ok(m.templateMessage, 'expected templateMessage')
+	assert.equal(m.templateMessage.templateId, 'tpl-1')
+	assert.equal(m.templateMessage.interactiveMessageTemplate.body.text, 'Isi')
+	assert.equal(m.messageContextInfo.deviceListMetadataVersion, 2)
+})
+
+test('HB-500: interactiveAsTemplate without an interactive message is Boom 400', async () => {
+	await assert.rejects(
+		generateWAMessageContent({ text: 'x', interactiveAsTemplate: true }, {}),
+		err => err?.output?.statusCode === 400
+	)
+})
+
+test('HB-500: shouldIncludeBizBinaryNode / getBizBinaryNode cover the biz classes', () => {
+	assert.equal(shouldIncludeBizBinaryNode({ interactiveMessage: { nativeFlowMessage: {} } }), true)
+	assert.equal(shouldIncludeBizBinaryNode({ listMessage: {} }), true)
+	assert.equal(shouldIncludeBizBinaryNode({ templateMessage: {} }), true)
+	assert.equal(shouldIncludeBizBinaryNode({ buttonsMessage: {} }), true)
+	assert.equal(shouldIncludeBizBinaryNode({ conversation: 'x' }), false)
+
+	const mixed = getBizBinaryNode({
+		interactiveMessage: { nativeFlowMessage: { buttons: [{ name: 'quick_reply' }] } }
+	})
+	assert.equal(mixed.tag, 'biz')
+	assert.ok(
+		mixed.content.some(node => node.tag === 'interactive'),
+		'expected the mixed native-flow child'
+	)
+	assert.ok(
+		mixed.content.some(node => node.tag === 'quality_control'),
+		'expected the quality_control child'
+	)
+
+	const flow = getBizBinaryNode({ interactiveMessage: { nativeFlowMessage: { buttons: [{ name: 'mpm' }] } } })
+	const flowChild = flow.content.find(node => node.tag === 'interactive')
+	assert.equal(flowChild.content[0].attrs.name, 'mpm')
+
+	const list = getBizBinaryNode({ listMessage: {} })
+	assert.equal(list.content[0].tag, 'list')
+
+	const plain = getBizBinaryNode({ conversation: 'x' })
+	assert.equal(plain.content.length, 1)
+	assert.equal(plain.content[0].tag, 'quality_control')
+})
+
+test('HB-500: an interactive sendMessage stanza carries the <biz> node (text control does not)', async () => {
+	const { sock, frames } = await makeSendSocket()
+	try {
+		await seedDevices(sock, [ME_USER, PEER_USER])
+		await injectSessions(sock, [PEER, ME])
+		await suppressTcTokenIssuance(sock, PEER)
+		await sock.sendMessage(PEER, {
+			interactive: {
+				body: { text: 'Isi kartu' },
+				buttons: [{ name: 'quick_reply', buttonParamsJson: JSON.stringify({ display_text: 'Ya', id: 'ya' }) }]
+			}
+		})
+		const stanzas = await messageStanzas(frames)
+		assert.equal(stanzas.length, 1)
+		assert.ok(getBinaryNodeChild(stanzas[0], 'biz'), 'interactive stanza must carry a <biz> node')
+
+		frames.length = 0
+		await sock.sendMessage(PEER, { text: 'kontrol-500' })
+		const control = await messageStanzas(frames)
+		assert.equal(control.length, 1)
+		assert.equal(getBinaryNodeChild(control[0], 'biz'), undefined, 'plain text must not carry a <biz> node')
+	} finally {
+		endQuietly(sock)
+	}
+})
+
+// --- HB-502: relayMessage messageSecret parity (2.7.1) ---
+
+test('HB-502: relayMessage stamps a messageSecret on a hand-built proto that lacks one', async () => {
+	const { sock, frames } = await makeSendSocket()
+	try {
+		await seedDevices(sock, [ME_USER, PEER_USER])
+		await injectSessions(sock, [PEER, ME])
+		await suppressTcTokenIssuance(sock, PEER)
+		const proto = {
+			interactiveMessage: {
+				body: { text: 'Kartu tangan' },
+				nativeFlowMessage: {
+					buttons: [{ name: 'quick_reply', buttonParamsJson: JSON.stringify({ display_text: 'Ya', id: 'ya' }) }],
+					messageParamsJson: ''
+				}
+			},
+			messageContextInfo: { deviceListMetadata: {}, deviceListMetadataVersion: 2 }
+		}
+		await sock.relayMessage(PEER, proto, {})
+		assert.ok(proto.messageContextInfo.messageSecret, 'relay must stamp messageSecret')
+		assert.equal(proto.messageContextInfo.messageSecret.length, 32)
+		const stanzas = await messageStanzas(frames)
+		assert.equal(stanzas.length, 1)
+		assert.ok(getBinaryNodeChild(stanzas[0], 'biz'), 'hand-relayed interactive stanza must carry a <biz> node')
+
+		// An existing secret is never overwritten.
+		const existing = Buffer.alloc(32, 9)
+		const proto2 = { conversation: 'teks', messageContextInfo: { messageSecret: existing } }
+		await sock.relayMessage(PEER, proto2, {})
+		assert.equal(proto2.messageContextInfo.messageSecret, existing)
 	} finally {
 		endQuietly(sock)
 	}
