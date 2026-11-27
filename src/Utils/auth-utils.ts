@@ -347,7 +347,14 @@ export const addTransactionCapability = (
 	 */
 	const canonicaliseValue = (value: unknown, seen: Set<object>): string => {
 		if (value === undefined) return 'u'
-		if (value === null) return 'n'
+		// AunuBaileys (2.8.0, HB-493): null and undefined are both
+		// "absent" markers — the transaction read-set records null,
+		// the pre-commit snapshot leaves the key absent (undefined),
+		// and the multi-file store returns null for a missing file.
+		// Distinguishing them made the freshness check report a
+		// read-absent-then-write transaction as stale on an
+		// unchanged store.
+		if (value === null) return 'u'
 		if (typeof value === 'boolean') return value ? 't' : 'f'
 		if (typeof value === 'number') return Number.isNaN(value) ? 'NaN' : `num:${value}`
 		if (typeof value === 'bigint') return `big:${value.toString()}`

@@ -223,16 +223,21 @@ const encodeBinaryNodeInner = (
 		throw new Error('Invalid node: tag cannot be undefined')
 	}
 
-	const validAttributes = Object.keys(attrs || {}).filter(k => typeof attrs[k] !== 'undefined' && attrs[k] !== null)
+	// AunuBaileys (2.8.0, HB-508): only string attrs are ever written
+	// below, so only string attrs may be counted here. Counting a
+	// non-string, non-null value (a numeric business-hours field, a
+	// numeric list-item id, a non-string host value in `to`) inflated
+	// the declared list size past the pairs actually emitted and
+	// produced a malformed frame. Non-string attrs are dropped,
+	// exactly like undefined/null ones already were.
+	const validAttributes = Object.keys(attrs || {}).filter(k => typeof attrs[k] === 'string')
 
 	writeListStart(2 * validAttributes.length + 1 + (typeof content !== 'undefined' ? 1 : 0))
 	writeString(tag)
 
 	for (const key of validAttributes) {
-		if (typeof attrs[key] === 'string') {
-			writeString(key)
-			writeString(attrs[key])
-		}
+		writeString(key)
+		writeString(attrs[key])
 	}
 
 	if (typeof content === 'string') {

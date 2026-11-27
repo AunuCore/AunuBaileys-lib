@@ -169,6 +169,12 @@ export const prepareWAMessageMedia = async (
 		media: (message as any)[mediaType]
 	}
 	delete (uploadData as any)[mediaType]
+	// AunuBaileys (2.8.0, D-1103): `hd` is a send-side preview flag,
+	// not a proto field — consume it here (HD thumbnail sizing in
+	// generateThumbnail) and keep it out of the wire object. The
+	// media bytes themselves are never re-encoded either way.
+	const hdPreview = (message as { hd?: unknown }).hd === true && (mediaType === 'image' || mediaType === 'video')
+	delete (uploadData as { hd?: unknown }).hd
 	// AunuBaileys (1.0.85, HB-208 + addendum, re-applied P3b): reject an
 	// unusable media value HERE, before the cacheable-key computation below
 	// derefs it — a null media used to explode in that computation itself
@@ -197,7 +203,16 @@ export const prepareWAMessageMedia = async (
 	}
 
 	if (cacheableKey) {
-		const mediaBuff = await options.mediaCache!.get<Buffer>(cacheableKey)
+		// AunuBaileys (2.8.0, HB-511): a host mediaCache that throws
+		// (e.g. Redis down) is a cache miss, not a failed send.
+		let mediaBuff: Buffer | undefined
+		try {
+			mediaBuff = await options.mediaCache!.get<Buffer>(cacheableKey)
+		} catch (err) {
+			logger?.warn({ err, cacheableKey }, 'mediaCache get failed — treating as a cache miss')
+			mediaBuff = undefined
+		}
+
 		if (mediaBuff) {
 			logger?.debug({ cacheableKey }, 'got media cache hit')
 
@@ -268,7 +283,11 @@ export const prepareWAMessageMedia = async (
 
 		if (cacheableKey) {
 			logger?.debug({ cacheableKey }, 'set cache')
-			await options.mediaCache!.set(cacheableKey, WAProto.Message.encode(obj).finish())
+			try {
+				await options.mediaCache!.set(cacheableKey, WAProto.Message.encode(obj).finish())
+			} catch (err) {
+				logger?.warn({ err, cacheableKey }, 'mediaCache set failed — ignoring (best-effort)')
+			}
 		}
 
 		return obj
@@ -317,7 +336,7 @@ export const prepareWAMessageMedia = async (
 					const { thumbnail, originalImageDimensions } = await generateThumbnail(
 						originalFilePath!,
 						mediaType as 'image' | 'video',
-						options
+						{ ...options, hd: hdPreview }
 					)
 					uploadData.jpegThumbnail = thumbnail
 					if (!uploadData.width && originalImageDimensions) {
@@ -385,7 +404,11 @@ export const prepareWAMessageMedia = async (
 
 	if (cacheableKey) {
 		logger?.debug({ cacheableKey }, 'set cache')
-		await options.mediaCache!.set(cacheableKey, WAProto.Message.encode(obj).finish())
+		try {
+			await options.mediaCache!.set(cacheableKey, WAProto.Message.encode(obj).finish())
+		} catch (err) {
+			logger?.warn({ err, cacheableKey }, 'mediaCache set failed — ignoring (best-effort)')
+		}
 	}
 
 	return obj
@@ -635,7 +658,7 @@ export const addSoundSha256ToStickerWebP = (webp: Buffer, soundSha256Hex: string
 
 		// copy before mutating — the chunk data aliases the caller's buffer
 		vp8x.data = Buffer.from(vp8x.data)
-		vp8x.data[0] = vp8x.data[0]! | 0x20 // EXIF flag
+		vp8x.data[0] = vp8x.data[0]! | 0x08 // EXIF flag
 	} else {
 		const size = webpCanvasSize(webp)
 		if (!size || size.width < 1 || size.height < 1) {
@@ -643,7 +666,7 @@ export const addSoundSha256ToStickerWebP = (webp: Buffer, soundSha256Hex: string
 		}
 
 		const data = Buffer.alloc(10)
-		data[0] = 0x20 // EXIF flag
+		data[0] = 0x08 // EXIF flag
 		data.writeUIntLE(size.width - 1, 4, 3)
 		data.writeUIntLE(size.height - 1, 7, 3)
 		kept.unshift({ fourCC: 'VP8X', data })
@@ -1180,6 +1203,22 @@ export const generateWAMessageContent = async (
 	) {
 		m = prepareRichResponseMessage(message)
 	} else if (hasNonNullishProperty(message, 'text')) {
+		// AunuBaileys (2.8.0, HB-325 addendum (a) + HB-253 addendum
+		// (c)): a non-string text died as a raw TypeError inside the
+		// link-preview encode, and an empty string manufactured an
+		// empty extendedTextMessage that slipped past the relay's
+		// HB-253 guard. Validate up front, Boom 400 like the sibling
+		// branches. (An a2ui payload may legitimately carry an empty
+		// companion text — the a2ui post-processing below replaces
+		// this branch's output wholesale.)
+		if (typeof message.text !== 'string') {
+			throw new Boom('text must be a string', { statusCode: 400 })
+		}
+
+		if (!message.text && !('a2ui' in message)) {
+			throw new Boom('text must not be empty', { statusCode: 400 })
+		}
+
 		const extContent = { text: message.text } as WATextMessage
 
 		let urlInfo = message.linkPreview
@@ -1241,6 +1280,13 @@ export const generateWAMessageContent = async (
 
 		m.extendedTextMessage = extContent
 	} else if (hasNonNullishProperty(message, 'contacts')) {
+		// AunuBaileys (2.8.0, HB-325 addendum (b)): a non-array
+		// contacts list (or a non-object contacts value) died on
+		// the .length deref / proto create with a raw TypeError.
+		if (!message.contacts || typeof message.contacts !== 'object' || !Array.isArray(message.contacts.contacts)) {
+			throw new Boom('contacts.contacts must be an array', { statusCode: 400 })
+		}
+
 		const contactLen = message.contacts.contacts.length
 		if (!contactLen) {
 			throw new Boom('require atleast 1 contact', { statusCode: 400 })
@@ -1512,6 +1558,24 @@ export const generateWAMessageContent = async (
 
 		if (!Array.isArray(message.poll.values)) {
 			throw new Boom('Invalid poll values', { statusCode: 400 })
+		}
+
+		// AunuBaileys (2.8.0, HB-253 addendum (b) + HB-325 addenda
+		// (d)/(g)): an empty values array manufactured an empty
+		// poll that slipped past the relay guard, a non-string
+		// option element was coerced by protobufjs into garbage,
+		// and a non-string name went out unchecked. Validate all
+		// three up front, Boom 400 like the checks above.
+		if (!message.poll.values.length) {
+			throw new Boom('poll requires at least one value', { statusCode: 400 })
+		}
+
+		if (message.poll.values.some(value => typeof value !== 'string')) {
+			throw new Boom('poll values must be strings', { statusCode: 400 })
+		}
+
+		if (typeof message.poll.name !== 'string') {
+			throw new Boom('poll.name must be a string', { statusCode: 400 })
 		}
 
 		if (message.poll.selectableCount < 0 || message.poll.selectableCount > message.poll.values.length) {
@@ -1977,6 +2041,49 @@ export const generateWAMessageContent = async (
 		}
 
 		const iMsg = message.interactive
+		// AunuBaileys (2.8.0, HB-325 addendum (e)): non-array
+		// buttons / carousel (or a null button entry) died inside
+		// .map / withAunuButtonIcon with a raw TypeError.
+		// AunuBaileys (2.8.0, HB-253 addendum (a)): a bare
+		// `{ interactive: {} }` built an empty nativeFlowMessage
+		// that slipped past the relay guard — require at least
+		// one piece of content (body/text, header, footer or
+		// buttons / carousel).
+		const assertButtonList = (buttons: unknown, field: string) => {
+			if (typeof buttons !== 'undefined' && !Array.isArray(buttons)) {
+				throw new Boom(`interactive ${field} must be an array`, { statusCode: 400 })
+			}
+
+			if (Array.isArray(buttons) && buttons.some(b => !b || typeof b !== 'object')) {
+				throw new Boom(`interactive ${field} entries must be objects`, { statusCode: 400 })
+			}
+		}
+		assertButtonList(iMsg.buttons, 'buttons')
+		if (typeof iMsg.carousel !== 'undefined' && !Array.isArray(iMsg.carousel)) {
+			throw new Boom('interactive carousel must be an array', { statusCode: 400 })
+		}
+
+		if (Array.isArray(iMsg.carousel)) {
+			for (const card of iMsg.carousel) {
+				if (!card || typeof card !== 'object') {
+					throw new Boom('interactive carousel entries must be objects', { statusCode: 400 })
+				}
+
+				assertButtonList(card.buttons, 'carousel card buttons')
+			}
+		}
+
+		const hasInteractiveContent =
+			!!iMsg.body?.text ||
+			!!iMsg.text ||
+			!!iMsg.header ||
+			!!iMsg.footer?.text ||
+			!!iMsg.footerText ||
+			!!iMsg.buttons?.length ||
+			!!iMsg.carousel?.length
+		if (!hasInteractiveContent) {
+			throw new Boom('interactive requires a body, header, footer, buttons or carousel', { statusCode: 400 })
+		}
 		const interactiveMessage: waproto.Message.IInteractiveMessage = {
 			body: iMsg.body ?? (iMsg.text ? { text: iMsg.text } : undefined),
 			footer: iMsg.footer ?? (iMsg.footerText ? { text: iMsg.footerText } : undefined),
@@ -2038,11 +2145,24 @@ export const generateWAMessageContent = async (
 	// bubble so the widget is the whole message. (Restored from v6;
 	// the post-processing was lost with the branch in the v7 port.)
 	if ('a2ui' in message && message.a2ui != null) {
-		const a2uiMessage: waproto.Message.IInteractiveMessage = {
-			bloksWidget: buildAunuA2UIWidget(message.a2ui, {
+		// AunuBaileys (2.8.0, HB-325 addendum (c)): a non-widget
+		// a2ui value died inside buildAunuA2UIWidget as a raw
+		// TypeError — surface it as Boom 400 like every other
+		// content validation in this function.
+		let bloksWidget: ReturnType<typeof buildAunuA2UIWidget>
+		try {
+			bloksWidget = buildAunuA2UIWidget(message.a2ui, {
 				type: message.a2uiType,
 				wrapped: message.a2uiWrapped !== false
-			}),
+			})
+		} catch {
+			throw new Boom('a2ui must be an AunuA2UI instance or a built widget payload with a `data` string', {
+				statusCode: 400
+			})
+		}
+
+		const a2uiMessage: waproto.Message.IInteractiveMessage = {
+			bloksWidget,
 			nativeFlowMessage: { messageParamsJson: '' }
 		}
 		if (!message.singleScreen) {
@@ -2078,6 +2198,18 @@ export const generateWAMessageContent = async (
 	// like the HB-381 wrapper bug. Resolve the CONTENT key with
 	// getContentType, which skips messageContextInfo (it carries no
 	// 'Message' in its name), instead of taking the first key.
+	// AunuBaileys (2.8.0, HB-325 addendum (f)): a non-string
+	// mentions element was written into mentionedJid unchecked and
+	// coerced by protobufjs into garbage on the wire. Validate the
+	// array shape before the block below consumes it.
+	if (
+		hasOptionalProperty(message, 'mentions') &&
+		typeof message.mentions !== 'undefined' &&
+		(!Array.isArray(message.mentions) || message.mentions.some(jid => typeof jid !== 'string'))
+	) {
+		throw new Boom('mentions must be an array of JID strings', { statusCode: 400 })
+	}
+
 	if (
 		(hasOptionalProperty(message, 'mentions') && message.mentions?.length) ||
 		(hasOptionalProperty(message, 'mentionAll') && message.mentionAll)
@@ -2217,6 +2349,19 @@ export const generateWAMessageFromContent = (
 		// there is nothing to quote — Boom 400.
 		if (!quoted.key?.id) {
 			throw new Boom('cannot quote a message without a key id', { statusCode: 400 })
+		}
+
+		// AunuBaileys (2.8.0, HB-325 addendum (h)): the HB-408
+		// guard above only checks truthiness — a non-string key.id
+		// or remoteJid (number / object from a JSON-minded host)
+		// was written into stanzaId / remoteJid and coerced by
+		// protobufjs into garbage. Require strings up front.
+		if (typeof quoted.key.id !== 'string') {
+			throw new Boom('cannot quote a message with a non-string key id', { statusCode: 400 })
+		}
+
+		if (typeof quoted.key.remoteJid !== 'undefined' && typeof quoted.key.remoteJid !== 'string') {
+			throw new Boom('cannot quote a message with a non-string key remoteJid', { statusCode: 400 })
 		}
 
 		if (!quoted.message) {

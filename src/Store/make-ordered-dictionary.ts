@@ -1,6 +1,12 @@
 function makeOrderedDictionary<T>(idGetter: (item: T) => string) {
 	const array: T[] = []
-	const dict: { [id: string]: T } = {}
+	// AunuBaileys (2.8.0, HB-507): ids arrive verbatim from peer
+	// protocol messages, so '__proto__' is a reachable id. On a plain
+	// object, get('__proto__') returned Object.prototype itself and
+	// updateAssign then Object.assign-ed onto it — polluting every
+	// object in the process. A null-prototype dict makes '__proto__',
+	// 'constructor' and 'prototype' ordinary own keys.
+	const dict: { [id: string]: T } = Object.create(null)
 
 	const get = (id: string) => dict[id]
 

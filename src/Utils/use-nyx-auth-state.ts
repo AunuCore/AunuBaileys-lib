@@ -1,5 +1,5 @@
 import { randomBytes, scryptSync, createCipheriv, createDecipheriv } from 'node:crypto'
-import { mkdir, readFile, readdir, rename, stat, unlink, writeFile } from 'node:fs/promises'
+import { mkdir, open, readFile, readdir, rename, stat, unlink, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { gunzipSync, gzipSync } from 'node:zlib'
 import type { AuthenticationState } from '../Types'
@@ -45,6 +45,42 @@ const parseCredsShape = (raw: string): boolean => {
 	}
 }
 
+// AunuBaileys (2.8.0, HB-365 addendum facet 1): every tmp+rename
+// writer in this file (and FileBanGuardStore.save) skipped the
+// fsync half of the HB-365 pattern — tmp+rename is atomic but not
+// durable, so a power loss in the flush window silently reverted a
+// persist that had already reported success. fsync the tmp file
+// before its rename and the folder after it, best-effort exactly
+// like atomicWriteFile in use-multi-file-auth-state.ts.
+const fsyncFile = async (filePath: string): Promise<void> => {
+	try {
+		const handle = await open(filePath, 'r')
+		try {
+			await handle.sync()
+		} finally {
+			await handle.close()
+		}
+	} catch {}
+}
+
+const fsyncDir = async (dirPath: string): Promise<void> => {
+	try {
+		const handle = await open(dirPath, 'r')
+		try {
+			await handle.sync()
+		} finally {
+			await handle.close()
+		}
+	} catch {}
+}
+
+const writeFileDurable = async (tmpPath: string, contents: string | Buffer, targetPath: string, folder: string): Promise<void> => {
+	await writeFile(tmpPath, contents, { mode: 0o600 })
+	await fsyncFile(tmpPath)
+	await rename(tmpPath, targetPath)
+	await fsyncDir(folder)
+}
+
 // Runs BEFORE the base loader reads creds.json: a valid creds
 // file is untouched; a missing or corrupt/invalid one is restored
 // from creds.json.bak when the backup is valid, and a
@@ -75,6 +111,7 @@ const recoverCreds = async (folder: string, logger?: ILogger): Promise<void> => 
 		const quarantine = join(folder, `${CREDS_FILE}.corrupt-${Date.now()}`)
 		try {
 			await rename(credsPath, quarantine)
+			await fsyncDir(folder)
 			logger?.warn({ file: quarantine }, 'aunu: nyx quarantined a corrupt creds.json')
 		} catch (error) {
 			logger?.warn(
@@ -102,8 +139,7 @@ const recoverCreds = async (folder: string, logger?: ILogger): Promise<void> => 
 
 	const tmpPath = join(folder, `${CREDS_FILE}.tmp-nyx-${process.pid}-${randomBytes(4).toString('hex')}`)
 	try {
-		await writeFile(tmpPath, bakRaw, { mode: 0o600 })
-		await rename(tmpPath, credsPath)
+		await writeFileDurable(tmpPath, bakRaw, credsPath, folder)
 		logger?.info('aunu: nyx restored creds.json from creds.json.bak')
 	} catch (error) {
 		await unlink(tmpPath).catch(() => {})
@@ -132,8 +168,7 @@ export const useNyxAuthState = async (
 			const credsRaw = await readFile(join(folder, CREDS_FILE), 'utf-8')
 			const tmpPath = join(folder, `${BACKUP_FILE}.tmp-nyx-${process.pid}-${randomBytes(4).toString('hex')}`)
 			try {
-				await writeFile(tmpPath, credsRaw, { mode: 0o600 })
-				await rename(tmpPath, join(folder, BACKUP_FILE))
+				await writeFileDurable(tmpPath, credsRaw, join(folder, BACKUP_FILE), folder)
 			} catch (error) {
 				await unlink(tmpPath).catch(() => {})
 				throw error
@@ -250,7 +285,27 @@ const isStrictBase64 = (value: string): boolean => {
  * as it was. Files the bundle does not carry are left alone.
  */
 export const importSessionBackup = async (folder: string, backup: Buffer, opts?: { password?: string }): Promise<void> => {
-	const parsed = JSON.parse(backup.toString('utf-8')) as Record<string, unknown>
+	// AunuBaileys (2.8.0, HB-478 addendum facets 7/8/9): one
+	// validation gate at the door — a non-Buffer argument died as a
+	// raw TypeError/RangeError in backup.toString, non-JSON bytes as
+	// a raw SyntaxError from JSON.parse, and a JSON null/array
+	// top level as a raw TypeError on the first deref. All three are
+	// host input errors and get the descriptive aunu: error the rest
+	// of this function already uses.
+	if (!Buffer.isBuffer(backup)) {
+		throw new Error('aunu: nyx session backup must be a Buffer')
+	}
+
+	let parsed: Record<string, unknown>
+	try {
+		parsed = JSON.parse(backup.toString('utf-8')) as Record<string, unknown>
+	} catch {
+		throw new Error('aunu: nyx session backup is not valid JSON')
+	}
+
+	if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) {
+		throw new Error('aunu: nyx session backup is not a recognised AunuBaileys session backup')
+	}
 
 	let bundle: SessionBackupBundle
 	if (parsed.encrypted === true) {
@@ -347,6 +402,37 @@ export const importSessionBackup = async (folder: string, backup: Buffer, opts?:
 		if (parsedPayload === null || typeof parsedPayload !== 'object') {
 			throw new Error(`aunu: nyx backup carries a non-JSON payload: ${name}`)
 		}
+
+		// AunuBaileys (2.8.0, HB-478 addendum facet 5): an array is
+		// an object to typeof — a JSON array payload passed every
+		// gate above and overwrote a good key file with a value the
+		// loader reads back as a broken record. No store file is an
+		// array; refuse it like the other non-object payloads.
+		if (Array.isArray(parsedPayload)) {
+			throw new Error(`aunu: nyx backup carries an array payload: ${name}`)
+		}
+
+		// AunuBaileys (2.8.0, HB-478 addendum facet 6): a wrong-shape
+		// object ({"foo":1}) passed every gate above and overwrote a
+		// good key file — SessionRecord.deserialize does not throw
+		// on it, it silently yields an EMPTY record, so the session
+		// vanished without any error anywhere. For the key-file
+		// categories, require at least one recognised record marker
+		// (a serialised session record, a BufferJSON byte value, or
+		// a key pair / sync-key body); an object with none of them
+		// is not a store record of any known kind.
+		if (/^(session|pre-key|sender-key|app-state-sync-key)-/.test(name)) {
+			const record = parsedPayload as Record<string, unknown>
+			const hasMarker =
+				'_sessions' in record ||
+				(record.type === 'Buffer' && typeof record.data === 'string') ||
+				'public' in record ||
+				'private' in record ||
+				'keyData' in record
+			if (!hasMarker) {
+				throw new Error(`aunu: nyx backup carries a payload that is not a recognised store record: ${name}`)
+			}
+		}
 	}
 
 	// AunuBaileys (2.6.0, HB-478): well-formed base64 can still be
@@ -373,6 +459,7 @@ export const importSessionBackup = async (folder: string, backup: Buffer, opts?:
 			const contents = Buffer.from(bundle.files[name] as string, 'base64')
 			const tmpPath = join(folder, `${name}.tmp-import-${process.pid}-${randomBytes(4).toString('hex')}`)
 			await writeFile(tmpPath, contents, { mode: 0o600 })
+			await fsyncFile(tmpPath)
 			staged.push({ name, tmpPath })
 		}
 	} catch (error) {
@@ -410,6 +497,8 @@ export const importSessionBackup = async (folder: string, backup: Buffer, opts?:
 			await rename(tmpPath, join(folder, name))
 			renamed.push({ name, tmpPath })
 		}
+
+		await fsyncDir(folder)
 	} catch (error) {
 		// Roll back in reverse order, best-effort: a failed rollback
 		// must never mask the original error. The snapshot bytes go
@@ -422,8 +511,7 @@ export const importSessionBackup = async (folder: string, backup: Buffer, opts?:
 			} else if (snapshot !== undefined) {
 				const rollbackTmp = join(folder, `${name}.tmp-import-rollback-${process.pid}-${randomBytes(4).toString('hex')}`)
 				try {
-					await writeFile(rollbackTmp, snapshot, { mode: 0o600 })
-					await rename(rollbackTmp, join(folder, name))
+					await writeFileDurable(rollbackTmp, snapshot, join(folder, name), folder)
 				} catch {
 					await unlink(rollbackTmp).catch(() => {})
 				}

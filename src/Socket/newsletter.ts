@@ -1,3 +1,4 @@
+import { Boom } from '@hapi/boom'
 import type { NewsletterCreateResponse, SocketConfig, WAMediaUpload } from '../Types'
 import type { NewsletterMetadata, NewsletterUpdate } from '../Types'
 import { QueryIds, XWAPaths } from '../Types'
@@ -31,21 +32,82 @@ const parseNewsletterCreateResponse = (response: NewsletterCreateResponse): News
 	}
 }
 
-const parseNewsletterMetadata = (result: unknown): NewsletterMetadata | null => {
-	if (typeof result !== 'object' || result === null) {
+// AunuBaileys (2.8.0, newsletter metadata resilience, diezysync
+// candidate): the metadata query rotates over three recorded query
+// IDs — ours first, then the two fallback IDs the donor recorded —
+// because the server retires metadata query IDs independently of
+// the client release cycle.
+export const NEWSLETTER_METADATA_QUERY_IDS: readonly string[] = [QueryIds.METADATA, '6620195908089573', '27456920720571478']
+
+const isRecord = (value: unknown): value is Record<string, unknown> => {
+	return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
+const asNewsletterMetadata = (value: unknown): NewsletterMetadata | null => {
+	if (!isRecord(value)) {
 		return null
 	}
 
-	if ('id' in result && typeof result.id === 'string') {
-		return result as NewsletterMetadata
+	// the raw create-shaped payload (thread_metadata/viewer_metadata)
+	// is checked first: it also carries an id, but its name/description
+	// only exist nested under thread_metadata.
+	if (isRecord(value.thread_metadata)) {
+		return parseNewsletterCreateResponse(value as unknown as NewsletterCreateResponse)
 	}
 
-	if ('result' in result && typeof result.result === 'object' && result.result !== null && 'id' in result.result) {
-		return result.result as NewsletterMetadata
+	if (typeof value.id === 'string' && value.id) {
+		return value as unknown as NewsletterMetadata
 	}
 
 	return null
 }
+
+/**
+ * AunuBaileys (2.8.0): tolerant newsletter-metadata extraction —
+ * accepts the payload as an object or a JSON string, and looks for
+ * the metadata under the recorded data paths (the payload itself,
+ * `xwa2_newsletter_metadata`, `xwa2_newsletter`, `result`, or the
+ * first object value that carries one) instead of only the two
+ * shapes the old parser knew. Returns null when nothing in the
+ * payload is a newsletter metadata.
+ */
+export const extractNewsletterMetadata = (result: unknown): NewsletterMetadata | null => {
+	let value = result
+	if (typeof value === 'string') {
+		try {
+			value = JSON.parse(value)
+		} catch {
+			return null
+		}
+	}
+
+	if (!isRecord(value)) {
+		return null
+	}
+
+	const direct = asNewsletterMetadata(value)
+	if (direct) {
+		return direct
+	}
+
+	for (const key of ['xwa2_newsletter_metadata', 'xwa2_newsletter', 'result']) {
+		const nested = asNewsletterMetadata(value[key])
+		if (nested) {
+			return nested
+		}
+	}
+
+	for (const nested of Object.values(value)) {
+		const found = asNewsletterMetadata(nested)
+		if (found) {
+			return found
+		}
+	}
+
+	return null
+}
+
+const parseNewsletterMetadata = (result: unknown): NewsletterMetadata | null => extractNewsletterMetadata(result)
 
 export const makeNewsletterSocket = (config: SocketConfig) => {
 	const sock = makeGroupsSocket(config)
@@ -103,8 +165,28 @@ export const makeNewsletterSocket = (config: SocketConfig) => {
 					type: type.toUpperCase()
 				}
 			}
-			const result = await executeWMexQuery<unknown>(variables, QueryIds.METADATA, XWAPaths.xwa2_newsletter_metadata)
-			return parseNewsletterMetadata(result)
+			// AunuBaileys (2.8.0): rotate over the recorded metadata
+			// query IDs — the first ID whose response extracts to a
+			// metadata wins; if every ID fails, the last error is
+			// thrown instead of returning a silent null.
+			let lastError: unknown
+			for (const queryId of NEWSLETTER_METADATA_QUERY_IDS) {
+				try {
+					const result = await executeWMexQuery<unknown>(variables, queryId, XWAPaths.xwa2_newsletter_metadata)
+					const meta = parseNewsletterMetadata(result)
+					if (meta) {
+						return meta
+					}
+
+					lastError = new Boom(`newsletter metadata query ${queryId} returned no usable metadata`, {
+						statusCode: 502
+					})
+				} catch (err) {
+					lastError = err
+				}
+			}
+
+			throw lastError instanceof Error ? lastError : new Boom('newsletter metadata query failed', { statusCode: 502 })
 		},
 
 		// AunuBaileys (2.2.0, HB-357): runAutoJoinChannels has
@@ -197,6 +279,15 @@ export const makeNewsletterSocket = (config: SocketConfig) => {
 					}
 				]
 			})
+			// AunuBaileys (2.8.0, HB-435 addendum facet 3): a timed-out
+			// get IQ resolves query() as undefined (HB-340 contract) and
+			// the raw undefined used to leak to the host, which died as a
+			// TypeError on first use. Fail with Boom 408, like the
+			// fetch-all paths (facet 2).
+			if (!result) {
+				throw new Boom('newsletterFetchMessages timed out waiting for the IQ response', { statusCode: 408 })
+			}
+
 			return result
 		},
 

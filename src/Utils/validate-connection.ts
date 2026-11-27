@@ -25,8 +25,24 @@ const getUserAgent = (config: SocketConfig): waproto.ClientPayload.IUserAgent =>
 	// undefined threw a raw TypeError here. The makeWASocket boundary
 	// sanitises first; this is the second layer for direct callers of
 	// these exported utils.
-	const version = Array.isArray(config.version) && config.version.length >= 3 ? config.version : [2, 3000, 1043857760]
-	const browserName = config.browser?.[1] ?? 'Chrome'
+	// AunuBaileys (2.8.0, HB-335 addendum): the length-only check let
+	// wrong-typed elements through — string version elements were
+	// silently coerced to 0 by protobufjs (appVersion 0.0.0) and a
+	// numeric browser element died as a raw TypeError on
+	// toLocaleLowerCase. Require the same shapes the makeWASocket
+	// boundary requires (3 finite numbers / 3 strings), else default.
+	const version =
+		Array.isArray(config.version) &&
+		config.version.length === 3 &&
+		config.version.every(element => typeof element === 'number' && Number.isFinite(element))
+			? config.version
+			: [2, 3000, 1043857760]
+	const browserName =
+		Array.isArray(config.browser) &&
+		config.browser.length === 3 &&
+		config.browser.every(element => typeof element === 'string')
+			? config.browser[1]
+			: 'Chrome'
 	return {
 		appVersion: {
 			primary: version[0],
@@ -73,7 +89,10 @@ const getClientPayload = (config: SocketConfig) => {
 		userAgent: getUserAgent(config)
 	}
 
-	if (!config.browser?.[1]?.toLocaleLowerCase()?.includes('android')) {
+	// AunuBaileys (2.8.0, HB-335 addendum): a non-string browser
+	// element survived optional chaining here and died on
+	// toLocaleLowerCase — only a string element may take this test.
+	if (!(typeof config.browser?.[1] === 'string' && config.browser[1].toLocaleLowerCase().includes('android'))) {
 		payload.webInfo = getWebInfo(config)
 	}
 
@@ -182,14 +201,30 @@ export const generateRegistrationNode = (
 	// the app version needs to be md5 hashed
 	// and passed in
 	// AunuBaileys (2.1.0, HB-335): v6 1.0.70 guard, see getUserAgent above.
-	const safeVersion = Array.isArray(config.version) && config.version.length ? config.version : [2, 3000, 1043857760]
+	// AunuBaileys (2.8.0, HB-335 addendum): same element-type gate as
+	// getUserAgent — a string-element version hashed into a bogus
+	// build hash and claimed appVersion 0.0.0 on the wire.
+	const safeVersion =
+		Array.isArray(config.version) &&
+		config.version.length === 3 &&
+		config.version.every(element => typeof element === 'number' && Number.isFinite(element))
+			? config.version
+			: [2, 3000, 1043857760]
 	const appVersionBuf = createHash('md5')
 		.update(safeVersion.join('.')) // join as string
 		.digest()
 
+	// AunuBaileys (2.8.0, HB-335 addendum): the companion props below
+	// deref config.browser directly — a numeric element died in
+	// getPlatformType as a raw TypeError. Per-element string gate
+	// (a short-but-string browser keeps working, HB-335 original):
+	// a non-string element falls back to the Chrome default.
+	const safeBrowserOs = typeof config.browser?.[0] === 'string' && config.browser[0] ? config.browser[0] : 'Chrome'
+	const safeBrowserName =
+		typeof config.browser?.[1] === 'string' && config.browser[1] ? config.browser[1] : 'Chrome'
 	const companion: waproto.IDeviceProps = {
-		os: config.browser?.[0] || 'Chrome',
-		platformType: getPlatformType(config.browser?.[1] || 'Chrome'),
+		os: safeBrowserOs,
+		platformType: getPlatformType(safeBrowserName),
 		requireFullSync: config.syncFullHistory,
 		historySyncConfig: {
 			storageQuotaMb: 10240,
@@ -378,7 +413,13 @@ export const configureSuccessfulPairing = (
 	])
 	account.deviceSignature = Curve.sign(signedIdentityKey.private, deviceMsg)
 
-	const identity = createSignalIdentity(lid!, accountSignatureKey!)
+	// AunuBaileys (2.8.0, HB-239 lid facet): lid is optional on a
+	// pair-success stanza (me.lid stays undefined legally) — but a
+	// signal identity stored under an undefined name is a dead entry
+	// that never matches any lookup. Skip identity creation when the
+	// stanza carries no lid instead of storing the nameless entry.
+	const identity =
+		typeof lid === 'string' && lid ? createSignalIdentity(lid, accountSignatureKey!) : undefined
 	const accountEnc = encodeSignedDeviceIdentity(account, false)
 
 	// AunuBaileys (2.3.0, HB-239 addendum): `keyIndex` is an
@@ -417,7 +458,7 @@ export const configureSuccessfulPairing = (
 	const authUpdate: Partial<AuthenticationCreds> = {
 		account,
 		me: { id: jid!, name: bizName, lid },
-		signalIdentities: [...(signalIdentities || []), identity],
+		signalIdentities: identity ? [...(signalIdentities || []), identity] : [...(signalIdentities || [])],
 		platform: platformNode?.attrs.name
 	}
 

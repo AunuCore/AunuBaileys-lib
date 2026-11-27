@@ -424,10 +424,15 @@ export const useMultiFileAuthState = async (
 					}
 
 					const written: string[] = []
+					// AunuBaileys (2.8.0, HB-2026-1112-38 addendum): the
+					// exact bytes THIS commit wrote per file, for the
+					// rollback freshness check below.
+					const writtenContents = new Map<string, string>()
 					try {
 						for (const { file, value } of writes) {
 							await writeData(value, file)
 							written.push(file)
+							writtenContents.set(file, JSON.stringify(value, BufferJSON.replacer))
 						}
 					} catch (err) {
 						// Roll back in reverse order, best-effort: a
@@ -435,6 +440,25 @@ export const useMultiFileAuthState = async (
 						// masks the original error.
 						for (const file of written.reverse()) {
 							try {
+								// AunuBaileys (2.8.0, HB-2026-1112-38
+								// addendum): a SECOND writer sharing this
+								// folder (its own transaction wrapper, its
+								// own writeMutex) may have committed a
+								// newer value to this file after we wrote
+								// ours. Rolling back over it would silently
+								// erase that commit. Only restore a file
+								// whose current bytes are still exactly
+								// the bytes this commit wrote; a file that
+								// has moved on belongs to the other writer.
+								const currentBytes = await readRawData(file).catch(() => undefined)
+								if (currentBytes !== undefined && currentBytes !== writtenContents.get(file)) {
+									logger?.warn(
+										{ file },
+										'aunu: skipping rollback of an auth file another writer has since updated — keeping the newer commit'
+									)
+									continue
+								}
+
 								const snapshot = snapshots.get(file)
 								if (snapshot === null || snapshot === undefined) {
 									await removeData(file)

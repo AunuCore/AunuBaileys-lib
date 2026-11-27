@@ -26,7 +26,7 @@
  *   jadi tidak ada interval/listener yang perlu dibersihkan.
  */
 import { Boom } from '@hapi/boom'
-import { existsSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 'fs'
+import { closeSync, existsSync, fsyncSync, mkdirSync, openSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 'fs'
 import { dirname, join } from 'path'
 import type { ILogger } from './logger'
 
@@ -178,7 +178,7 @@ export class FileBanGuardStore implements BanGuardStore {
 		this.path = path
 	}
 
-	/** true setelah satu penulisan gagal (store ini berhenti mencoba menulis). */
+	/** true bila penulisan terakhir gagal (percobaan berikutnya tetap dicoba). */
 	get hasFailed(): boolean {
 		return this.failed
 	}
@@ -197,15 +197,38 @@ export class FileBanGuardStore implements BanGuardStore {
 	}
 
 	save(record: BanGuardRecord): boolean {
-		if (this.failed) {
-			return false
-		}
-
+		// AunuBaileys (2.8.0, HB-497): do not latch permanently on
+		// one transient failure — retry the write on every save;
+		// `failed` only reflects the most recent attempt.
 		const tmpPath = `${this.path}.tmp-${process.pid}`
 		try {
 			mkdirSync(dirname(this.path), { recursive: true })
 			writeFileSync(tmpPath, JSON.stringify(record, null, 2))
+			// AunuBaileys (2.8.0, HB-365 addendum facet 1): fsync the
+			// tmp file before the rename and the directory after it —
+			// tmp+rename alone is atomic but not durable (see the
+			// HB-365 pattern in use-multi-file-auth-state.ts).
+			// Best-effort: a filesystem that cannot fsync must not
+			// fail the save.
+			try {
+				const tmpFd = openSync(tmpPath, 'r')
+				try {
+					fsyncSync(tmpFd)
+				} finally {
+					closeSync(tmpFd)
+				}
+			} catch {}
+
 			renameSync(tmpPath, this.path)
+			try {
+				const dirFd = openSync(dirname(this.path), 'r')
+				try {
+					fsyncSync(dirFd)
+				} finally {
+					closeSync(dirFd)
+				}
+			} catch {}
+			this.failed = false
 			return true
 		} catch {
 			this.failed = true
@@ -218,6 +241,7 @@ export class FileBanGuardStore implements BanGuardStore {
 	}
 
 	clear(): void {
+		this.failed = false
 		try {
 			unlinkSync(this.path)
 		} catch {}

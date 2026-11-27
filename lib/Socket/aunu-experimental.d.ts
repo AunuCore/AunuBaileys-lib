@@ -75,6 +75,13 @@
  * 29. A2UI widget — `aunuSendA2UI`: send a declarative A2UI widget
  *     (Text/Image/Video/Button/Card/Column/Row) as an interactive
  *     message carrying `bloksWidget`.
+ * 30. Chat theme — `aunuSendChatTheme`: set/clear a chat theme via
+ *    protocolMessage CHAT_THEME_SETTING (ChatThemeSetting proto).
+ * 31. HD preview — `aunuSendHD`: image/video send with an enlarged
+ *    (200px) thumbnail; media bytes are never re-encoded.
+ * 32. AI rich-tag card — `aunuSendAIRichTagCard`: rich response in a
+ *    botForwardedMessage envelope tagged with model/invoker/caps
+ *    botMetadata (buildAIRichTagCard in Utils/builders).
  * 36. Emoji sticker — `aunuSendEmojiSticker`: render one emoji
  *     (single codepoint, VS16, skin tone or ZWJ sequence) as a large
  *     transparent 512x512 WebP sticker from its Twemoji asset and

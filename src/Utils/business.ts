@@ -185,7 +185,11 @@ export const toProductNode = (productId: string | undefined, product: ProductCre
 		})
 	}
 
-	if (typeof product.price !== 'undefined') {
+	// AunuBaileys (2.8.0, HB-208 addendum): the guard only excluded
+	// undefined — a null price (JSON-minded host) died on .toString()
+	// with a raw TypeError. Treat null like undefined, here and for
+	// isHidden below.
+	if (typeof product.price !== 'undefined' && product.price !== null) {
 		content.push({
 			tag: 'price',
 			attrs: {},
@@ -227,7 +231,7 @@ export const toProductNode = (productId: string | undefined, product: ProductCre
 		}
 	}
 
-	if (typeof product.isHidden !== 'undefined') {
+	if (typeof product.isHidden !== 'undefined' && product.isHidden !== null) {
 		attrs['is_hidden'] = product.isHidden.toString()
 	}
 

@@ -87,28 +87,35 @@ export const jidDecode = (jid: string | undefined): FullJid | undefined => {
 /** is the jid a user */
 export const areJidsSameUser = (jid1: string | undefined, jid2: string | undefined) =>
 	jidDecode(jid1)?.user === jidDecode(jid2)?.user
+// AunuBaileys (2.8.0, HB-505): the predicates below are the choke
+// point for every JID classification in the tree, and callers feed
+// them wire/host values that are not always strings. `jid?.endsWith`
+// only guards null/undefined — a truthy number/object/boolean threw
+// a raw TypeError. A non-string is never any of these JID kinds, so
+// every predicate answers false for it.
 /** is the jid Meta AI */
-export const isJidMetaAI = (jid: string | undefined) => jid?.endsWith('@bot')
+export const isJidMetaAI = (jid: string | undefined) => typeof jid === 'string' && jid.endsWith('@bot')
 /** is the jid a PN user */
-export const isPnUser = (jid: string | undefined) => jid?.endsWith('@s.whatsapp.net')
+export const isPnUser = (jid: string | undefined) => typeof jid === 'string' && jid.endsWith('@s.whatsapp.net')
 /** is the jid a LID */
-export const isLidUser = (jid: string | undefined) => jid?.endsWith('@lid')
+export const isLidUser = (jid: string | undefined) => typeof jid === 'string' && jid.endsWith('@lid')
 /** is the jid a broadcast */
-export const isJidBroadcast = (jid: string | undefined) => jid?.endsWith('@broadcast')
+export const isJidBroadcast = (jid: string | undefined) => typeof jid === 'string' && jid.endsWith('@broadcast')
 /** is the jid a group */
-export const isJidGroup = (jid: string | undefined) => jid?.endsWith('@g.us')
+export const isJidGroup = (jid: string | undefined) => typeof jid === 'string' && jid.endsWith('@g.us')
 /** is the jid the status broadcast */
 export const isJidStatusBroadcast = (jid: string) => jid === 'status@broadcast'
 /** is the jid a newsletter */
-export const isJidNewsletter = (jid: string | undefined) => jid?.endsWith('@newsletter')
+export const isJidNewsletter = (jid: string | undefined) => typeof jid === 'string' && jid.endsWith('@newsletter')
 /** is the jid a hosted PN */
-export const isHostedPnUser = (jid: string | undefined) => jid?.endsWith('@hosted')
+export const isHostedPnUser = (jid: string | undefined) => typeof jid === 'string' && jid.endsWith('@hosted')
 /** is the jid a hosted LID */
-export const isHostedLidUser = (jid: string | undefined) => jid?.endsWith('@hosted.lid')
+export const isHostedLidUser = (jid: string | undefined) => typeof jid === 'string' && jid.endsWith('@hosted.lid')
 
 const botRegexp = /^1313555\d{4}$|^131655500\d{2}$/
 
-export const isJidBot = (jid: string | undefined) => jid && botRegexp.test(jid.split('@')[0]!) && jid.endsWith('@c.us')
+export const isJidBot = (jid: string | undefined) =>
+	typeof jid === 'string' && botRegexp.test(jid.split('@')[0]!) && jid.endsWith('@c.us')
 
 export const jidNormalizedUser = (jid: string | undefined) => {
 	const result = jidDecode(jid)

@@ -18,7 +18,7 @@ import { initAuthCreds } from '../lib/Utils/auth-utils.js'
 import { BufferJSON } from '../lib/Utils/generics.js'
 
 const SESSION_FILE = 'session-628123456789@s.whatsapp.net.json'
-const SESSION_JSON = JSON.stringify({ registrationId: 123, marker: 'good-session' })
+const SESSION_JSON = JSON.stringify({ _sessions: {}, version: 'v1', registrationId: 123, marker: 'good-session' })
 const b64 = s => Buffer.from(s, 'utf-8').toString('base64')
 
 const setup = async () => {

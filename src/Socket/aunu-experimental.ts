@@ -16,8 +16,9 @@ import {
 	parseVanishDuration,
 	stripWatermark
 } from '../Utils/aunu-experimental.js'
-import { isLidUser, jidNormalizedUser } from '../WABinary/jid-utils.js'
-import { generateWAMessageFromContent, prepareWAMessageMedia } from '../Utils/messages.js'
+import { isJidGroup, isLidUser, jidNormalizedUser } from '../WABinary/jid-utils.js'
+import { buildAIRichTagCard } from '../Utils/builders.js'
+import { generateWAMessageContent, generateWAMessageFromContent, getContentType, prepareWAMessageMedia } from '../Utils/messages.js'
 import { assertImageWithinPixelLimit, getImageProcessingLibrary } from '../Utils/messages-media.js'
 import { waproto } from '../../WAProto/index.js'
 import { randomBytes } from 'crypto'
@@ -103,6 +104,13 @@ const MAX_TIMER_DELAY_MS = 2 ** 31 - 1
  * 29. A2UI widget — `aunuSendA2UI`: send a declarative A2UI widget
  *     (Text/Image/Video/Button/Card/Column/Row) as an interactive
  *     message carrying `bloksWidget`.
+ * 30. Chat theme — `aunuSendChatTheme`: set/clear a chat theme via
+ *    protocolMessage CHAT_THEME_SETTING (ChatThemeSetting proto).
+ * 31. HD preview — `aunuSendHD`: image/video send with an enlarged
+ *    (200px) thumbnail; media bytes are never re-encoded.
+ * 32. AI rich-tag card — `aunuSendAIRichTagCard`: rich response in a
+ *    botForwardedMessage envelope tagged with model/invoker/caps
+ *    botMetadata (buildAIRichTagCard in Utils/builders).
  * 36. Emoji sticker — `aunuSendEmojiSticker`: render one emoji
  *     (single codepoint, VS16, skin tone or ZWJ sequence) as a large
  *     transparent 512x512 WebP sticker from its Twemoji asset and
@@ -423,6 +431,10 @@ export const attachAunuExperimental = sock => {
 		const results = { total: all.length, sent: 0, failed: [], skipped: all.length - participants.length }
 		let first = true
 		for (const participant of participants) {
+			if (!participant || typeof participant !== 'object' || !participant.id) {
+				continue
+			}
+
 			const pid = participant.id
 			if (!first && delayMs > 0) {
 				await delay(delayMs)
@@ -661,7 +673,7 @@ export const attachAunuExperimental = sock => {
 	sock.aunuGhostMention = async (jid, content, options = {}) => {
 		if (!String(jid).endsWith('@g.us')) throw new Error('aunuGhostMention: jid must be a group JID')
 		const metadata = await sock.groupMetadata(jid)
-		const ids = (metadata?.participants || []).map(p => p.id).filter(Boolean)
+		const ids = (metadata?.participants || []).map(p => (p && typeof p === 'object' ? p.id : undefined)).filter(Boolean)
 		const mentions = [...new Set([...(content?.mentions || []), ...ids])]
 		return sock.sendMessage(jid, { ...content, mentions }, options)
 	}
@@ -1052,7 +1064,146 @@ export const attachAunuExperimental = sock => {
 	 * Same flag-through-sendMessage shape as aunuSendSpoiler.
 	 */
 	sock.aunuSendGroupStatus = async (jid, content, options = {}) => {
-		return sock.sendMessage(jid, { ...content, groupStatus: true }, options)
+		if (!isJidGroup(jid)) {
+			throw new Boom('aunuSendGroupStatus: a group jid (@g.us) is required', { statusCode: 400 })
+		}
+
+		if (!content || typeof content !== 'object' || Array.isArray(content)) {
+			throw new Boom('aunuSendGroupStatus: message content is required', { statusCode: 400 })
+		}
+
+		// AunuBaileys (2.8.0, HB-499): the old body only passed a
+		// `groupStatus: true` flag through sendMessage — nothing in
+		// the send path consumed it, so a PLAIN message went out and
+		// no status was ever posted. Build the wrapper here, in the
+		// recorded DexBaileys buildGroupStatusMessage shape: inner
+		// content under groupStatusMessageV2, its contextInfo marked
+		// isGroupStatus with a GROUP_STATUS attribution for the
+		// author and multi-react eligibility, and a messageSecret on
+		// both the inner and the outer message.
+		const inner = await generateWAMessageContent(content, { ...options, jid, logger })
+		const innerKey = getContentType(inner)
+		const innerTarget = innerKey && inner[innerKey] && typeof inner[innerKey] === 'object' ? inner[innerKey] : undefined
+		if (!innerTarget) {
+			throw new Boom('aunuSendGroupStatus: content produced no sendable message', { statusCode: 400 })
+		}
+
+		const authorJid = sock.user?.id ? jidNormalizedUser(sock.user.id) : undefined
+		innerTarget.contextInfo = {
+			...(innerTarget.contextInfo || {}),
+			isGroupStatus: true,
+			statusAttributions: [
+				{
+					type: waproto.StatusAttribution.Type.GROUP_STATUS,
+					groupStatus: authorJid ? { authorJid } : {}
+				}
+			],
+			featureEligibilities: { canReceiveMultiReact: true }
+		}
+		const wrapped = {
+			messageContextInfo: { messageSecret: randomBytes(32) },
+			groupStatusMessageV2: {
+				message: {
+					...inner,
+					messageContextInfo: {
+						...(inner.messageContextInfo || {}),
+						messageSecret: randomBytes(32)
+					}
+				}
+			}
+		}
+		return relayBuilt(jid, wrapped, options)
+	}
+	/**
+	 * EXPERIMENTAL (2.8.0): chat theme — set (or clear) the chat's
+	 * theme/wallpaper by sending a protocolMessage of type
+	 * CHAT_THEME_SETTING (34) carrying a ChatThemeSetting.
+	 * `setting` accepts exactly the proto's fields: at most ONE
+	 * wallpaper field (defaultWallpaper / solidColor / stockImage /
+	 * customImage / animatedWallpaper), an optional colorSchemeId,
+	 * or clearTheme: true on its own to remove the theme. Unknown
+	 * fields, several wallpapers, or clearTheme combined with a
+	 * wallpaper/colour scheme are Boom 400 — protobufjs would
+	 * otherwise drop or merge them silently.
+	 */
+	sock.aunuSendChatTheme = async (jid, setting, options = {}) => {
+		if (typeof jid !== 'string' || !jid) {
+			throw new Boom('aunuSendChatTheme: a valid destination jid is required', { statusCode: 400 })
+		}
+
+		if (!setting || typeof setting !== 'object' || Array.isArray(setting)) {
+			throw new Boom('aunuSendChatTheme: a setting object is required', { statusCode: 400 })
+		}
+
+		const WALLPAPER_FIELDS = ['defaultWallpaper', 'solidColor', 'stockImage', 'customImage', 'animatedWallpaper']
+		const ALLOWED_FIELDS = new Set([...WALLPAPER_FIELDS, 'clearTheme', 'colorSchemeId', 'settingTimestampMs'])
+		for (const field of Object.keys(setting)) {
+			if (!ALLOWED_FIELDS.has(field)) {
+				throw new Boom(`aunuSendChatTheme: unknown setting field "${field}"`, { statusCode: 400 })
+			}
+		}
+
+		const wallpapers = WALLPAPER_FIELDS.filter(field => setting[field] !== undefined && setting[field] !== null)
+		if (wallpapers.length > 1) {
+			throw new Boom(`aunuSendChatTheme: exactly one wallpaper field is allowed (got ${wallpapers.join(', ')})`, {
+				statusCode: 400
+			})
+		}
+
+		if (setting.clearTheme && (wallpapers.length > 0 || setting.colorSchemeId !== undefined)) {
+			throw new Boom('aunuSendChatTheme: clearTheme cannot be combined with a wallpaper or colorSchemeId', {
+				statusCode: 400
+			})
+		}
+
+		if (!setting.clearTheme && wallpapers.length === 0 && setting.colorSchemeId === undefined) {
+			throw new Boom('aunuSendChatTheme: set a wallpaper, a colorSchemeId, or clearTheme', { statusCode: 400 })
+		}
+
+		if (setting.colorSchemeId !== undefined && typeof setting.colorSchemeId !== 'string') {
+			throw new Boom('aunuSendChatTheme: colorSchemeId must be a string', { statusCode: 400 })
+		}
+
+		const chatThemeSetting = {
+			...setting,
+			settingTimestampMs: setting.settingTimestampMs ?? Date.now()
+		}
+		return relayBuilt(
+			jid,
+			{
+				protocolMessage: {
+					type: waproto.Message.ProtocolMessage.Type.CHAT_THEME_SETTING,
+					chatThemeSetting
+				}
+			},
+			options
+		)
+	}
+	/**
+	 * EXPERIMENTAL (2.8.0, D-1103): HD preview send — send an image
+	 * or video content with the `hd` preview flag set, so the
+	 * thumbnail is generated at HD size (200px / 200x200) while the
+	 * media bytes go out exactly as supplied.
+	 */
+	sock.aunuSendHD = async (jid, content, options = {}) => {
+		if (!content || typeof content !== 'object' || (!('image' in content) && !('video' in content))) {
+			throw new Boom('aunuSendHD: content must carry an image or a video', { statusCode: 400 })
+		}
+
+		return sock.sendMessage(jid, { ...content, hd: true }, options)
+	}
+	/**
+	 * EXPERIMENTAL (2.8.0, D-1108): AI rich-tag card — send a rich
+	 * response tagged with a model name / invoker / capability set.
+	 * The envelope is built by buildAIRichTagCard (Utils/builders)
+	 * and relayed as-is; validation errors are Boom 400 from there.
+	 */
+	sock.aunuSendAIRichTagCard = async (jid, spec, options = {}) => {
+		if (typeof jid !== 'string' || !jid) {
+			throw new Boom('aunuSendAIRichTagCard: a valid destination jid is required', { statusCode: 400 })
+		}
+
+		return relayBuilt(jid, buildAIRichTagCard(spec), options)
 	}
 	/**
 	 * EXPERIMENTAL (2.3.0): emoji sticker — render ONE emoji as a

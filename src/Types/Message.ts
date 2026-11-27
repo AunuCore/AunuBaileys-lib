@@ -208,6 +208,8 @@ export type AnyMediaMessageContent = (
 			image: WAMediaUpload
 			caption?: string
 			jpegThumbnail?: string
+			/** AunuBaileys (2.8.0, D-1103): HD preview — a larger (200px) thumbnail; the media bytes themselves are never re-encoded */
+			hd?: boolean
 	  } & Mentionable &
 			Contextable &
 			WithDimensions)
@@ -216,6 +218,8 @@ export type AnyMediaMessageContent = (
 			caption?: string
 			gifPlayback?: boolean
 			jpegThumbnail?: string
+			/** AunuBaileys (2.8.0, D-1103): HD preview — a larger (200x200) thumbnail; the media bytes themselves are never re-encoded */
+			hd?: boolean
 			/** if set to true, will send as a `video note` */
 			ptv?: boolean
 	  } & Mentionable &

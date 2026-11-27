@@ -1,12 +1,24 @@
+import { Boom } from '@hapi/boom';
 import type { SocketConfig, WAMediaUpload } from '../Types/index.js';
 import type { NewsletterMetadata, NewsletterUpdate } from '../Types/index.js';
+export declare const NEWSLETTER_METADATA_QUERY_IDS: readonly string[];
+/**
+ * AunuBaileys (2.8.0): tolerant newsletter-metadata extraction —
+ * accepts the payload as an object or a JSON string, and looks for
+ * the metadata under the recorded data paths (the payload itself,
+ * `xwa2_newsletter_metadata`, `xwa2_newsletter`, `result`, or the
+ * first object value that carries one) instead of only the two
+ * shapes the old parser knew. Returns null when nothing in the
+ * payload is a newsletter metadata.
+ */
+export declare const extractNewsletterMetadata: (result: unknown) => NewsletterMetadata | null;
 export declare const makeNewsletterSocket: (config: SocketConfig) => {
     newsletterCreate: (name: string, description?: string) => Promise<NewsletterMetadata>;
     newsletterUpdate: (jid: string, updates: NewsletterUpdate) => Promise<unknown>;
     newsletterSubscribers: (jid: string) => Promise<{
         subscribers: number;
     }>;
-    newsletterMetadata: (type: "invite" | "jid", key: string) => Promise<NewsletterMetadata | null>;
+    newsletterMetadata: (type: "invite" | "jid", key: string) => Promise<NewsletterMetadata>;
     newsletterSubscribed: () => Promise<unknown>;
     newsletterFollow: (jid: string) => Promise<unknown>;
     newsletterUnfollow: (jid: string) => Promise<unknown>;
@@ -140,7 +152,7 @@ export declare const makeNewsletterSocket: (config: SocketConfig) => {
     logout: (msg?: string) => Promise<void>;
     end: (error: Error | undefined) => Promise<void>;
     registerSocketEndHandler: (handler: (error: Error | undefined) => void | Promise<void>) => void;
-    onUnexpectedError: (err: Error | import("@hapi/boom").Boom, msg: string) => void;
+    onUnexpectedError: (err: Error | Boom, msg: string) => void;
     uploadPreKeys: (count?: number) => Promise<void>;
     uploadPreKeysToServerIfRequired: () => Promise<void>;
     digestKeyBundle: () => Promise<void>;

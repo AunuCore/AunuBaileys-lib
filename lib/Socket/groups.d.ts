@@ -189,6 +189,15 @@ export declare const makeGroupsSocket: (config: SocketConfig) => {
         shouldDrop: (category: any, node: any, ownIds: any) => boolean;
     };
 };
+/**
+ * AunuBaileys (2.8.0, D-1104-A): the LID<->PN pairs a group metadata
+ * carries, in the shape storeLIDPNMappings consumes. Pure — the
+ * store's own validation still applies to every pair.
+ */
+export declare const collectGroupLidPnPairs: (meta: GroupMetadata) => {
+    lid: string;
+    pn: string;
+}[];
 export declare const extractGroupMetadata: (result: BinaryNode) => GroupMetadata;
 export type GroupsSocket = ReturnType<typeof makeGroupsSocket>;
 //# sourceMappingURL=groups.d.ts.map

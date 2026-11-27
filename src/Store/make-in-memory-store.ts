@@ -553,11 +553,30 @@ const makeInMemoryStore = ({ logger: _logger, chatKey, labelAssociationKey }: Ba
 				const list = messages[item.jid]
 				list?.clear()
 			} else {
-				const jid = item.keys[0]!.remoteJid
-				const list = jid ? messages[jid] : undefined
-				if (list) {
-					const idSet = new Set(item.keys.map(k => k.id))
-					list.filter(m => !idSet.has(m.key.id))
+				// AunuBaileys (2.8.0, HB-509): the event buffer consolidates
+				// every delete in a window into ONE event whose keys can
+				// span several chats — grouping by remoteJid is required,
+				// the old keys[0]-only path silently kept the rest.
+				const idsByJid = new Map<string, Set<string | null | undefined>>()
+				for (const key of item.keys) {
+					if (!key.remoteJid) {
+						continue
+					}
+
+					let idSet = idsByJid.get(key.remoteJid)
+					if (!idSet) {
+						idSet = new Set()
+						idsByJid.set(key.remoteJid, idSet)
+					}
+
+					idSet.add(key.id)
+				}
+
+				for (const [jid, idSet] of idsByJid) {
+					const list = messages[jid]
+					if (list) {
+						list.filter(m => !idSet.has(m.key.id))
+					}
 				}
 			}
 		})

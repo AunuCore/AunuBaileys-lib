@@ -29,6 +29,8 @@ export * from './bounded-cache'
 export * from './safe-fetch'
 export * from './ban-sentinel'
 
+export * from './scheduled-message'
+export * from './beta-messages'
 export * from './aunu-experimental'
 export * from './aunu-a2ui'
 export * from './aunu-autojoin'

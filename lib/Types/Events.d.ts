@@ -111,6 +111,12 @@ export type BaileysEventMap = {
     'message-receipt.update': MessageUserReceiptUpdate[];
     'groups.upsert': GroupMetadata[];
     'groups.update': Partial<GroupMetadata>[];
+    /** AunuBaileys (2.8.0, D-1106-A): an unmodelled MEX notification op, re-emitted verbatim ({ operation, updates: raw parsed response, data }) */
+    'mex.notification': {
+        operation: string;
+        updates: unknown;
+        data: Record<string, unknown>;
+    };
     /** apply an action to participants in a group */
     'group-participants.update': {
         id: string;

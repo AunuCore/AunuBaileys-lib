@@ -261,7 +261,12 @@ export async function getMediaKeys(
 		// used to be stripped — a standard data:<mediatype>;base64,
 		// URL was decoded whole, prefix included, deriving garbage
 		// keys. Strip any data:*;base64, prefix.
-		buffer = Buffer.from(buffer.replace(/^data:[^,]*;base64,/, ''), 'base64')
+		// AunuBaileys (2.8.0, HB-482 addendum): the regex was
+		// case-sensitive — an uppercase 'DATA:...;BASE64,' prefix
+		// (legal per RFC 2397, schemes are case-insensitive) was
+		// fed to the base64 decoder unstripped, deriving garbage
+		// keys silently. Match case-insensitively.
+		buffer = Buffer.from(buffer.replace(/^data:[^,]*;base64,/i, ''), 'base64')
 	}
 
 	// expand using HKDF to 112 bytes, also pass in the relevant app info
@@ -346,8 +351,11 @@ const assertValidImageDimension = (value: number, name: string, max: number) => 
 	}
 }
 
-export const extractImageThumb = async (bufferOrFilePath: Readable | Buffer | string, width = 32) => {
+export const extractImageThumb = async (bufferOrFilePath: Readable | Buffer | string, width = 32, quality = 50) => {
 	assertValidImageDimension(width, 'thumbnail width', MAX_THUMBNAIL_WIDTH)
+	if (typeof quality !== 'number' || !Number.isInteger(quality) || quality < 1 || quality > 100) {
+		throw new Boom('Invalid image thumbnail quality: expected an integer between 1 and 100', { statusCode: 400 })
+	}
 	// TODO: Move entirely to sharp, removing jimp as it supports readable streams
 	// This will have positive speed and performance impacts as well as minimizing RAM usage.
 	if (bufferOrFilePath instanceof Readable) {
@@ -369,7 +377,7 @@ export const extractImageThumb = async (bufferOrFilePath: Readable | Buffer | st
 		const img = lib.sharp.default(bufferOrFilePath)
 		const dimensions = await img.metadata()
 
-		const buffer = await img.resize(width).jpeg({ quality: 50 }).toBuffer()
+		const buffer = await img.resize(width).jpeg({ quality }).toBuffer()
 		return {
 			buffer,
 			original: {
@@ -387,7 +395,7 @@ export const extractImageThumb = async (bufferOrFilePath: Readable | Buffer | st
 
 		const img = new (lib as any).image.Transformer(bufferOrFilePath)
 		const dimensions = await img.metadata()
-		const buffer = await img.resize(width, undefined, 0).jpeg(50)
+		const buffer = await img.resize(width, undefined, 0).jpeg(quality)
 		return {
 			buffer,
 			original: {
@@ -408,7 +416,7 @@ export const extractImageThumb = async (bufferOrFilePath: Readable | Buffer | st
 		}
 		const buffer = await jimp
 			.resize({ w: width, mode: lib.jimp.ResizeStrategy.BILINEAR })
-			.getBuffer('image/jpeg', { quality: 50 })
+			.getBuffer('image/jpeg', { quality })
 		return {
 			buffer,
 			original: dimensions
@@ -752,12 +760,14 @@ export async function generateThumbnail(
 	mediaType: 'video' | 'image',
 	options: {
 		logger?: ILogger
+		/** AunuBaileys (2.8.0, D-1103): HD preview — image thumb at 200px wide, video thumb at 200x200 (vs 32px defaults); only the thumbnail grows, the media bytes are untouched */
+		hd?: boolean
 	}
 ) {
 	let thumbnail: string | undefined
 	let originalImageDimensions: { width: number; height: number } | undefined
 	if (mediaType === 'image') {
-		const { buffer, original } = await extractImageThumb(file)
+		const { buffer, original } = await extractImageThumb(file, options.hd ? 200 : 32, options.hd ? 70 : 50)
 		thumbnail = buffer.toString('base64')
 		if (original.width && original.height) {
 			originalImageDimensions = {
@@ -768,7 +778,7 @@ export async function generateThumbnail(
 	} else if (mediaType === 'video') {
 		const imgFilename = join(getTmpFilesDirectory(), generateMessageIDV2() + '.jpg')
 		try {
-			await extractVideoThumb(file, imgFilename, '00:00:00', { width: 32, height: 32 })
+			await extractVideoThumb(file, imgFilename, '00:00:00', options.hd ? { width: 200, height: 200 } : { width: 32, height: 32 })
 			const buff = await fs.readFile(imgFilename)
 			thumbnail = buff.toString('base64')
 		} catch (err) {
@@ -1156,8 +1166,13 @@ export const encryptedStream = async (
 
 		// Wait for write streams to fully flush to disk
 		// This helps reduce memory pressure by allowing OS to release buffers
-		await encFinishPromise
-		await originalFinishPromise
+		// AunuBaileys (2.8.0, HB-273 addendum facet 1): await the two
+		// finish promises JOINTLY — sequential awaits left the
+		// original-file promise orphaned when the enc promise rejected
+		// first (or rejected a tick before its own await), and an
+		// orphaned rejection is an unhandledRejection that kills the
+		// process over a recoverable flush error.
+		await Promise.all([encFinishPromise, originalFinishPromise])
 
 		logger?.debug('encrypted data successfully')
 
@@ -1625,7 +1640,25 @@ export const downloadEncryptedContent = async (
 	// AunuBaileys (2.6.0, HB-392 addendum run-0613): translate a
 	// mid-body abort to Boom 408 here too — the fetch-phase
 	// translation in getHttpStream never sees it.
-	fetched.on('error', err => output.destroy(toMediaTimeoutBoom(err)))
+	// AunuBaileys (2.8.0, HB-417 addendum facet 2): a source ERROR
+	// mid-body destroys this Transform before final() runs, so the
+	// truncation guard there never fired and the consumer got the
+	// raw source error. When fewer ciphertext bytes arrived than
+	// the Content-Range promised, the download IS truncated —
+	// surface the same Boom 502 final() would have produced.
+	fetched.on('error', err => {
+		if (promisedCiphertextBytes !== undefined && ciphertextReceived < promisedCiphertextBytes) {
+			output.destroy(
+				new Boom(
+					`Truncated ranged media download: received ${ciphertextReceived} of ${promisedCiphertextBytes} promised bytes`,
+					{ statusCode: 502 }
+				)
+			)
+			return
+		}
+
+		output.destroy(toMediaTimeoutBoom(err))
+	})
 	// AunuBaileys (2.2.0, HB-352): the reverse direction was open —
 	// when the consumer destroys the returned stream, the CDN source
 	// kept downloading in the background. Closing the output (for
@@ -1996,6 +2029,13 @@ export const uploadWithFetch = async (
 		} catch {
 			return undefined
 		}
+	} catch (error) {
+		// AunuBaileys (2.8.0, HB-392 addendum): an abort that fires
+		// during fetch() or while reading the response body escaped
+		// as a raw DOMException TimeoutError — translate it to the
+		// Boom 408 the Node-http path produces, so hosts branching on
+		// statusCode see the same timeout signal on every runtime.
+		throw toMediaTimeoutBoom(error)
 	} finally {
 		// AunuBaileys (2.6.0, HB-351 addendum 3): the file stream
 		// was never destroyed when fetch rejected before consuming
@@ -2062,7 +2102,14 @@ export const getWAUploadToServer = (
 		let uploadInfo = await refreshMediaConn(false)
 
 		let urls: { mediaUrl: string; directPath: string; meta_hmac?: string; ts?: number; fbid?: number } | undefined
-		const hosts = [...customUploadHosts, ...uploadInfo.hosts]
+		// AunuBaileys (2.8.0, HB-366 addendum facet 1): dedup the
+		// INITIAL host list by hostname, like addFreshHosts does for
+		// refreshed hosts — a custom host that the server also returns
+		// (or a duplicated custom entry) was tried twice on failure,
+		// doubling the black-hole timeout cost.
+		const hosts = [...customUploadHosts, ...uploadInfo.hosts].filter(
+			(host, index, all) => all.findIndex(other => other.hostname === host.hostname) === index
+		)
 		// AunuBaileys (2.2.0, HB-366 + HB-137 facet 1): after a media
 		// connection refresh, the FRESH hosts join the itinerary —
 		// previously the refresh result was used only for its auth

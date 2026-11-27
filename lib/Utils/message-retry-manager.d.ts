@@ -79,6 +79,15 @@ export declare class MessageRetryManager {
      */
     hasRecentSessionRecreate(jid: string): boolean;
     /**
+     * HB-405 addendum (2.8.0): record a session recreation that
+     * happened OUTSIDE shouldRecreateSession — the reg-id mismatch
+     * and base-key collision deletes in sendMessagesAgain — so the
+     * throttle above actually knows about them. Without this the
+     * peer-supplied branches deleted (and re-deleted fresh sessions)
+     * without ever consulting or feeding the history.
+     */
+    noteSessionRecreate(jid: string): void;
+    /**
      * Parse error code from retry receipt's retry node.
      * Returns undefined if no error code is present.
      */

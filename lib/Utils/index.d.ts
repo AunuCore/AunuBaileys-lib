@@ -28,6 +28,8 @@ export * from './stanza-ack.js';
 export * from './bounded-cache.js';
 export * from './safe-fetch.js';
 export * from './ban-sentinel.js';
+export * from './scheduled-message.js';
+export * from './beta-messages.js';
 export * from './aunu-experimental.js';
 export * from './aunu-a2ui.js';
 export * from './aunu-autojoin.js';

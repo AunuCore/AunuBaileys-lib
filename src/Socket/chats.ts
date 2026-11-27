@@ -141,7 +141,12 @@ export const makeChatsSocket = (config: SocketConfig) => {
 		// chunk arriving after a >120 s stall and reaching progress
 		// 100 could never emit 'complete'. A separate flag keeps the
 		// two meanings apart.
-		recentSyncPaused: false
+		recentSyncPaused: false,
+		// AunuBaileys (2.8.0, HB-388 addendum 1): a history-sync
+		// chunk whose download/process failed in this connection —
+		// the RECENT 'complete' status must not fire while a chunk
+		// is missing, however high the reported progress is.
+		historyChunkFailed: false
 	}
 	let historySyncPausedTimeout: NodeJS.Timeout | undefined
 
@@ -706,6 +711,17 @@ export const makeChatsSocket = (config: SocketConfig) => {
 							}
 						]
 					})
+
+					// AunuBaileys (2.8.0, HB-435 addendum facet 5): a bare
+					// result IQ with no <sync> child decoded to an empty
+					// patch set, so every requested collection was treated
+					// as done and the sync counted as a full success
+					// (accountSyncCounter advanced; the next reconnect
+					// skipped the sync wait). A missing <sync> node is a
+					// failed sync, not an empty one.
+					if (!result || !getBinaryNodeChild(result, 'sync')) {
+						throw new Boom('resyncAppState received an IQ result without a <sync> node', { statusCode: 502 })
+					}
 
 					// extract from binary node
 					const decoded = await extractSyncdPatches(result, config?.options)
@@ -1463,7 +1479,8 @@ export const makeChatsSocket = (config: SocketConfig) => {
 			if (
 				syncType === waproto.HistorySync.HistorySyncType.RECENT &&
 				historyMsg.progress === 100 &&
-				!historySyncStatus.recentSyncComplete
+				!historySyncStatus.recentSyncComplete &&
+				!historySyncStatus.historyChunkFailed
 			) {
 				historySyncStatus.recentSyncComplete = true
 				// AunuBaileys (2.5.0, HB-443): a chunk that arrives
@@ -1554,7 +1571,7 @@ export const makeChatsSocket = (config: SocketConfig) => {
 			}
 		}
 
-		await Promise.all([
+		const [, processResult] = await Promise.all([
 			(async () => {
 				if (shouldProcessHistoryMsg) {
 					await doAppStateSync()
@@ -1575,6 +1592,21 @@ export const makeChatsSocket = (config: SocketConfig) => {
 				getMessage
 			})
 		])
+
+		// AunuBaileys (2.8.0, HB-388 addendum 1): a failed history-sync
+		// download was previously swallowed inside processMessage, so
+		// this upsert "succeeded" — the hist_sync receipt had already
+		// been sent and messages-recv marked the notification id as
+		// decrypted, blocking any in-process retry of the chunk.
+		// Surface the failure: the throw keeps the id out of the
+		// dedup set (its add runs only after a successful upsert),
+		// so a redelivery/replay reprocesses and retries the
+		// download; the flag above suppresses the RECENT 'complete'
+		// status for the rest of this connection.
+		if (processResult?.historySyncDownloadFailed) {
+			historySyncStatus.historyChunkFailed = true
+			throw new Error('history sync download failed — chunk left unprocessed for retry')
+		}
 
 		// If the app state key arrives and we are waiting to sync, trigger the sync now.
 		if (msg.message?.protocolMessage?.appStateSyncKeyShare && syncState === SyncState.Syncing) {
@@ -1645,6 +1677,9 @@ export const makeChatsSocket = (config: SocketConfig) => {
 
 		historySyncStatus.initialBootstrapComplete = false
 		historySyncStatus.recentSyncComplete = false
+		// AunuBaileys (2.8.0, HB-388 addendum 1): a new sync session
+		// starts with no failed chunks.
+		historySyncStatus.historyChunkFailed = false
 		// AunuBaileys (2.5.0, HB-443): reset the paused marker with
 		// the rest of the sync state on reconnection.
 		historySyncStatus.recentSyncPaused = false

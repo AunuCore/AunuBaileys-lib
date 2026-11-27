@@ -1,3 +1,4 @@
+import { waproto } from '../../WAProto/index.js';
 /** Builder tombol interaktif (native flow). Alias: Buttons, ButtonBuilder. */
 export declare class Button {
     constructor();
@@ -69,6 +70,40 @@ export declare class AIRich {
         };
     };
 }
+/**
+ * AunuBaileys (2.8.0, D-1108): AI rich-tag card — a rich response
+ * tagged as coming from a named AI model. The envelope is a
+ * botForwardedMessage around a richResponseMessage, with the tag
+ * in messageContextInfo.botMetadata: modelMetadata.modelNameOverride
+ * names the model, invokerJid names who invoked it, and
+ * capabilityMetadata.capabilities ("caps") lists the bot
+ * capabilities the card claims. Caps accept BotCapabilityType enum
+ * names ('RICH_RESPONSE_TABLE', ...) or raw numbers; an unknown
+ * name is a Boom 400, never a silent drop. Returns the raw Message
+ * proto object — send it via relayMessage (sock.aunuSendAIRichTagCard
+ * does exactly that).
+ */
+export declare const buildAIRichTagCard: (spec?: {}) => {
+    messageContextInfo: {
+        botMetadata: {};
+    };
+    botForwardedMessage: {
+        message: {
+            richResponseMessage: {
+                submessages: any;
+                messageType: waproto.AIRichResponseMessageType;
+                contextInfo: {
+                    forwardingScore: number;
+                    isForwarded: boolean;
+                    forwardedAiBotMessageInfo: {
+                        botJid: any;
+                    };
+                    forwardOrigin: waproto.ContextInfo.ForwardOrigin;
+                };
+            };
+        };
+    };
+};
 /** Helper statis campuran. Alias: Tools. */
 export declare class Toolkit {
     static quickReply(id: any, text: any): {

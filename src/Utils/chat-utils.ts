@@ -256,7 +256,18 @@ export const decodeSyncdMutations = async (
 			continue
 		}
 
-		const content = record.value!.blob!
+		// AunuBaileys (2.8.0, HB-141 addendum 1): a record missing its
+		// value or index blob used to die on the derefs below (and on
+		// the ltGenerator.mix at the loop's end) — outside any try —
+		// aborting the WHOLE decode for one malformed record. The
+		// index guard was gated on validateMacs, which defaults off.
+		// Shape-check up front and skip the record per-item, like
+		// every other corruption path in this loop.
+		if (!record.value?.blob || !record.index?.blob) {
+			continue
+		}
+
+		const content = record.value.blob
 		const encContent = content.subarray(0, -32)
 		const ogValueMac = content.subarray(-32)
 		if (validateMacs) {

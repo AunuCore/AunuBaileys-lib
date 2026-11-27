@@ -12,6 +12,13 @@ import { downloadContentFromMessage } from './messages-media'
 
 const inflatePromise = promisify(inflate)
 
+// AunuBaileys (2.8.0, HB-2026-1112-112 addendum): cap for one
+// history-sync inflate. Legit history payloads run to tens of MB;
+// the 128 MiB stanza cap in WABinary/decode.ts is the precedent,
+// and history gets double that headroom — beyond it the payload is
+// a zlib bomb, not history.
+const MAX_HISTORY_INFLATED_BYTES = 256 * 1024 * 1024
+
 const extractPnFromMessages = (messages: waproto.IHistorySyncMsg[]): string | undefined => {
 	for (const msgItem of messages) {
 		const message = msgItem.message
@@ -36,7 +43,20 @@ export const downloadHistory = async (msg: waproto.Message.IHistorySyncNotificat
 	// This avoids allocating an intermediate buffer for the compressed data
 	const inflater = createInflate()
 	const chunks: Buffer[] = []
-	inflater.on('data', (chunk: Buffer) => chunks.push(chunk))
+	let inflatedBytes = 0
+	inflater.on('data', (chunk: Buffer) => {
+		inflatedBytes += chunk.length
+		if (inflatedBytes > MAX_HISTORY_INFLATED_BYTES) {
+			inflater.destroy(
+				new Error(
+					`AunuBaileys: history sync payload exceeds the ${MAX_HISTORY_INFLATED_BYTES / (1024 * 1024)} MiB inflated-size cap — refusing to inflate (possible zlib bomb)`
+				)
+			)
+			return
+		}
+
+		chunks.push(chunk)
+	})
 	await pipeline(stream, inflater)
 
 	const buffer = Buffer.concat(chunks)
@@ -204,7 +224,19 @@ export const downloadAndProcessHistorySyncNotification = async (
 ) => {
 	let historyMsg: waproto.HistorySync
 	if (msg.initialHistBootstrapInlinePayload) {
-		historyMsg = waproto.HistorySync.decode(await inflatePromise(msg.initialHistBootstrapInlinePayload))
+		try {
+			historyMsg = waproto.HistorySync.decode(
+				await inflatePromise(msg.initialHistBootstrapInlinePayload, { maxOutputLength: MAX_HISTORY_INFLATED_BYTES })
+			)
+		} catch (err) {
+			if ((err as { code?: string })?.code === 'ERR_BUFFER_TOO_LARGE') {
+				throw new Error(
+					`AunuBaileys: history sync payload exceeds the ${MAX_HISTORY_INFLATED_BYTES / (1024 * 1024)} MiB inflated-size cap — refusing to inflate (possible zlib bomb)`
+				)
+			}
+
+			throw err
+		}
 	} else {
 		historyMsg = await downloadHistory(msg, options)
 	}

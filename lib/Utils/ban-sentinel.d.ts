@@ -80,7 +80,7 @@ export declare class FileBanGuardStore implements BanGuardStore {
     readonly path: string;
     private failed;
     constructor(path: string);
-    /** true setelah satu penulisan gagal (store ini berhenti mencoba menulis). */
+    /** true bila penulisan terakhir gagal (percobaan berikutnya tetap dicoba). */
     get hasFailed(): boolean;
     load(): BanGuardRecord | null;
     save(record: BanGuardRecord): boolean;

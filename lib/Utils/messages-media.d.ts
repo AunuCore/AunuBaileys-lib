@@ -57,7 +57,7 @@ export declare const getRawMediaUploadData: (media: WAMediaUpload, mediaType: Me
 }>;
 /** generates all the keys required to encrypt/decrypt & sign a media message */
 export declare function getMediaKeys(buffer: Uint8Array | string | null | undefined, mediaType: MediaType): Promise<MediaDecryptionKeyInfo>;
-export declare const extractImageThumb: (bufferOrFilePath: Readable | Buffer | string, width?: number) => Promise<{
+export declare const extractImageThumb: (bufferOrFilePath: Readable | Buffer | string, width?: number, quality?: number) => Promise<{
     buffer: any;
     original: {
         width: any;
@@ -99,6 +99,8 @@ export declare const getStream: (item: WAMediaUpload, opts?: RequestInit & {
 /** generates a thumbnail for a given media, if required */
 export declare function generateThumbnail(file: string, mediaType: 'video' | 'image', options: {
     logger?: ILogger;
+    /** AunuBaileys (2.8.0, D-1103): HD preview — image thumb at 200px wide, video thumb at 200x200 (vs 32px defaults); only the thumbnail grows, the media bytes are untouched */
+    hd?: boolean;
 }): Promise<{
     thumbnail: string | undefined;
     originalImageDimensions: {

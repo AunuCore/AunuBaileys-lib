@@ -71,7 +71,7 @@ test('sound sticker EXIF: addSoundSha256ToStickerWebP writes sound-sha256 and se
 	const out = addSoundSha256ToStickerWebP(webpWithVp8x(), AUDIO_SHA256_HEX)
 	assert.equal(exifJsonOf(out)['sound-sha256'], AUDIO_SHA256_HEX)
 	const vp8x = readChunks(out).find(c => c.fourCC === 'VP8X')
-	assert.ok(vp8x.data[0] & 0x20, 'VP8X EXIF flag set')
+	assert.ok(vp8x.data[0] & 0x08, 'VP8X EXIF flag set')
 	assert.equal(out.readUInt32LE(4), out.length - 8, 'RIFF size rebuilt')
 })
 
@@ -79,7 +79,7 @@ test('sound sticker EXIF: a plain VP8L WebP gains a synthesised VP8X header', ()
 	const out = addSoundSha256ToStickerWebP(webpWithoutVp8x(), AUDIO_SHA256_HEX)
 	const chunks = readChunks(out)
 	assert.equal(chunks[0].fourCC, 'VP8X')
-	assert.ok(chunks[0].data[0] & 0x20)
+	assert.ok(chunks[0].data[0] & 0x08)
 	assert.equal(exifJsonOf(out)['sound-sha256'], AUDIO_SHA256_HEX)
 })
 

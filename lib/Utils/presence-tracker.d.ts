@@ -147,6 +147,7 @@ export declare class PresenceTracker extends EventEmitter {
     private applyPresence;
     private openSession;
     private closeSession;
+    private evictSubscribedIfOverCap;
     private evictOldestIfOverCap;
     private diagnostic;
 }

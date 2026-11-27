@@ -268,6 +268,46 @@ export const makeMessagesRecvSocket = (config: SocketConfig) => {
 	// cover; the wider window keeps ordinary redelivery inside the
 	// cheap in-memory check (~300 KB of short ids).
 	const decryptedMessageIds = new Set<string>()
+	// AunuBaileys (2.8.0, HB-2026-1113-223 addendum ke-11): the
+	// dedup key is NAMESPACED — keying the set by the bare
+	// msg.key.id let a valid message from a different chat/sender
+	// that reuses an id be plain-acked and dropped without
+	// decrypt/upsert. The key is chat + canonical sender address
+	// (canonicalSignalAddr unifies the PN/LID spellings of one
+	// peer and never throws) + direction + id.
+	const decryptedDedupKey = async (key: WAMessageKey, authorJid?: string): Promise<string | undefined> => {
+		if (!key?.id) {
+			return undefined
+		}
+
+		const chat = key.remoteJid ? jidNormalizedUser(key.remoteJid) : ''
+		const senderRaw = authorJid || key.participant || (key.fromMe ? undefined : key.remoteJid)
+		let sender = ''
+		if (senderRaw) {
+			try {
+				sender = await canonicalSignalAddr(senderRaw)
+			} catch {
+				sender = jidNormalizedUser(senderRaw)
+			}
+		}
+
+		return `${chat}|${sender}|${key.fromMe ? '1' : '0'}|${key.id}`
+	}
+
+	const hasDecrypted = async (key: WAMessageKey, authorJid?: string): Promise<boolean> => {
+		const dedupKey = await decryptedDedupKey(key, authorJid)
+		return !!dedupKey && decryptedMessageIds.has(dedupKey)
+	}
+
+	const markDecrypted = async (key: WAMessageKey, authorJid?: string): Promise<void> => {
+		const dedupKey = await decryptedDedupKey(key, authorJid)
+		if (dedupKey) {
+			decryptedMessageIds.add(dedupKey)
+			while (decryptedMessageIds.size > 10_000) {
+				decryptedMessageIds.delete(decryptedMessageIds.keys().next().value!)
+			}
+		}
+	}
 	// AunuBaileys (v6 parity): consecutive failures before the Bad MAC self-heal resets the session
 	const DECRYPT_FAIL_SESSION_RESET_LIMIT = 3
 
@@ -445,13 +485,22 @@ export const makeMessagesRecvSocket = (config: SocketConfig) => {
 				case 'NotificationNewsletterWamoSubStatusChange':
 				case 'NotificationNewsletterBlockUser':
 				case 'NotificationNewsletterPaidPartnership':
+				// AunuBaileys (2.8.0, D-1106-A): the bundle sends the
+				// `...Update` spelling — route both spellings to the
+				// newsletter handler instead of dropping the update.
+				case 'NotificationNewsletterPaidPartnershipUpdate':
 				case 'NotificationNewsletterMilestone':
 				case 'NewsletterResponseStateUpdate':
 					await handleLegacyMexNewsletterNotification(node)
 					break
 
 				default:
+					// AunuBaileys (2.8.0, D-1106-A): unmodelled MEX ops
+					// used to be logged and discarded — re-emit them
+					// verbatim so the host can observe ops the library
+					// has no model for yet.
 					logger.debug({ opName }, 'unhandled mex notification')
+					ev.emit('mex.notification', { operation: opName, updates: mexResponse, data })
 					break
 			}
 
@@ -2109,18 +2158,31 @@ export const makeMessagesRecvSocket = (config: SocketConfig) => {
 				}
 
 				if (info && info.registrationId !== 0 && info.registrationId !== receivedRegId) {
-					logger.info(
-						{ participant, stored: info.registrationId, received: receivedRegId },
-						'reg id mismatch on retry without bundle, deleting session'
-					)
-					// AunuBaileys (2.3.0, HB-377): deleteSession
-					// resolves the LID wire key; the raw-address
-					// keys.set here missed it (silent no-op).
-					try {
-						await signalRepository.deleteSession([participant])
-						sessionDeleted = true
-					} catch (error) {
-						logger.warn({ error, participant }, 'aunu: session delete failed in retry reg-id check; continuing')
+					// AunuBaileys (2.8.0, HB-405 addendum): the
+					// received reg id is peer-controlled — a single
+					// forged retry receipt used to delete a healthy
+					// session here without ever consulting the
+					// HB-405 throttle (which only lived in the
+					// error-code branch below). Skip the delete
+					// inside the throttle window, and record a
+					// delete that does run so the throttle knows.
+					if (messageRetryManager?.hasRecentSessionRecreate(sessionId)) {
+						logger.debug({ participant, retryCount }, 'skipping reg-id session delete: throttled')
+					} else {
+						logger.info(
+							{ participant, stored: info.registrationId, received: receivedRegId },
+							'reg id mismatch on retry without bundle, deleting session'
+						)
+						// AunuBaileys (2.3.0, HB-377): deleteSession
+						// resolves the LID wire key; the raw-address
+						// keys.set here missed it (silent no-op).
+						try {
+							await signalRepository.deleteSession([participant])
+							sessionDeleted = true
+							messageRetryManager?.noteSessionRecreate(sessionId)
+						} catch (error) {
+							logger.warn({ error, participant }, 'aunu: session delete failed in retry reg-id check; continuing')
+						}
 					}
 				}
 			}
@@ -2144,14 +2206,26 @@ export const makeMessagesRecvSocket = (config: SocketConfig) => {
 					messageRetryManager.saveBaseKey(sessionId, msgId, info.baseKey)
 				} else if (retryCount > BASE_KEY_CHECK_RETRY) {
 					if (messageRetryManager.hasSameBaseKey(sessionId, msgId, info.baseKey)) {
-						logger.warn({ participant, retryCount }, 'base key collision on retry, forcing fresh session')
-						// AunuBaileys (2.3.0, HB-377): resolved
-						// delete (see the reg-id mismatch site above).
-						try {
-							await signalRepository.deleteSession([participant])
-							sessionDeleted = true
-						} catch (error) {
-							logger.warn({ error, participant }, 'aunu: session delete failed on base-key collision; continuing')
+						// AunuBaileys (2.8.0, HB-405 addendum):
+						// retryCount is a peer-controlled attr —
+						// two forged receipts (count=2 then 3, same
+						// id) made a healthy session "collide" with
+						// itself and deleted it, bypassing the
+						// HB-405 throttle entirely. Consult the
+						// throttle first; record a delete that runs.
+						if (messageRetryManager.hasRecentSessionRecreate(sessionId)) {
+							logger.debug({ participant, retryCount }, 'skipping base-key session delete: throttled')
+						} else {
+							logger.warn({ participant, retryCount }, 'base key collision on retry, forcing fresh session')
+							// AunuBaileys (2.3.0, HB-377): resolved
+							// delete (see the reg-id mismatch site above).
+							try {
+								await signalRepository.deleteSession([participant])
+								sessionDeleted = true
+								messageRetryManager.noteSessionRecreate(sessionId)
+							} catch (error) {
+								logger.warn({ error, participant }, 'aunu: session delete failed on base-key collision; continuing')
+							}
 						}
 					}
 
@@ -2580,7 +2654,7 @@ export const makeMessagesRecvSocket = (config: SocketConfig) => {
 			// Re-ack the stanza and stop. (The emitDecryptFailure
 			// dedup further down remains as a second layer for
 			// paths that reach it without this check.)
-			if (encNode && msg.key.id && decryptedMessageIds.has(msg.key.id)) {
+			if (encNode && msg.key.id && (await hasDecrypted(msg.key, author))) {
 				await sendMessageAck(node)
 				acked = true
 				return
@@ -2616,6 +2690,13 @@ export const makeMessagesRecvSocket = (config: SocketConfig) => {
 				}
 			}
 
+			// AunuBaileys (2.8.0, HB-2026-1112-39 addendum): the retry
+			// receipt task for a decrypt failure is collected here and
+			// run AFTER the messageMutex is released (see the retry
+			// branch below) — the 250 ms backoff must not be waited out
+			// while holding the global per-socket message mutex.
+			let deferredRetryReceipt: (() => Promise<void>) | undefined
+
 			await messageMutex.mutex(async () => {
 				// AunuBaileys (2.6.0, HB-2026-1113-223 addendum
 				// ke-9): the early check above sits OUTSIDE this
@@ -2632,7 +2713,7 @@ export const makeMessagesRecvSocket = (config: SocketConfig) => {
 				// UNmarked id (first copy failed before its
 				// upsert) still reprocesses, so the failure path
 				// keeps its visible stub.
-				if (encNode && msg.key.id && decryptedMessageIds.has(msg.key.id)) {
+				if (encNode && msg.key.id && (await hasDecrypted(msg.key, author))) {
 					await sendMessageAck(node)
 					acked = true
 					return
@@ -2730,7 +2811,7 @@ export const makeMessagesRecvSocket = (config: SocketConfig) => {
 					// already proved the session healthy, so the
 					// failure says nothing about it: do not count,
 					// do not heal, do not report.
-					if (msg.key.id && decryptedMessageIds.has(msg.key.id)) {
+					if (msg.key.id && (await hasDecrypted(msg.key, author))) {
 						return
 					}
 
@@ -2942,6 +3023,37 @@ export const makeMessagesRecvSocket = (config: SocketConfig) => {
 				// message failed to decrypt
 				if (msg.messageStubType === waproto.WebMessageInfo.StubType.CIPHERTEXT && msg.category !== 'peer') {
 					if (msg?.messageStubParameters?.[0] === MISSING_KEYS_ERROR_TEXT) {
+						// AunuBaileys (2.8.0, HB-2026-1113-223 addendum
+						// ke-10): this text on a REDELIVERY means the
+						// first delivery decrypted successfully but its
+						// upsert never landed (the receipt send between
+						// decrypt and upsert threw). The plaintext from
+						// that decrypt is still in the retry manager's
+						// recent-message cache — upsert IT instead of
+						// the stub, mark the namespaced dedup key and
+						// plain-ack: the message is delivered now, so
+						// neither the 487 NACK nor a retry receipt
+						// applies. Only a cache miss (no prior
+						// successful decrypt in this process) falls
+						// through to the stub path below.
+						const cachedPlaintext =
+							msg.key.remoteJid && msg.key.id
+								? messageRetryManager?.getRecentMessage(msg.key.remoteJid, msg.key.id)?.message
+								: undefined
+						if (cachedPlaintext) {
+							const recovered: WAMessage = { ...msg, message: cachedPlaintext }
+							delete recovered.messageStubType
+							delete recovered.messageStubParameters
+							await upsertMessage(recovered, node.attrs.offline ? 'append' : 'notify')
+							if (author) {
+								await markDecrypted(msg.key, author)
+							}
+
+							await sendMessageAck(node)
+							acked = true
+							return
+						}
+
 						// AunuBaileys (1.0.82, HB-206, re-applied P3b): the 487 NACK stays,
 						// but the failure first flows through emitDecryptFailure above and
 						// the stub upsert below — only the retry receipt is skipped (a
@@ -3101,6 +3213,21 @@ export const makeMessagesRecvSocket = (config: SocketConfig) => {
 							// failure still waits its own delay before its
 							// receipt); the mutex now only guards the receipt
 							// construction, send and retry counter.
+							// AunuBaileys (2.8.0, HB-2026-1112-39 addendum):
+							// defer the backoff + receipt to after the
+							// messageMutex releases (assigned to
+							// deferredRetryReceipt, awaited below). The
+							// failure is only known here, after decrypt()
+							// inside the mutex, so the delay cannot move
+							// ahead of the mutex — but it must not be
+							// waited out INSIDE it either: a decrypt-
+							// failure flood otherwise serialises every
+							// later healthy message behind N x 250 ms.
+							// The stub upsert at the tail of this mutex
+							// callback now lands before the receipt; the
+							// acked flag is still set by the deferred
+							// task before the outer catch can read it.
+							deferredRetryReceipt = async () => {
 							if (retryRequestDelayMs) {
 								await delay(retryRequestDelayMs)
 							}
@@ -3131,6 +3258,7 @@ export const makeMessagesRecvSocket = (config: SocketConfig) => {
 							await sendMessageAck(node, NACK_REASONS.UnhandledError)
 							acked = true
 						})
+							}
 						}
 					}
 				} else {
@@ -3204,12 +3332,13 @@ export const makeMessagesRecvSocket = (config: SocketConfig) => {
 				// a retry receipt (and a resend from the retry
 				// cache), instead of the message vanishing silently.
 				if (msg.message && msg.key.id && author) {
-					decryptedMessageIds.add(msg.key.id)
-					while (decryptedMessageIds.size > 10_000) {
-						decryptedMessageIds.delete(decryptedMessageIds.keys().next().value!)
-					}
+					await markDecrypted(msg.key, author)
 				}
 			})
+
+			if (deferredRetryReceipt) {
+				await deferredRetryReceipt()
+			}
 		} catch (error) {
 			logger.error({ error, node: binaryNodeToString(node) }, 'error in handling message')
 			if (!acked) {

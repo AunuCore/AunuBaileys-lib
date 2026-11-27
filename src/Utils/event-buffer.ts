@@ -473,6 +473,26 @@ export const makeEventBuffer = (logger: ILogger): BaileysBufferableEventEmitter 
 		off: (...args) => ev.off(...args),
 		removeAllListeners: (...args) => ev.removeAllListeners(...args),
 		destroy() {
+			// AunuBaileys (2.8.0, HB-503): flush pending buffered
+			// events BEFORE discarding them. socket end() destroys
+			// the buffer at teardown — during initial sync the
+			// receipts for buffered messages have already gone out
+			// on the wire, so dropping the buffer here lost
+			// receipted messages permanently (a delivered receipt
+			// is never redelivered). flush() only releases one
+			// nesting level, so force the count to the outermost
+			// level first; listeners are still registered at this
+			// point (removeAllListeners runs below), and a failing
+			// flush must not abort the teardown.
+			if (isBuffering) {
+				try {
+					bufferCount = 1
+					flush()
+				} catch (err) {
+					logger.error({ err }, 'error flushing event buffer on destroy — continuing')
+				}
+			}
+
 			// Clear buffer timeout
 			if (bufferTimeout) {
 				clearTimeout(bufferTimeout)
@@ -839,7 +859,11 @@ function append<E extends BufferableEvent>(
 
 				if (data.messageUpdates[key]) {
 					logger.debug('absorbed prior message update in message upsert')
-					Object.assign(message, data.messageUpdates[key].update)
+					// AunuBaileys (2.8.0, HB-370 addendum facet 3): the
+					// absorbed update must not re-key the message either
+					// (see the pending-branch strip below).
+					const { key: _absorbedKey, ...restAbsorbedUpdate } = data.messageUpdates[key].update as Partial<WAMessage>
+					Object.assign(message, restAbsorbedUpdate)
 					delete data.messageUpdates[key]
 				}
 
@@ -886,7 +910,14 @@ function append<E extends BufferableEvent>(
 					}
 				} else {
 					const msgUpdate = data.messageUpdates[keyStr] || { key, update: {} }
-					Object.assign(msgUpdate.update, update)
+					// AunuBaileys (2.8.0, HB-370 addendum facet 3): strip
+					// `key` in the PENDING branch too — a REVOKE update
+					// carrying the protocol message's own key used to be
+					// stored verbatim here and re-keyed the target when a
+					// later upsert absorbed it (facet 2 fixed only the
+					// existing-upsert branch).
+					const { key: _pendingKey, ...restPendingUpdate } = update as Partial<WAMessage>
+					Object.assign(msgUpdate.update, restPendingUpdate)
 					data.messageUpdates[keyStr] = msgUpdate
 				}
 			}

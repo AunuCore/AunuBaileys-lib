@@ -58,6 +58,8 @@ export declare function decryptPollVote({ encPayload, encIv }: waproto.Message.I
  * @returns event response message
  */
 export declare function decryptEventResponse({ encPayload, encIv }: waproto.Message.IPollEncValue, { eventCreatorJid, eventMsgId, eventEncKey, responderJid }: EventContext): waproto.Message.EventResponseMessage;
-declare const processMessage: (message: WAMessage, { shouldProcessHistoryMsg, historySyncSink, placeholderResendCache, ev, creds, signalRepository, keyStore, logger, options, getMessage }: ProcessMessageContext) => Promise<void>;
+declare const processMessage: (message: WAMessage, { shouldProcessHistoryMsg, historySyncSink, placeholderResendCache, ev, creds, signalRepository, keyStore, logger, options, getMessage }: ProcessMessageContext) => Promise<{
+    historySyncDownloadFailed: boolean;
+}>;
 export default processMessage;
 //# sourceMappingURL=process-message.d.ts.map

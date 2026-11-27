@@ -104,9 +104,10 @@ const messageStanzas = async frames => (await decodeFrames(frames)).filter(node 
 // assertSessions' bundle fetch finds nothing and moves on); USync IQs
 // get a fabricated <usync><list> result for `usyncUser` when one is
 // given (devices + lid + status + contact nodes — each query's parser picks the
-// protocols it registered, the rest are dropped); everything else gets
-// an empty <result/> (so resyncAppState converges and query() resolves
-// instead of timing out).
+// protocols it registered, the rest are dropped); app-state sync IQs
+// get an empty <sync/> (a bare result is a fabricated sync success —
+// HB-435 facet 5 rejects it with Boom 502); everything else gets
+// an empty <result/> (so query() resolves instead of timing out).
 const answerAllIQs = (sock, usyncUser) => {
 	const origSend = sock.ws.socket.send.bind(sock.ws.socket)
 	sock.ws.socket.send = (data, cb) => {
@@ -119,6 +120,8 @@ const answerAllIQs = (sock, usyncUser) => {
 			let content = []
 			if (node.attrs.xmlns === 'encrypt' && node.attrs.type === 'get') {
 				content = [{ tag: 'list', attrs: {}, content: [] }]
+			} else if (node.attrs.xmlns === 'w:sync:app:state') {
+				content = [{ tag: 'sync', attrs: {}, content: [] }]
 			} else if (node.attrs.xmlns === 'usync' && usyncUser) {
 				const userContent = []
 				if (usyncUser.devices !== false) {

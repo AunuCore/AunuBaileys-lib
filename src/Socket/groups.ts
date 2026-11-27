@@ -18,7 +18,7 @@ import { makeChatsSocket } from './chats'
 export const makeGroupsSocket = (config: SocketConfig) => {
 	const { logger } = config
 	const sock = makeChatsSocket(config)
-	const { authState, ev, query, upsertMessage } = sock
+	const { authState, ev, query, upsertMessage, signalRepository } = sock
 
 	const groupQuery = async (jid: string, type: 'get' | 'set', content: BinaryNode[]) =>
 		query({
@@ -31,9 +31,33 @@ export const makeGroupsSocket = (config: SocketConfig) => {
 			content
 		})
 
+	// AunuBaileys (2.8.0, D-1104-A): harvest the server-authoritative
+	// LID<->PN pairs extractGroupMetadata already yields on every
+	// participant (phoneNumber when the id is a LID, lid when the id
+	// is a PN) into the LID mapping store — the pairs used to be
+	// discarded, so every mapping had to be re-learned via USync.
+	// Best-effort by design: a harvest failure must never fail the
+	// metadata fetch it rides on.
+	const harvestParticipantLidMappings = (meta: GroupMetadata) => {
+		try {
+			const pairs = collectGroupLidPnPairs(meta)
+			if (!pairs.length) {
+				return
+			}
+
+			void Promise.resolve(signalRepository.lidMapping.storeLIDPNMappings(pairs)).catch(err => {
+				logger.debug({ err, groupId: meta.id }, 'failed to harvest LID/PN mappings from group metadata')
+			})
+		} catch (err) {
+			logger.debug({ err, groupId: meta.id }, 'failed to harvest LID/PN mappings from group metadata')
+		}
+	}
+
 	const groupMetadata = async (jid: string) => {
 		const result = await groupQuery(jid, 'get', [{ tag: 'query', attrs: { request: 'interactive' } }])
-		return extractGroupMetadata(result)
+		const meta = extractGroupMetadata(result)
+		harvestParticipantLidMappings(meta)
+		return meta
 	}
 
 	const groupFetchAllParticipating = async () => {
@@ -66,6 +90,15 @@ export const makeGroupsSocket = (config: SocketConfig) => {
 
 		const data: { [_: string]: GroupMetadata } = {}
 		const groupsChild = getBinaryNodeChild(result, 'groups')
+		// AunuBaileys (2.8.0, HB-435 addendum facet 4): a bare result
+		// IQ with NO <groups> child at all used to fabricate an empty
+		// success ({} + groups.update []) — the same fabrication the
+		// facet-2 timeout guard removed. A present-but-empty
+		// <groups/> is a legitimate empty list and stays a success.
+		if (!groupsChild) {
+			throw new Boom('groupFetchAllParticipating received an IQ result without a <groups> node', { statusCode: 502 })
+		}
+
 		if (groupsChild) {
 			const groups = getBinaryNodeChildren(groupsChild, 'group')
 			for (const groupNode of groups) {
@@ -76,6 +109,7 @@ export const makeGroupsSocket = (config: SocketConfig) => {
 						attrs: {},
 						content: [groupNode]
 					})
+					harvestParticipantLidMappings(meta)
 					data[meta.id] = meta
 				} catch (err) {
 					logger.warn({ err, groupNode }, 'skipping malformed group in groupFetchAllParticipating')
@@ -124,7 +158,9 @@ export const makeGroupsSocket = (config: SocketConfig) => {
 					}))
 				}
 			])
-			return extractGroupMetadata(result)
+			const meta = extractGroupMetadata(result)
+			harvestParticipantLidMappings(meta)
+			return meta
 		},
 		groupLeave: async (id: string) => {
 			await groupQuery('@g.us', 'set', [
@@ -388,6 +424,28 @@ export const makeGroupsSocket = (config: SocketConfig) => {
 		},
 		groupFetchAllParticipating
 	}
+}
+
+/**
+ * AunuBaileys (2.8.0, D-1104-A): the LID<->PN pairs a group metadata
+ * carries, in the shape storeLIDPNMappings consumes. Pure — the
+ * store's own validation still applies to every pair.
+ */
+export const collectGroupLidPnPairs = (meta: GroupMetadata): { lid: string; pn: string }[] => {
+	const pairs: { lid: string; pn: string }[] = []
+	for (const participant of meta?.participants || []) {
+		if (!participant || typeof participant !== 'object') {
+			continue
+		}
+
+		if (isLidUser(participant.id) && isPnUser(participant.phoneNumber)) {
+			pairs.push({ lid: participant.id, pn: participant.phoneNumber! })
+		} else if (isPnUser(participant.id) && isLidUser(participant.lid)) {
+			pairs.push({ lid: participant.lid!, pn: participant.id })
+		}
+	}
+
+	return pairs
 }
 
 export const extractGroupMetadata = (result: BinaryNode) => {

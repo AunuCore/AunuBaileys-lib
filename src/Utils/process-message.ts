@@ -332,6 +332,11 @@ const processMessage = async (
 	// AunuBaileys (1.0.79, HB-131, re-applied P3): me is undefined
 	// until pairing completes \u2014 a bare deref crashed history sync
 	// for unpaired states; the comparisons below tolerate undefined.
+	// AunuBaileys (2.8.0, HB-388 addendum 1): set when a history-sync
+	// download/process attempt fails — returned to the caller (chats
+	// upsertMessage) so the failure is not swallowed: the caller
+	// keeps the chunk retryable and does not complete the sync.
+	let historySyncDownloadFailed = false
 	const meId = creds.me?.id ?? ''
 	// AunuBaileys (2.3.0, HB-391): own LID is needed alongside the PN id to recognise self in LID-addressed groups.
 	const meLid = creds.me?.lid ?? ''
@@ -396,7 +401,7 @@ const processMessage = async (
 				{ msgId: message.key.id, type: protocolMsg.type, from: message.key.participant || message.key.remoteJid },
 				'dropping spoofed self-only protocolMessage from non-self origin'
 			)
-			return
+			return { historySyncDownloadFailed }
 		}
 
 		switch (protocolMsg.type) {
@@ -418,9 +423,24 @@ const processMessage = async (
 				if (process) {
 					// AunuBaileys (2.3.0, HB-388): download and process FIRST, mark processed only after success — the old order emitted the processedHistoryMessages mark before downloadAndProcessHistorySyncNotification, so a failed inflate/download lost the chunk silently (receipt already sent, no redelivery) while creds already claimed it processed. A download failure is now logged and swallowed instead of rejecting upsertMessage, leaving the chunk unmarked for a later sync.
 					let data: Awaited<ReturnType<typeof downloadAndProcessHistorySyncNotification>> | undefined
+					// A notification with neither an inline payload nor a
+					// directPath carries no chunk to download — it is a
+					// progress-only signal, so there is no download that
+					// could fail (HB-443 status fixtures rely on this).
+					const hasDownloadablePayload = !!histNotification.initialHistBootstrapInlinePayload || !!histNotification.directPath
 					try {
-						data = await downloadAndProcessHistorySyncNotification(histNotification, options, logger, historySyncSink)
+						if (hasDownloadablePayload) {
+							data = await downloadAndProcessHistorySyncNotification(histNotification, options, logger, historySyncSink)
+						}
 					} catch (err) {
+						// AunuBaileys (2.8.0, HB-388 addendum 1): the
+						// failure is still not rethrown here (the chunk
+						// stays unmarked, per HB-388), but it is no
+						// longer swallowed silently — it is reported
+						// in the return value so upsertMessage can
+						// refuse the dedup mark and the 'complete'
+						// status for this chunk.
+						historySyncDownloadFailed = true
 						logger?.warn(
 							{ err, msgId: message.key.id },
 							'failed to download/process history sync notification — chunk not marked processed'
@@ -936,7 +956,12 @@ const processMessage = async (
 				// phantom (e.g. from a double-malformed notification
 				// replayed via history sync) — never emit a
 				// group.join-request for nobody.
-				if (!participant?.lid && !participant?.pn && !message.key.participant && !message.key.participantAlt) {
+				// AunuBaileys (2.8.0, HB-320 addendum): JSON.parse('null')
+				// succeeds and yields null — the optional-chain guard
+				// below passed when an actor was present, and
+				// emitGroupRequestJoin then derefed participant.lid on
+				// null. A null participant is no participant at all.
+				if (!participant || (!participant?.lid && !participant?.pn && !message.key.participant && !message.key.participantAlt)) {
 					logger?.warn('skipping join-approval-request event with no participant and no actor')
 					break
 				}
@@ -999,6 +1024,8 @@ const processMessage = async (
 	if (Object.keys(chat).length > 1) {
 		ev.emit('chats.update', [chat])
 	}
+
+	return { historySyncDownloadFailed }
 }
 
 export default processMessage

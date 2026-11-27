@@ -243,6 +243,16 @@ export const makeMessagesSocket = (config: SocketConfig) => {
 			node.attrs.recipient = jid
 			node.attrs.to = participant
 		} else {
+			// AunuBaileys (2.8.0, HB-334 addendum faset 2): the
+			// 2.6.0 guard only closed the sender branch — a direct
+			// caller passing an undefined jid here got a receipt
+			// with no `to` at all (the encoder drops undefined
+			// attrs), which the server cannot route. Symmetric
+			// guard: reject as Boom 400.
+			if (!jid) {
+				throw new Boom('missing jid for receipt', { statusCode: 400 })
+			}
+
 			node.attrs.to = jid
 			if (participant) {
 				node.attrs.participant = participant
@@ -1051,7 +1061,7 @@ export const makeMessagesSocket = (config: SocketConfig) => {
 			useUserDevicesCache,
 			useCachedGroupMetadata,
 			statusJidList
-		}: MessageRelayOptions
+		}: MessageRelayOptions = {}
 	) => {
 		// AunuBaileys (1.0.83, HB-253, re-applied P3b): a non-object message —
 		// or an empty object — proto-encodes to ZERO content bytes without
@@ -2015,33 +2025,49 @@ export const makeMessagesSocket = (config: SocketConfig) => {
 		// message is always registered (sent-message cache, message secret,
 		// retry-manager recent list).
 		if (stanzaToSend) {
-			await sendNode(stanzaToSend)
-			// AunuBaileys (2.2.0, HB-71 addendum): only now — the
-			// stanza is on the wire — may the sender-key-memory map
-			// be persisted (see the group branch).
-			// AunuBaileys (2.3.0, HB-387): the persist used to be a
-			// BARE await — a host store failure rejected relayMessage
-			// for a message already on the wire AND skipped the
-			// sent-message cache, message-secret registration and
-			// retry-manager entry below. The in-memory map stays
-			// correct for this session and a restart redistributes,
-			// so a persist failure is a warning, never a failed send.
-			if (persistSenderKeyMemory) {
-				try {
-					await persistSenderKeyMemory()
-				} catch (err) {
-					logger.warn({ err }, 'aunu: failed to persist sender-key memory after a successful send; continuing')
+			// AunuBaileys (2.8.0, HB-495): registration extracted so
+			// the timeout path below can run it too — promiseTimeout
+			// does not cancel the underlying ws.send, so a callback
+			// that settles late with success has put the stanza on
+			// the wire even though sendNode rejected 408.
+			const registerSent = async () => {
+				if (persistSenderKeyMemory) {
+					try {
+						await persistSenderKeyMemory()
+					} catch (err) {
+						logger.warn({ err }, 'aunu: failed to persist sender-key memory after a successful send; continuing')
+					}
+				}
+
+				sentMessageCacheFor(config).add(jid, msgId, message)
+				if (message.messageContextInfo?.messageSecret) {
+					setBotMessageSecret(msgId, message.messageContextInfo.messageSecret, jid)
+				}
+
+				if (messageRetryManager && !participant) {
+					messageRetryManager.addRecentMessage(destinationJid, msgId, message)
 				}
 			}
 
-			sentMessageCacheFor(config).add(jid, msgId, message)
-			if (message.messageContextInfo?.messageSecret) {
-				setBotMessageSecret(msgId, message.messageContextInfo.messageSecret, jid)
+			try {
+				await sendNode(stanzaToSend)
+			} catch (err) {
+				const code = (err as { output?: { statusCode?: number } })?.output?.statusCode
+				if (code === 408) {
+					await registerSent()
+				}
+
+				throw err
 			}
 
-			if (messageRetryManager && !participant) {
-				messageRetryManager.addRecentMessage(destinationJid, msgId, message)
-			}
+			// AunuBaileys (2.2.0, HB-71 addendum): only now — the
+			// stanza is on the wire — may the sender-key-memory map
+			// be persisted (see the group branch).
+			// AunuBaileys (2.3.0, HB-387): the persist inside
+			// registerSent is guarded — a host store failure must
+			// not reject relayMessage for a message already on the
+			// wire or skip the registrations that follow it.
+			await registerSent()
 		}
 
 		return msgId

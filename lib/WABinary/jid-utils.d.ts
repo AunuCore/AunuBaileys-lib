@@ -25,24 +25,24 @@ export declare const jidDecode: (jid: string | undefined) => FullJid | undefined
 /** is the jid a user */
 export declare const areJidsSameUser: (jid1: string | undefined, jid2: string | undefined) => boolean;
 /** is the jid Meta AI */
-export declare const isJidMetaAI: (jid: string | undefined) => boolean | undefined;
+export declare const isJidMetaAI: (jid: string | undefined) => boolean;
 /** is the jid a PN user */
-export declare const isPnUser: (jid: string | undefined) => boolean | undefined;
+export declare const isPnUser: (jid: string | undefined) => boolean;
 /** is the jid a LID */
-export declare const isLidUser: (jid: string | undefined) => boolean | undefined;
+export declare const isLidUser: (jid: string | undefined) => boolean;
 /** is the jid a broadcast */
-export declare const isJidBroadcast: (jid: string | undefined) => boolean | undefined;
+export declare const isJidBroadcast: (jid: string | undefined) => boolean;
 /** is the jid a group */
-export declare const isJidGroup: (jid: string | undefined) => boolean | undefined;
+export declare const isJidGroup: (jid: string | undefined) => boolean;
 /** is the jid the status broadcast */
 export declare const isJidStatusBroadcast: (jid: string) => jid is "status@broadcast";
 /** is the jid a newsletter */
-export declare const isJidNewsletter: (jid: string | undefined) => boolean | undefined;
+export declare const isJidNewsletter: (jid: string | undefined) => boolean;
 /** is the jid a hosted PN */
-export declare const isHostedPnUser: (jid: string | undefined) => boolean | undefined;
+export declare const isHostedPnUser: (jid: string | undefined) => boolean;
 /** is the jid a hosted LID */
-export declare const isHostedLidUser: (jid: string | undefined) => boolean | undefined;
-export declare const isJidBot: (jid: string | undefined) => boolean | "" | undefined;
+export declare const isHostedLidUser: (jid: string | undefined) => boolean;
+export declare const isJidBot: (jid: string | undefined) => boolean;
 export declare const jidNormalizedUser: (jid: string | undefined) => string;
 export declare const transferDevice: (fromJid: string, toJid: string) => string;
 //# sourceMappingURL=jid-utils.d.ts.map
