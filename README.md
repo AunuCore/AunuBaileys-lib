@@ -1,3 +1,11 @@
+> ## Project Direction: AunuBaileys v3
+>
+> AunuBaileys will likely stop modifying the Baileys codebase. The next major version, **v3**, is being rebuilt as an **independent WhatsApp API implementation — written from scratch, not a fork** of Baileys or any other WhatsApp library, with an architecture and design of its own.
+>
+> The current 2.x line remains fully maintained until v3 reaches feature parity, and a migration path that carries existing sessions over without re-pairing is part of the plan. Nothing changes for existing users today.
+
+---
+
 <div align="center">
 
 # 🖤 AunuBaileys
