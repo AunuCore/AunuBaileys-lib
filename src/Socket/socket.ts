@@ -1254,7 +1254,6 @@ export const makeSocket = (config: SocketConfig) => {
 							logger.warn({}, 'socket end handler timed out — continuing teardown')
 							resolve()
 						}, 5_000)
-						timer.unref?.()
 					})
 				])
 			} catch (err) {
