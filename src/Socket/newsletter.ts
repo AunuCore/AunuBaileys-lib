@@ -62,6 +62,52 @@ const asNewsletterMetadata = (value: unknown): NewsletterMetadata | null => {
 	return null
 }
 
+// AunuBaileys (2.9.0, W6): fields of NewsletterMetadata other than
+// `id` — presence of any one marks a value as newsletter-shaped.
+const NEWSLETTER_METADATA_FIELDS: readonly string[] = [
+	'owner',
+	'name',
+	'description',
+	'invite',
+	'creation_time',
+	'subscribers',
+	'picture',
+	'verification',
+	'reaction_codes',
+	'mute_state'
+]
+
+// AunuBaileys (2.9.0, W6): the loose fallback scan below used to
+// accept the FIRST object value carrying any string `id` — an
+// unrelated object ahead of the real metadata in an unexpected
+// response shape was returned as the newsletter metadata (filing
+// t1355: 8/8 wrong-metadata cases). A fallback candidate must now
+// look like a newsletter convincingly: a newsletter JID, a
+// create-shaped payload (thread_metadata), or at least one
+// newsletter-specific field besides `id`. The direct and
+// named-key paths above keep the old acceptance — only this
+// fallback is tightened.
+const asNewsletterMetadataFallback = (value: unknown): NewsletterMetadata | null => {
+	const found = asNewsletterMetadata(value)
+	if (!found || !isRecord(value)) {
+		return null
+	}
+
+	if (isRecord(value.thread_metadata)) {
+		return found
+	}
+
+	if (typeof value.id === 'string' && value.id.endsWith('@newsletter')) {
+		return found
+	}
+
+	if (NEWSLETTER_METADATA_FIELDS.some(field => typeof value[field] !== 'undefined')) {
+		return found
+	}
+
+	return null
+}
+
 /**
  * AunuBaileys (2.8.0): tolerant newsletter-metadata extraction —
  * accepts the payload as an object or a JSON string, and looks for
@@ -98,7 +144,7 @@ export const extractNewsletterMetadata = (result: unknown): NewsletterMetadata |
 	}
 
 	for (const nested of Object.values(value)) {
-		const found = asNewsletterMetadata(nested)
+		const found = asNewsletterMetadataFallback(nested)
 		if (found) {
 			return found
 		}

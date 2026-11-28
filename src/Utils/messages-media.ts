@@ -1657,7 +1657,24 @@ export const downloadEncryptedContent = async (
 			return
 		}
 
-		output.destroy(toMediaTimeoutBoom(err))
+		// AunuBaileys (2.9.0, HB-417 addendum facet 3): the FULL
+		// download has no Content-Range promise to check, so a
+		// source error mid-body (an undici 'terminated' TypeError
+		// when the CDN drops the connection) used to reach the
+		// consumer raw. Wrap it as Boom 502 like the truncation
+		// above; an error that is already a Boom, and the abort
+		// translation, pass through unchanged.
+		if (err instanceof Boom || isMediaAbortError(err)) {
+			output.destroy(toMediaTimeoutBoom(err))
+			return
+		}
+
+		output.destroy(
+			new Boom(`Media download failed while reading the response body: ${(err as Error)?.message || String(err)}`, {
+				statusCode: 502,
+				data: { cause: err }
+			})
+		)
 	})
 	// AunuBaileys (2.2.0, HB-352): the reverse direction was open —
 	// when the consumer destroys the returned stream, the CDN source
@@ -2205,6 +2222,14 @@ const getMediaRetryKey = (mediaKey: Buffer | Uint8Array) => {
  * Generate a binary node that will request the phone to re-upload the media & return the newly uploaded URL
  */
 export const encryptMediaRetryRequest = (key: WAMessageKey, mediaKey: Buffer | Uint8Array, meId: string) => {
+	// AunuBaileys (2.9.0, L12): a host-supplied key without a valid
+	// id used to die at Buffer.from(key.id!) below as a raw
+	// TypeError. Guard the deref at the door, like the other entry
+	// guards in this file.
+	if (!key || typeof key.id !== 'string' || !key.id) {
+		throw new Boom('Cannot build a media retry request: message key is missing a valid id', { statusCode: 400 })
+	}
+
 	const recp: waproto.IServerErrorReceipt = { stanzaId: key.id }
 	const recpBuffer = waproto.ServerErrorReceipt.encode(recp).finish()
 

@@ -1459,6 +1459,30 @@ export const makeChatsSocket = (config: SocketConfig) => {
 				PROCESSABLE_HISTORY_TYPES.includes(historyMsg.syncType! as waproto.HistorySync.HistorySyncType)
 			: false
 
+		// AunuBaileys (2.9.0, HB-388 addendum facet 2): the completion
+		// decision is still taken here (the status flags above keep
+		// their dedup meaning), but the 'complete' EMIT is deferred
+		// until this chunk's processMessage result is known below. A
+		// chunk whose own processing fails must not complete the sync
+		// for itself — the old order emitted 'complete' before
+		// processMessage ran, so the historyChunkFailed gate could
+		// only ever reflect a PREVIOUS chunk. On failure the pending
+		// flags are rolled back so a redelivered chunk (kept
+		// retryable by addendum 1) can still complete on success.
+		let pendingBootstrapComplete = false
+		let pendingRecentComplete = false
+		const rollbackPendingHistoryComplete = () => {
+			if (pendingBootstrapComplete) {
+				historySyncStatus.initialBootstrapComplete = false
+				pendingBootstrapComplete = false
+			}
+
+			if (pendingRecentComplete) {
+				historySyncStatus.recentSyncComplete = false
+				pendingRecentComplete = false
+			}
+		}
+
 		if (historyMsg && shouldProcessHistoryMsg) {
 			const syncType = historyMsg.syncType as waproto.HistorySync.HistorySyncType
 
@@ -1468,11 +1492,7 @@ export const makeChatsSocket = (config: SocketConfig) => {
 				!historySyncStatus.initialBootstrapComplete
 			) {
 				historySyncStatus.initialBootstrapComplete = true
-				ev.emit('messaging-history.status', {
-					syncType,
-					status: 'complete',
-					explicit: true
-				})
+				pendingBootstrapComplete = true
 			}
 
 			// RECENT with progress === 100 — explicit completion
@@ -1490,11 +1510,7 @@ export const makeChatsSocket = (config: SocketConfig) => {
 				historySyncStatus.recentSyncPaused = false
 				clearTimeout(historySyncPausedTimeout)
 				historySyncPausedTimeout = undefined
-				ev.emit('messaging-history.status', {
-					syncType,
-					status: 'complete',
-					explicit: true
-				})
+				pendingRecentComplete = true
 			}
 
 			// Reset 120s paused timeout on any RECENT chunk (like WA Web's handleChunkProgress)
@@ -1591,7 +1607,15 @@ export const makeChatsSocket = (config: SocketConfig) => {
 				options: config.options,
 				getMessage
 			})
-		])
+			// AunuBaileys (2.9.0, HB-388 addendum facet 2): a rejected
+			// processMessage is a failed chunk — roll the pending
+			// completion back before the rejection propagates, so no
+			// 'complete' is emitted for it below and a redelivery can
+			// still complete the sync.
+		]).catch(err => {
+			rollbackPendingHistoryComplete()
+			throw err
+		})
 
 		// AunuBaileys (2.8.0, HB-388 addendum 1): a failed history-sync
 		// download was previously swallowed inside processMessage, so
@@ -1605,7 +1629,30 @@ export const makeChatsSocket = (config: SocketConfig) => {
 		// status for the rest of this connection.
 		if (processResult?.historySyncDownloadFailed) {
 			historySyncStatus.historyChunkFailed = true
+			// AunuBaileys (2.9.0, HB-388 addendum facet 2): this chunk
+			// failed — it must not emit 'complete' for itself, and its
+			// pending completion rolls back so a retry can complete.
+			rollbackPendingHistoryComplete()
 			throw new Error('history sync download failed — chunk left unprocessed for retry')
+		}
+
+		// AunuBaileys (2.9.0, HB-388 addendum facet 2): the chunk
+		// processed successfully — only now may the completion
+		// decided above be emitted (same event shape as before).
+		if (pendingBootstrapComplete) {
+			ev.emit('messaging-history.status', {
+				syncType: waproto.HistorySync.HistorySyncType.INITIAL_BOOTSTRAP,
+				status: 'complete',
+				explicit: true
+			})
+		}
+
+		if (pendingRecentComplete) {
+			ev.emit('messaging-history.status', {
+				syncType: waproto.HistorySync.HistorySyncType.RECENT,
+				status: 'complete',
+				explicit: true
+			})
 		}
 
 		// If the app state key arrives and we are waiting to sync, trigger the sync now.

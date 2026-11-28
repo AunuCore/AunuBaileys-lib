@@ -332,6 +332,21 @@ export type SoundStickerOptions = {
     audio: WAMediaUpload;
     /** Optionally tell the duration of the audio, in seconds. */
     seconds?: number;
+    /**
+     * AunuBaileys (2.9.0, D-1081-A facet): forward as `ptt` on the
+     * nested audioMessage — without it the generic waveform
+     * processing (gated on `ptt === true`) never runs for the
+     * sound-sticker audio. Unset keeps the previous behaviour.
+     */
+    ptt?: boolean;
+    /**
+     * AunuBaileys (2.9.0, D-1081-A facet): cap on the effective
+     * audio duration in seconds (the explicit `seconds`, or the
+     * auto-computed duration when `seconds` is unset). Exceeding
+     * it is a Boom 400 before the message is built. Unset means
+     * no cap.
+     */
+    maxSeconds?: number;
     /** JIDs to mention via the sticker's contextInfo. */
     mentions?: string[];
 };

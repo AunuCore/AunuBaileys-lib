@@ -567,7 +567,16 @@ export class PresenceTracker extends EventEmitter {
 		}
 		if (changed) {
 			const change: PresenceChangeEvent = { jid, presence, previousPresence, at }
-			this.emit('presence.change', change)
+			// AunuBaileys (2.9.0, HB-512): a throwing 'presence.change'
+			// listener used to propagate out of the ingest() loop; the
+			// socket listener caught and logged it, silently dropping
+			// every remaining presence in the batch. Isolate it so the
+			// rest of the batch still applies.
+			try {
+				this.emit('presence.change', change)
+			} catch (error) {
+				this.logger?.warn({ err: error, jid }, 'presence change listener threw')
+			}
 			this.diagnostic({ kind: 'presence-change', jid, presence, previousPresence, at })
 		}
 	}
@@ -639,7 +648,16 @@ export class PresenceTracker extends EventEmitter {
 
 	private diagnostic(event: PresenceDiagnosticEvent): void {
 		this.logger?.debug({ diagnostic: event }, 'presence diagnostic')
-		this.emit('presence.diagnostic', event)
+		// AunuBaileys (2.9.0, HB-512): diagnostic() is also reached from
+		// the stale-sweep timer (start → sweepStale), where a throwing
+		// 'presence.diagnostic' listener escaped as an uncaught
+		// exception and could kill the host process. Isolate listener
+		// failures here so no emit site has to defend itself.
+		try {
+			this.emit('presence.diagnostic', event)
+		} catch (error) {
+			this.logger?.warn({ err: error }, 'presence diagnostic listener threw')
+		}
 	}
 }
 

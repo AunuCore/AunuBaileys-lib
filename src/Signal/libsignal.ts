@@ -567,9 +567,24 @@ export function makeLibSignalRepository(
 			// decrypted, feeding the stub/retry/self-heal machinery
 			// for a message we actually hold. Log and keep the result:
 			// the identity write is bookkeeping, the plaintext is not.
+			// AunuBaileys (2.9.0, HB-350 addendum): pendingIdentity
+			// exists ONLY on the pkmsg path, and a pkmsg that just
+			// decrypted has JUST built the session bound to this new
+			// identity — the plain saveIdentity clear-on-change then
+			// nulled that fresh session along with the old identity,
+			// so a reinstalling peer's NEXT message failed until a
+			// retry round-trip rebuilt the session. Pass
+			// preserveSession: the identity key is updated, the
+			// session the pkmsg built stays. Every other
+			// saveIdentity caller keeps the clear-on-change
+			// behaviour exactly.
 			if (pendingIdentity) {
 				try {
-					const identityChanged = await storage.saveIdentity(pendingIdentity.addrStr, pendingIdentity.identityKey)
+					const identityChanged = await storage.saveIdentity(
+						pendingIdentity.addrStr,
+						pendingIdentity.identityKey,
+						true
+					)
 					if (identityChanged) {
 						logger.info(
 							{ jid, addr: pendingIdentity.addrStr },
@@ -1174,13 +1189,18 @@ const jidToSignalSenderKeyName = (group: string, user: string): SenderKeyName =>
 	return new SenderKeyName(group, jidToSignalProtocolAddress(user))
 }
 
-function signalStorage(
+// AunuBaileys (2.9.0, HB-350 addendum): exported at module level
+// (not re-exported from src/index.ts) so the regression suite can
+// drive saveIdentity's marked/unmarked paths directly — the
+// repository surface only ever calls it from the pkmsg bookkeeping
+// in decryptMessage.
+export function signalStorage(
 	{ creds, keys }: SignalAuthState,
 	lidMapping: LIDMappingStore
 ): SenderKeyStore &
 	libsignal.SignalStorage & {
 		loadIdentityKey(id: string): Promise<Uint8Array | undefined>
-		saveIdentity(id: string, identityKey: Uint8Array): Promise<boolean>
+		saveIdentity(id: string, identityKey: Uint8Array, preserveSession?: boolean): Promise<boolean>
 	} {
 	// Shared function to resolve PN signal address to LID if mapping exists
 	const resolveLIDSignalAddress = async (id: string): Promise<string> => {
@@ -1226,7 +1246,11 @@ function signalStorage(
 	// from inside a decrypt (libsignal's initIncoming), the
 	// transaction wrapper joins the in-flight context instead, so
 	// the behaviour there is unchanged.
-	const saveIdentityForWire = async (wireJid: string, identityKey: Uint8Array): Promise<boolean> => {
+	const saveIdentityForWire = async (
+		wireJid: string,
+		identityKey: Uint8Array,
+		preserveSession = false
+	): Promise<boolean> => {
 		const { [wireJid]: existingKey } = await keys.get('identity-key', [wireJid])
 
 		// AunuBaileys (2.1.0, HB-98 addendum): a stored identity key in string form (a legacy/corrupt auth file) used to throw a bare TypeError from .every here, leaving the peer permanently unreadable with no self-heal. Normalise to bytes first; a value that is neither bytes nor a string counts as absent and is overwritten below.
@@ -1241,6 +1265,19 @@ function signalStorage(
 			existingKeyBytes.every((byte, i) => byte === identityKey[i])
 
 		if (existingKeyBytes && !keysMatch) {
+			// AunuBaileys (2.9.0, HB-350 addendum): preserveSession
+			// is set only by decryptMessage's post-decrypt
+			// bookkeeping for a successfully decrypted pkmsg — the
+			// session now stored under this address was built by
+			// THAT pkmsg and is bound to the NEW identity, so
+			// clearing it would destroy the fresh session, not the
+			// stale one. Write the new identity key alone. Unmarked
+			// calls keep the original clear-on-change below.
+			if (preserveSession) {
+				await keys.set({ 'identity-key': { [wireJid]: identityKey } })
+				return true
+			}
+
 			// Identity changed - clear session and update key
 			await keys.set({
 				session: { [wireJid]: null },
@@ -1299,7 +1336,7 @@ function signalStorage(
 			const { [wireJid]: key } = await keys.get('identity-key', [wireJid])
 			return key || undefined
 		},
-		saveIdentity: async (id: string, identityKey: Uint8Array): Promise<boolean> => {
+		saveIdentity: async (id: string, identityKey: Uint8Array, preserveSession?: boolean): Promise<boolean> => {
 			const wireJid = await resolveLIDSignalAddress(id)
 			// HB-94 addendum run-0590: see saveIdentityForWire —
 			// run the read/clear in a transaction keyed by the
@@ -1308,10 +1345,10 @@ function signalStorage(
 			// path, exactly as before.
 			const txKeys = keys as SignalKeyStoreWithTransaction
 			if (typeof txKeys.transaction === 'function') {
-				return txKeys.transaction(async () => saveIdentityForWire(wireJid, identityKey), wireJid)
+				return txKeys.transaction(async () => saveIdentityForWire(wireJid, identityKey, preserveSession), wireJid)
 			}
 
-			return saveIdentityForWire(wireJid, identityKey)
+			return saveIdentityForWire(wireJid, identityKey, preserveSession)
 		},
 		loadPreKey: async (id: number | string) => {
 			const keyId = id.toString()

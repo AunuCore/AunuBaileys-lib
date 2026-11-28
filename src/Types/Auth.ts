@@ -103,6 +103,17 @@ export type SignalKeyStoreWithTransaction = SignalKeyStore & {
 export type TransactionCapabilityOptions = {
 	maxCommitRetries: number
 	delayBetweenTriesMs: number
+	/**
+	 * AunuBaileys (2.9.0, HB-2026-1112-60 addendum 3): liveness
+	 * watchdog for transaction work() — if a single work() has not
+	 * settled after this many ms it is reported via
+	 * onStuckTransaction (the transaction itself is NOT force-settled:
+	 * its mutex stays held, so recovery is ending the socket and
+	 * reconnecting with a fresh store). Defaults to 120_000.
+	 */
+	stuckTransactionTimeoutMs?: number
+	/** Called once per transaction whose work() outlives stuckTransactionTimeoutMs. */
+	onStuckTransaction?: (info: { key: string; durationMs: number }) => void
 }
 
 export type SignalAuthState = {

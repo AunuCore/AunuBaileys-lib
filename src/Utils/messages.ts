@@ -1790,6 +1790,27 @@ export const generateWAMessageContent = async (
 			throw new Boom('stickerAudio.mentions must be an array of JID strings', { statusCode: 400 })
 		}
 
+		// AunuBaileys (2.9.0, D-1081-A facet): ptt passthrough +
+		// maxSeconds cap. ptt is only forwarded when the host sets
+		// it, so the default sound-sticker shape is unchanged.
+		if (typeof sound.ptt !== 'undefined' && typeof sound.ptt !== 'boolean') {
+			throw new Boom('stickerAudio.ptt must be a boolean', { statusCode: 400 })
+		}
+
+		if (
+			typeof sound.maxSeconds !== 'undefined' &&
+			(typeof sound.maxSeconds !== 'number' || !Number.isFinite(sound.maxSeconds) || sound.maxSeconds <= 0)
+		) {
+			throw new Boom('stickerAudio.maxSeconds must be a positive finite number', { statusCode: 400 })
+		}
+
+		if (typeof sound.maxSeconds === 'number' && typeof sound.seconds === 'number' && sound.seconds > sound.maxSeconds) {
+			throw new Boom(
+				`stickerAudio.seconds (${sound.seconds}) exceeds stickerAudio.maxSeconds (${sound.maxSeconds})`,
+				{ statusCode: 400 }
+			)
+		}
+
 		const stickerBuffer = await soundStickerMediaToBuffer(sound.sticker, options, SOUND_STICKER_MAX_STICKER_BYTES)
 		if (!isWebPBuffer(stickerBuffer)) {
 			throw new Boom('stickerAudio.sticker must be a WebP image (the sound-sha256 EXIF is written into the WebP)', {
@@ -1807,7 +1828,8 @@ export const generateWAMessageContent = async (
 				{
 					audio: audioBuffer,
 					mimetype: 'audio/ogg; codecs=opus',
-					...(typeof sound.seconds === 'number' ? { seconds: sound.seconds } : {})
+					...(typeof sound.seconds === 'number' ? { seconds: sound.seconds } : {}),
+					...(typeof sound.ptt !== 'undefined' ? { ptt: sound.ptt } : {})
 				},
 				options
 			)
@@ -1816,6 +1838,21 @@ export const generateWAMessageContent = async (
 		const audioMessage = audioMedia.audioMessage
 		if (!stickerMessage || !audioMessage) {
 			throw new Boom('failed to prepare sound sticker media', { statusCode: 500 })
+		}
+
+		// AunuBaileys (2.9.0, D-1081-A facet): the explicit-seconds
+		// cap above cannot see the auto-computed duration — it only
+		// exists on the prepared audioMessage. Enforce maxSeconds
+		// against that effective duration here, before the sticker
+		// message is assembled.
+		if (typeof sound.maxSeconds === 'number' && typeof audioMessage.seconds !== 'undefined') {
+			const effectiveSeconds = Number(audioMessage.seconds)
+			if (Number.isFinite(effectiveSeconds) && effectiveSeconds > sound.maxSeconds) {
+				throw new Boom(
+					`stickerAudio audio duration (${effectiveSeconds}s) exceeds stickerAudio.maxSeconds (${sound.maxSeconds})`,
+					{ statusCode: 400 }
+				)
+			}
 		}
 
 		stickerMessage.isAnimated = true

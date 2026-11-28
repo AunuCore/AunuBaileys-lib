@@ -1,4 +1,5 @@
 import { promises as fs } from 'fs'
+import { Boom } from '@hapi/boom'
 import type { GetCatalogOptions, ProductCreate, ProductUpdate, SocketConfig, WAMediaUpload } from '../Types'
 import type { UpdateBussinesProfileProps } from '../Types/Bussines'
 import { getRawMediaUploadData } from '../Utils'
@@ -118,6 +119,19 @@ export const makeBusinessSocket = (config: SocketConfig) => {
 				mediaType: 'biz-cover-photo'
 			})
 			fbid = uploadedFbid
+
+			// AunuBaileys (2.9.0, W14/H6/D18): the upload result type
+			// marks meta_hmac/fbid/ts optional — a host can answer a
+			// successful upload without them, and the IQ below used
+			// to be built through non-null assertions, sending
+			// id: "undefined" / ts: "undefined" / a missing token.
+			// Refuse before any IQ goes out.
+			if (meta_hmac == null || uploadedFbid == null || ts == null) {
+				throw new Boom(
+					'Cover photo upload response is incomplete: missing meta_hmac, fbid or ts — refusing to send the cover_photo IQ',
+					{ statusCode: 502 }
+				)
+			}
 
 			await query({
 				tag: 'iq',

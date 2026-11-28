@@ -81,6 +81,72 @@ export const makeNoiseHandler = ({
 
 	let inBytes: Buffer = Buffer.alloc(0)
 
+	// AunuBaileys (2.9.0, L3): incoming chunks are collected here
+	// and joined with ONE Buffer.concat when a complete frame is
+	// buffered (materialiseInBytes, called from processData). The
+	// old code ran Buffer.concat([inBytes, newData]) on every
+	// decodeFrame call, re-copying the whole accumulated buffer
+	// per chunk — O(n^2) in the number of chunks a fragmented
+	// frame arrives in.
+	let pendingChunks: Buffer[] = []
+	let pendingLength = 0
+
+	const bufferedByteAt = (index: number): number | undefined => {
+		if (index < inBytes.length) {
+			return inBytes[index]
+		}
+
+		let offset = index - inBytes.length
+		for (const chunk of pendingChunks) {
+			if (offset < chunk.length) {
+				return chunk[offset]
+			}
+
+			offset -= chunk.length
+		}
+
+		return undefined
+	}
+
+	const materialiseInBytes = () => {
+		if (!pendingChunks.length) {
+			return
+		}
+
+		inBytes =
+			inBytes.length === 0
+				? pendingChunks.length === 1
+					? pendingChunks[0]!
+					: Buffer.concat(pendingChunks, pendingLength)
+				: Buffer.concat([inBytes, ...pendingChunks], inBytes.length + pendingLength)
+		pendingChunks = []
+		pendingLength = 0
+	}
+
+	// Walks the frame headers over the not-yet-joined chunks (plus
+	// any unprocessed inBytes remainder) without copying: true when
+	// at least one complete frame — or a header processData must
+	// reject — is fully buffered.
+	const hasCompleteFrameBuffered = (): boolean => {
+		const total = inBytes.length + pendingLength
+		let pos = 0
+		while (total - pos >= 3) {
+			const size = (bufferedByteAt(pos)! << 16) | (bufferedByteAt(pos + 1)! << 8) | bufferedByteAt(pos + 2)!
+			if (size === 0) {
+				pos += 3
+				continue
+			}
+
+			if (size > MAX_NOISE_FRAME_SIZE) {
+				return true
+			}
+
+			return total - pos >= size + 3
+		}
+
+		return false
+	}
+
 	let transport: TransportState | null = null
 	let isWaitingForTransport = false
 	let pendingOnFrame: ((buff: Uint8Array | BinaryNode) => void) | null = null
@@ -154,6 +220,8 @@ export const makeNoiseHandler = ({
 	}
 
 	const processData = async (onFrame: (buff: Uint8Array | BinaryNode) => void) => {
+		materialiseInBytes()
+
 		let size: number | undefined
 
 		while (true) {
@@ -405,16 +473,19 @@ export const makeNoiseHandler = ({
 			return frame
 		},
 		decodeFrame: async (newData: Buffer | Uint8Array, onFrame: (buff: Uint8Array | BinaryNode) => void) => {
+			// AunuBaileys (2.9.0, L3): collect the chunk; the single
+			// joining concat happens in processData once a complete
+			// frame is buffered, instead of one concat per chunk.
+			pendingChunks.push(Buffer.from(newData))
+			pendingLength += newData.byteLength
+
 			if (isWaitingForTransport) {
-				inBytes = Buffer.concat([inBytes, newData])
 				pendingOnFrame = onFrame
 				return
 			}
 
-			if (inBytes.length === 0) {
-				inBytes = Buffer.from(newData)
-			} else {
-				inBytes = Buffer.concat([inBytes, newData])
+			if (!hasCompleteFrameBuffered()) {
+				return
 			}
 
 			await processData(onFrame)

@@ -365,7 +365,16 @@ export const decodeSyncdPatch = async (
 		}
 
 		const mainKey = mutationKeys(mainKeyObj.keyData!)
-		const mutationmacs = msg.mutations!.map(mutation => mutation.record!.value!.blob!.slice(-32))
+		// AunuBaileys (2.9.0, HB-141 addendum 1, site 2): mirror the
+		// decodeSyncdMutations guard — a mutation missing its
+		// record/value/blob used to die here as a raw TypeError while
+		// collecting the patch MACs. Shape-check and skip it per-item,
+		// like site 1 (the mutation decode below skips it too); a MAC
+		// the sender did compute for such a mutation then mismatches
+		// and the patch MAC check below still rejects the patch.
+		const mutationmacs = (msg.mutations ?? [])
+			.filter(mutation => !!mutation.record?.value?.blob)
+			.map(mutation => mutation.record!.value!.blob!.slice(-32))
 
 		const patchMac = generatePatchMac(
 			msg.snapshotMac!,

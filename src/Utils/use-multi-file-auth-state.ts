@@ -332,7 +332,11 @@ export const useMultiFileAuthState = async (
 		// a sweep failure must never block boot
 	}
 
-	const fixFileName = (file?: string) => file?.replace(/\//g, '__')?.replace(/:/g, '-')
+	// AunuBaileys (2.9.0, L7): a Windows-style backslash separator
+	// (an id minted on a Windows host) used to survive as a literal
+	// filename character, so the same id mapped to a different file
+	// per OS. Treat '\' exactly like '/'.
+	const fixFileName = (file?: string) => file?.replace(/[/\\]/g, '__')?.replace(/:/g, '-')
 
 	const storedCreds: any = await readData('creds.json')
 	// AunuBaileys (1.0.79, HB-151 + 1.0.88 HB-80 addendum, re-applied

@@ -9,14 +9,7 @@ import type { ILogger } from './logger.js';
 export declare function makeCacheableSignalKeyStore(store: SignalKeyStore, logger?: ILogger, _cache?: CacheStore): SignalKeyStore & {
     close(): void;
 };
-/**
- * Adds DB-like transaction capability to the SignalKeyStore
- * Uses AsyncLocalStorage for automatic context management
- * @param state the key store to apply this capability to
- * @param logger logger to log events
- * @returns SignalKeyStore with transaction capability
- */
-export declare const addTransactionCapability: (state: SignalKeyStore, logger: ILogger, { maxCommitRetries, delayBetweenTriesMs }?: Partial<TransactionCapabilityOptions>) => SignalKeyStoreWithTransaction & {
+export declare const addTransactionCapability: (state: SignalKeyStore, logger: ILogger, { maxCommitRetries, delayBetweenTriesMs, stuckTransactionTimeoutMs, onStuckTransaction }?: Partial<TransactionCapabilityOptions>) => SignalKeyStoreWithTransaction & {
     disposeTransactionStorage: () => void;
     close?: () => void;
 };

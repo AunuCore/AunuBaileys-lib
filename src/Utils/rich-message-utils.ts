@@ -11,6 +11,7 @@
  * tautan tanpa url dilewati, label kosong tetap kosong.
  */
 import { randomUUID } from 'node:crypto';
+import { Boom } from '@hapi/boom';
 import { waproto } from '../../WAProto/index.js';
 import { unixTimestampSeconds } from './generics.js';
 
@@ -252,13 +253,21 @@ export const buildAunuMapMetadata = (map = {}) => {
         centerLongitude,
         latitudeDelta: map.latitudeDelta,
         longitudeDelta: map.longitudeDelta,
-        annotations: Array.isArray(map.annotations) ? map.annotations.map((a, index) => ({
-            annotationNumber: a.annotationNumber ?? index + 1,
-            latitude: a.latitude,
-            longitude: a.longitude,
-            title: a.title,
-            body: a.body
-        })) : undefined,
+        annotations: Array.isArray(map.annotations) ? map.annotations.map((a, index) => {
+            // AunuBaileys (2.9.0, HB-325 addendum): a null/non-object
+            // annotation element died on the derefs below as a raw
+            // TypeError — validate the shape at the deref point.
+            if (!a || typeof a !== 'object') {
+                throw new Boom('rich response map annotation must be an object', { statusCode: 400 });
+            }
+            return {
+                annotationNumber: a.annotationNumber ?? index + 1,
+                latitude: a.latitude,
+                longitude: a.longitude,
+                title: a.title,
+                body: a.body
+            };
+        }) : undefined,
         showInfoList: map.showInfoList
     };
 };
@@ -277,14 +286,30 @@ export const buildAunuImageUrl = (value) => {
 export const toUnified = (submessages, uuid) => ({
     response_id: uuid || randomUUID(),
     sections: submessages.map((submessage, index) => {
+        // AunuBaileys (2.9.0, HB-325 addendum): a null/non-object
+        // submessage died on the switch below as a raw TypeError.
+        if (!submessage || typeof submessage !== 'object') {
+            throw new Boom('rich response submessage must be an object', { statusCode: 400 });
+        }
         switch (submessage.messageType) {
             case RichSubMessageType.CODE:
                 const codeMetadata = submessage.codeMetadata;
+                // AunuBaileys (2.9.0, HB-325 addendum): codeBlocks is
+                // dereferenced with .map below — a missing/non-array
+                // value (e.g. a bare string) died as a raw TypeError.
+                if (!codeMetadata || !Array.isArray(codeMetadata.codeBlocks)) {
+                    throw new Boom('rich response code submessage requires codeMetadata.codeBlocks to be an array', { statusCode: 400 });
+                }
                 return {
                     view_model: {
                         primitive: {
                             language: codeMetadata.codeLanguage,
-                            code_blocks: codeMetadata.codeBlocks.map((block) => ({ content: block.codeContent, type: CodeHighlightType[block.highlightType] })),
+                            code_blocks: codeMetadata.codeBlocks.map((block) => {
+                                if (!block || typeof block !== 'object') {
+                                    throw new Boom('rich response code block must be an object', { statusCode: 400 });
+                                }
+                                return { content: block.codeContent, type: CodeHighlightType[block.highlightType] };
+                            }),
                             __typename: 'GenAICodeUXPrimitive'
                         },
                         __typename: 'GenAISingleLayoutViewModel'
@@ -300,15 +325,26 @@ export const toUnified = (submessages, uuid) => ({
                 return {};
             case RichSubMessageType.TABLE:
                 const tableMetadata = submessage.tableMetadata;
+                // AunuBaileys (2.9.0, HB-325 addendum): rows is
+                // dereferenced with .map below — a missing/non-array
+                // value (e.g. a bare string) died as a raw TypeError.
+                if (!tableMetadata || !Array.isArray(tableMetadata.rows)) {
+                    throw new Boom('rich response table submessage requires tableMetadata.rows to be an array', { statusCode: 400 });
+                }
                 return {
                     view_model: {
                         primitive: {
                             title: tableMetadata.title,
-                            rows: tableMetadata.rows.map((row) => ({
-                                is_header: row.isHeading,
-                                cells: row.items,
-                                markdown_cells: row.items.map((item) => ({ text: item }))
-                            })),
+                            rows: tableMetadata.rows.map((row) => {
+                                if (!row || !Array.isArray(row.items)) {
+                                    throw new Boom('rich response table row requires an items array', { statusCode: 400 });
+                                }
+                                return {
+                                    is_header: row.isHeading,
+                                    cells: row.items,
+                                    markdown_cells: row.items.map((item) => ({ text: item }))
+                                };
+                            }),
                             __typename: 'GenATableUXPrimitive'
                         },
                         __typename: 'GenAISingleLayoutViewModel'
@@ -424,6 +460,12 @@ export const prepareRichResponseMessage = (content) => {
     let submessages = [];
     if (Array.isArray(richResponse)) {
         submessages = richResponse.map((submessage) => {
+            // AunuBaileys (2.9.0, HB-325 addendum): a null/non-object
+            // element died on the property probes below as a raw
+            // TypeError.
+            if (!submessage || typeof submessage !== 'object') {
+                throw new Boom('rich response submessage must be an object', { statusCode: 400 });
+            }
             if (submessage.text) {
                 return {
                     messageType: RichSubMessageType.TEXT,
@@ -432,6 +474,12 @@ export const prepareRichResponseMessage = (content) => {
                 };
             }
             else if (submessage.code) {
+                // AunuBaileys (2.9.0, HB-325 addendum): code is copied
+                // verbatim into codeBlocks, which toUnified maps over —
+                // a bare string died there as a raw TypeError.
+                if (!Array.isArray(submessage.code)) {
+                    throw new Boom('rich response code submessage requires code to be an array of code blocks', { statusCode: 400 });
+                }
                 return {
                     messageType: RichSubMessageType.CODE,
                     codeMetadata: {
@@ -578,6 +626,11 @@ export const prepareRichResponseMessage = (content) => {
         if (links) {
             links.forEach((linkField, index) => {
                 const prefix = 'SS_' + index;
+                // AunuBaileys (2.9.0, HB-325 addendum): a null/non-object
+                // element died on the .url probe below as a raw TypeError.
+                if (!linkField || typeof linkField !== 'object') {
+                    throw new Boom('rich response link must be an object', { statusCode: 400 });
+                }
                 if (!linkField.url) {
                     return;
                 }
@@ -624,6 +677,12 @@ export const prepareRichResponseMessage = (content) => {
             });
         }
         if (table) {
+            // AunuBaileys (2.9.0, HB-325 addendum): table is mapped over
+            // below — a non-array value (e.g. a bare string) died as a
+            // raw TypeError.
+            if (!Array.isArray(table)) {
+                throw new Boom('rich response table must be an array of rows', { statusCode: 400 });
+            }
             submessages.push({
                 messageType: RichSubMessageType.TABLE,
                 tableMetadata: {

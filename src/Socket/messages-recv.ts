@@ -946,7 +946,12 @@ export const makeMessagesRecvSocket = (config: SocketConfig) => {
 		// that can actually be built. Key material follows the
 		// HB-98 test (Buffer, or a base64 string in an edited file).
 		const isKeyMaterial = (value: unknown): boolean => value instanceof Uint8Array || typeof value === 'string'
-		if (!Number.isFinite(authState.creds.registrationId)) {
+		// AunuBaileys (2.9.0, HB-2026-1112-80 addendum run-1407):
+		// a fractional registrationId (1234.5) passed the
+		// finite-only guard and encodeBigEndian truncated it
+		// silently to 1234 in the retry receipt. isInteger
+		// covers the finite check too.
+		if (!Number.isInteger(authState.creds.registrationId)) {
 			throw new Error(
 				'AunuBaileys: creds.registrationId is missing or invalid — cannot send a retry receipt; restore a full backup or pair again'
 			)
@@ -956,7 +961,15 @@ export const makeMessagesRecvSocket = (config: SocketConfig) => {
 			!isKeyMaterial(authState.creds.signedIdentityKey?.public) ||
 			!isKeyMaterial(authState.creds.signedPreKey?.keyPair?.public) ||
 			!isKeyMaterial(authState.creds.signedPreKey?.signature) ||
-			typeof authState.creds.signedPreKey?.keyId === 'undefined'
+			// AunuBaileys (2.9.0, HB-2026-1112-80 addendum): same
+			// hole as getNextPreKeysNode — an undefined-only check
+			// let a non-finite or fractional keyId through to
+			// encodeBigEndian, which silently coerced it ('abc'/
+			// NaN -> 0, 1.5 truncated) into the retry receipt.
+			// isInteger covers the finite check too.
+			typeof authState.creds.signedPreKey?.keyId === 'undefined' ||
+			!Number.isFinite(authState.creds.signedPreKey?.keyId) ||
+			!Number.isInteger(authState.creds.signedPreKey?.keyId)
 		) {
 			throw new Error(
 				'AunuBaileys: creds.signedIdentityKey / creds.signedPreKey are missing or incomplete — cannot include keys in the retry receipt; restore a full backup or pair again'
@@ -2097,8 +2110,23 @@ export const makeMessagesRecvSocket = (config: SocketConfig) => {
 				// and no retry counter advanced. Treat a throwing id as
 				// unavailable and continue with the rest.
 				try {
+					const stored = (await getMessage({ ...key, id })) as
+						| (waproto.IMessage & { message?: waproto.IMessage })
+						| undefined
+					// AunuBaileys (2.9.0, HB-2026-1113-223 addendum
+					// ke-12): the getMessage TYPE promises an IMessage,
+					// but host stores commonly hand back the full
+					// WAMessage ({ key, message, ... }) — forwarding
+					// that object as the IMessage made relayMessage
+					// encrypt an EMPTY message (no IMessage field
+					// matches the wrapper's keys) with no error, and
+					// the retry budget burned on a blank resend.
+					// Unwrap once here, at the choke point: a plain
+					// IMessage has no top-level `message` field, so
+					// the fallback keeps already-unwrapped stores
+					// working unchanged.
 					msg =
-						(await getMessage({ ...key, id })) ??
+						(stored?.message ?? stored) ??
 						(sentMessageCacheFor(config, jid => aunuLid?.getAltJid(jid)).get(remoteJid, id) as waproto.IMessage | undefined)
 				} catch (err) {
 					logger.warn({ err, jid: remoteJid, id }, 'aunu: getMessage failed for one id in a retry batch; treating it as unavailable and continuing with the rest')
@@ -2612,7 +2640,14 @@ export const makeMessagesRecvSocket = (config: SocketConfig) => {
 			if (typeof targetId === 'string' && targetId) {
 				try {
 					const targetMsg = await getMessage({ remoteJid: node.attrs.from, id: targetId, fromMe: true })
-					const secret = targetMsg?.messageContextInfo?.messageSecret
+					// AunuBaileys (2.9.0, HB-2026-1113-223 addendum
+					// ke-12, sibling site): host stores may return the
+					// full WAMessage — the secret lives under
+					// .message.messageContextInfo there, not at the
+					// top level. Unwrap like sendMessagesAgain does.
+					const targetContent = (targetMsg as (waproto.IMessage & { message?: waproto.IMessage }) | undefined)
+						?.message ?? targetMsg
+					const secret = targetContent?.messageContextInfo?.messageSecret
 					if (secret) {
 						setBotMessageSecret(targetId, secret, node.attrs.from)
 					}

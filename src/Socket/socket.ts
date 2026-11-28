@@ -609,7 +609,27 @@ export const makeSocket = (config: SocketConfig) => {
 
 	const { creds } = authState
 	// add transaction capability
-	const keys = addTransactionCapability(authState.keys, logger, transactionOpts)
+	const keys = addTransactionCapability(authState.keys, logger, {
+		...transactionOpts,
+		// AunuBaileys (2.9.0, HB-2026-1112-60 addendum 3): a stuck
+		// transaction keeps its mutex (and every bare keys.set behind
+		// it) wedged for the life of this socket — the only recovery
+		// is ending the socket so the host reconnects against a fresh
+		// store/mutex. `end` is declared further down in this scope;
+		// the callback can only fire after a transaction has run,
+		// which is necessarily after makeSocket has finished building
+		// the socket, so the binding is initialised by call time. A
+		// host-supplied onStuckTransaction is chained, not replaced.
+		onStuckTransaction: info => {
+			transactionOpts?.onStuckTransaction?.(info)
+			void end(
+				new Boom(
+					`Transaction "${info.key}" did not settle within ${info.durationMs} ms — ending the socket so the host reconnects with a fresh auth store`,
+					{ statusCode: DisconnectReason.restartRequired }
+				)
+			)
+		}
+	})
 	const signalRepository = makeSignalRepository({ creds, keys }, logger, pnFromLIDUSync)
 
 	let lastDateRecv: Date
@@ -1620,8 +1640,8 @@ export const makeSocket = (config: SocketConfig) => {
 		return Buffer.concat([salt, randomIv, ciphered])
 	}
 
-	const sendWAMBuffer = (wamBuffer: Buffer) => {
-		return query({
+	const sendWAMBuffer = async (wamBuffer: Buffer) => {
+		const result = await query({
 			tag: 'iq',
 			attrs: {
 				to: S_WHATSAPP_NET,
@@ -1636,6 +1656,19 @@ export const makeSocket = (config: SocketConfig) => {
 				}
 			]
 		})
+		// AunuBaileys (2.9.0, L24): this IQ carries no `type` attr, so
+		// the HB-340 guard in query() (which only throws for timed-out
+		// `type: 'set'` IQs) never fired — a timeout resolved
+		// `undefined` and callers read it as a successful empty send.
+		// A WAM upload that timed out FAILED: reject Boom 408, exactly
+		// like query() does for set IQs.
+		if (result === undefined) {
+			throw new Boom('Timed out waiting for the response to the w:stats IQ', {
+				statusCode: DisconnectReason.timedOut
+			})
+		}
+
+		return result
 	}
 
 	ws.on('message', onMessageReceived)
