@@ -891,10 +891,13 @@ test('HB-351 addendum 3: uploadWithFetch destroys its node stream when fetch fai
 	}
 
 	try {
-		const fdCount = () => fs.readdirSync('/proc/self/fd').length
-		const before = fdCount()
+		const uploadPaths = []
 		for (let i = 0; i < 5; i++) {
-			const filePath = makeUploadFile(t)
+			// 1 MiB: the file must exceed a single read chunk, or the
+			// stream reaches EOF on the first pull and auto-closes —
+			// and a leaked fd becomes undetectable either way.
+			const filePath = makeUploadFile(t, 1024 * 1024)
+			uploadPaths.push(filePath)
 			await assert.rejects(
 				uploadWithFetch({
 					filePath,
@@ -905,8 +908,29 @@ test('HB-351 addendum 3: uploadWithFetch destroys its node stream when fetch fai
 			)
 		}
 
-		await sleep(150)
-		assert.equal(fdCount(), before, 'uploadWithFetch leaked file descriptors')
+		// Assert on the exact thing this addendum guards — no fd may
+		// still point at one of the upload files once the failed upload
+		// settles. (The previous process-wide fd-count equality raced
+		// with unrelated fd churn in the same test process and flaked
+		// in CI at the 2.8.0 and 2.9.0 gates: 19 !== 20, 21 !== 22.)
+		const leakedFds = () =>
+			fs.readdirSync('/proc/self/fd').filter(fd => {
+				let target
+				try {
+					target = fs.readlinkSync(`/proc/self/fd/${fd}`)
+				} catch {
+					return false
+				}
+
+				return uploadPaths.some(p => target === p || target === `${p} (deleted)`)
+			})
+		let leaked = leakedFds()
+		for (let i = 0; i < 40 && leaked.length > 0; i++) {
+			await sleep(50)
+			leaked = leakedFds()
+		}
+
+		assert.deepEqual(leaked, [], 'uploadWithFetch leaked file descriptors')
 	} finally {
 		globalThis.fetch = origFetch
 	}
